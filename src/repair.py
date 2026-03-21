@@ -533,6 +533,85 @@ class SwitchRepair(Repair):
 
 
 # =============================================================================
+# Loose Port Repair
+# =============================================================================
+
+class LoosePortRepair(Repair):
+    """Repair unpaired switches by removing them from the main loop.
+
+    Switches have 3 ports. Port 0 and port 1 connect sequentially in the
+    main loop. Port 2 (diverging) needs a branch to connect. Unpaired
+    switches — those without a matching partner at the right geometric
+    distance — create loose ports that violate constraint G[4].
+
+    This repair scans for switches that can't form valid pairs and replaces
+    them with STRAIGHT_16, ensuring loose_port_count = 0.
+
+    Valid pairs (IN followed by OUT of same handedness at compatible distance)
+    are preserved. The decoder's _extract_switch_pairs handles branch creation.
+    """
+
+    def __init__(self, inventory_by_index: Optional[Dict[int, int]] = None):
+        super().__init__()
+        self.inventory_by_index = inventory_by_index or {}
+        self.available_pieces = sorted(self.inventory_by_index.keys()) if self.inventory_by_index else list(range(10))
+
+    def _do(self, problem, X, **kwargs) -> NDArray:
+        X_repaired = X.copy()
+        for i in range(len(X)):
+            X_repaired[i] = self._repair_chromosome(X[i])
+        return X_repaired
+
+    def _repair_chromosome(self, x: NDArray) -> NDArray:
+        """Remove unpaired switches from main loop.
+
+        For each handedness (LEFT, RIGHT):
+        1. Find all IN and OUT positions
+        2. Greedily pair IN→OUT (IN must come before OUT)
+        3. Replace unpaired switches with STRAIGHT_16
+        """
+        pieces, positions = _decode_rk_to_pieces(x, self.inventory_by_index)
+        if not pieces:
+            return x
+
+        repaired = list(pieces)
+        paired_positions = set()
+
+        # Pair switches for each handedness
+        for in_idx, out_idx in SWITCH_PAIRS:
+            in_positions = [i for i, p in enumerate(repaired) if p == in_idx]
+            out_positions = [i for i, p in enumerate(repaired) if p == out_idx]
+
+            # Greedy pairing: each IN pairs with nearest downstream OUT
+            used_outs = set()
+            for in_pos in sorted(in_positions):
+                best_out = None
+                for out_pos in sorted(out_positions):
+                    if out_pos > in_pos and out_pos not in used_outs:
+                        best_out = out_pos
+                        break
+                if best_out is not None:
+                    paired_positions.add(in_pos)
+                    paired_positions.add(best_out)
+                    used_outs.add(best_out)
+
+            # Remove unpaired IN switches
+            for pos in in_positions:
+                if pos not in paired_positions:
+                    repaired[pos] = STRAIGHT_16
+
+            # Remove unpaired OUT switches
+            for pos in out_positions:
+                if pos not in paired_positions:
+                    repaired[pos] = STRAIGHT_16
+
+        # Re-encode if any changes made
+        if repaired != list(pieces):
+            return _encode_pieces_to_rk(repaired, self.available_pieces, x)
+        return x
+
+
+# =============================================================================
 # Combined Repair Pipeline
 # =============================================================================
 
@@ -578,6 +657,7 @@ class TrackRepairPipeline(Repair):
             inventory_by_index=inventory_by_index,
             prefer_add=prefer_add_switches,
         ) if enable_switch_repair else None
+        self.loose_port_repair = LoosePortRepair(inventory_by_index=inventory_by_index)
         self.inventory_repair = InventoryRepair(inventory_by_index, index_to_id)
         self.closure_repair = ClosureRepair(
             catalog,
@@ -595,11 +675,15 @@ class TrackRepairPipeline(Repair):
         Returns:
             Repaired population array.
         """
-        # Step 1: Switch repair (replace orphaned switches with straights)
+        # Step 1: Switch repair (balance IN/OUT counts)
         if self.switch_repair is not None:
             X = self.switch_repair._do(problem, X, **kwargs)
 
-        # Step 2: Inventory repair
+        # Step 2: Loose port repair DISABLED — switches evolve via soft
+        # constraint penalty instead of being removed pre-evaluation.
+        # X = self.loose_port_repair._do(problem, X, **kwargs)
+
+        # Step 3: Inventory repair
         X = self.inventory_repair._do(problem, X, **kwargs)
 
         # Step 3: Closure repair (optional)

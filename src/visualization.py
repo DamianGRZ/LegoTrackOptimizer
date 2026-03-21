@@ -646,10 +646,12 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
                     ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
                            markeredgecolor="black", markeredgewidth=1.5, zorder=8)
         else:
-            # Branch paths: draw with path color overlay (lighter, for visibility)
-            color = PATH_COLORS[path_idx % len(PATH_COLORS)]
-            ax.plot(x, y, color=color, linewidth=2, alpha=0.6,
-                    label=f"Path {path_idx}: {path.describe_route()}")
+            # Branch paths: draw individual pieces (same as main path)
+            for i in range(len(path.piece_sequence)):
+                if i < len(x) - 1:
+                    piece_idx = path.piece_sequence[i]
+                    _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
+                                draw_rails_flag=True)
 
     # Draw boundary
     if boundary is not None:

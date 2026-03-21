@@ -103,10 +103,40 @@ RIGHT_SIDING = PassingSidingTemplate(
     merge_fk=(31.0, 6.2, 22.5),
 )
 
-# Template lookup by handedness index (0=LEFT, 1=RIGHT)
+# Reverse templates: OUT acts as entry (diverge), IN acts as exit (merge).
+# Enables parallel tracks where the siding is traversed in the opposite direction.
+# The branch curves are mirrored (approach/return swap).
+
+LEFT_SIDING_REVERSE = PassingSidingTemplate(
+    name="left_passing_siding_reverse",
+    handedness="LEFT_REVERSE",
+    in_switch_idx=R40_SWITCH_LEFT_OUT,   # OUT acts as entry (diverge)
+    out_switch_idx=R40_SWITCH_LEFT_IN,   # IN acts as exit (merge)
+    approach_curve_idx=R40_LEFT,         # Mirrored: LEFT to go parallel
+    return_curve_idx=R40_RIGHT,          # Mirrored: RIGHT to approach merge
+    straight_idx=STRAIGHT_16,
+    diverge_fk=(31.0, -6.2, -22.5),     # OUT's merge FK used as diverge
+    merge_fk=(31.0, 6.2, 22.5),         # IN's diverge FK used as merge
+)
+
+RIGHT_SIDING_REVERSE = PassingSidingTemplate(
+    name="right_passing_siding_reverse",
+    handedness="RIGHT_REVERSE",
+    in_switch_idx=R40_SWITCH_RIGHT_OUT,  # OUT acts as entry (diverge)
+    out_switch_idx=R40_SWITCH_RIGHT_IN,  # IN acts as exit (merge)
+    approach_curve_idx=R40_RIGHT,        # Mirrored: RIGHT to go parallel
+    return_curve_idx=R40_LEFT,           # Mirrored: LEFT to approach merge
+    straight_idx=STRAIGHT_16,
+    diverge_fk=(31.0, 6.2, 22.5),       # OUT's merge FK used as diverge
+    merge_fk=(31.0, -6.2, -22.5),       # IN's diverge FK used as merge
+)
+
+# Template lookup by handedness index (0=LEFT, 1=RIGHT, 2=LEFT_REVERSE, 3=RIGHT_REVERSE)
 TEMPLATES = {
     0: LEFT_SIDING,
     1: RIGHT_SIDING,
+    2: LEFT_SIDING_REVERSE,
+    3: RIGHT_SIDING_REVERSE,
 }
 
 

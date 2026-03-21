@@ -342,21 +342,21 @@ class TestSwitchesInMainLoop:
             assert pair.in_switch_idx == R40_SWITCH_LEFT_IN
             assert pair.out_switch_idx == R40_SWITCH_LEFT_OUT
 
-    def test_loose_ports_for_unpaired_switches(self, catalog: TrackCatalog, switches_config: OptimizationConfig):
-        """Unpaired switches should result in loose port count."""
+    def test_unpaired_switches_are_straight_through(self, catalog: TrackCatalog, switches_config: OptimizationConfig):
+        """Unpaired switches operate in straight-through mode — no loose ports."""
         # Inventory with only LEFT_IN (no matching LEFT_OUT)
         inventory = {
             "STRAIGHT_16": 20,
             "R40_LEFT": 20,
             "R40_RIGHT": 10,
             "R40_SWITCH_LEFT_IN": 1,
-            # No LEFT_OUT
+            # No LEFT_OUT — switch can't pair, operates straight-through
         }
         available = _get_available_pieces(catalog, inventory)
 
         pattern = (
             [R40_LEFT] * 4 +
-            [R40_SWITCH_LEFT_IN] +  # Orphaned
+            [R40_SWITCH_LEFT_IN] +  # Unpaired — straight-through mode
             [STRAIGHT_16, STRAIGHT_16, STRAIGHT_16] +
             [R40_LEFT] * 4 +
             [STRAIGHT_16, STRAIGHT_16] +
@@ -368,8 +368,8 @@ class TestSwitchesInMainLoop:
 
         layout = decode_chromosome(chromosome, catalog, inventory)
 
-        # Should have loose ports for unpaired switches
-        assert layout.loose_port_count >= 1
+        # Unpaired switches are valid straight-through pieces, not loose ports
+        assert layout.loose_port_count == 0
 
     def test_full_decode_with_switches(self, catalog: TrackCatalog, switches_config: OptimizationConfig):
         """Full decode should produce multi-path layout with switch pair."""

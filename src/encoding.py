@@ -155,7 +155,9 @@ def rk_to_branch_params(rk_values: NDArray) -> Tuple[int, int, int, bool]:
     """
     in_pos = int(rk_values[0] * L_MAX)
     in_pos = min(in_pos, L_MAX - 1)
-    handedness = 1 if rk_values[1] >= 0.5 else 0
+    # Handedness: 0=LEFT, 1=RIGHT, 2=LEFT_REVERSE, 3=RIGHT_REVERSE
+    handedness = int(rk_values[1] * 4)
+    handedness = min(handedness, 3)
     n_straights = int(rk_values[2] * 9)
     n_straights = min(n_straights, 8)
     active = rk_values[3] >= 0.5

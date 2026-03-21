@@ -19,7 +19,7 @@ from src.decoder import decode_chromosome
 from src.encoding import N_VAR
 from src.sampling import INDEX_TO_ID
 from src.operators import create_crossover_operator, create_mutation_operator
-from src.problem import TrackOptimizationProblem, EpsilonTightening
+from src.problem import TrackOptimizationProblem, EpsilonTightening, StagnationCallback
 from src.repair import TrackRepairPipeline
 from src.sampling import MultiSegmentSampling
 from src.survival import StructuralNichingSurvival
@@ -257,8 +257,12 @@ def run_optimization(
         callbacks.append(EpsilonTightening(
             initial_tol=initial_tolerance,
             final_tol=final_tolerance,
+            hold_until=0.4,
             tighten_until=tighten_until,
         ))
+
+    # Always add stagnation detection
+    callbacks.append(StagnationCallback(patience=50, inject_ratio=0.10))
 
     # Log optimization parameters
     logger.info("Starting track optimization...")
@@ -445,8 +449,8 @@ def main() -> None:
     parser.add_argument(
         "--final-tolerance",
         type=float,
-        default=0.5,
-        help="Final closure tolerance in studs (default: 0.5)",
+        default=1.0,
+        help="Final closure tolerance in studs (default: 1.0)",
     )
     parser.add_argument(
         "--tighten-until",

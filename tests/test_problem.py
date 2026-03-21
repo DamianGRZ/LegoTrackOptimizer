@@ -30,7 +30,7 @@ class TestTrackOptimizationProblem:
 
         assert problem.n_var == N_VAR  # Fixed chromosome length
         assert problem.n_obj == 1  # Single objective: -utilization
-        assert problem.n_ieq_constr == 5  # closure, angle, boundary, inventory, loose_ports
+        assert problem.n_ieq_constr == 4  # closure, angle, boundary, inventory
 
     def test_evaluate_valid_circle(self, catalog, default_config):
         """16 R40 circle evaluates without error."""
@@ -47,7 +47,7 @@ class TestTrackOptimizationProblem:
         assert "F" in out
         assert "G" in out
         assert len(out["F"]) == 1  # Single objective
-        assert len(out["G"]) == 5  # 5 constraints (closure, angle, boundary, inventory, loose_ports)
+        assert len(out["G"]) == 4  # 4 constraints (closure, angle, boundary, inventory)
 
     def test_evaluate_minimal_chromosome(self, catalog, default_config):
         """Minimal RK chromosome (NEAT-style) evaluates without error.
@@ -93,7 +93,7 @@ class TestTrackOptimizationProblem:
         problem._evaluate(chromosome, out)
 
         G = np.array(out["G"])
-        assert G.shape == (5,)
+        assert G.shape == (4,)
 
     def test_objective_correct_sign(self, catalog, default_config):
         """Objective has correct sign for minimization (negative utilization)."""
@@ -188,16 +188,16 @@ class TestEpsilonTightening:
 
         callback = EpsilonTightening(
             initial_tol=8.0,
-            final_tol=0.5,
-            tighten_until=0.7
+            final_tol=1.0,
+            hold_until=0.4,
+            tighten_until=0.8,
         )
 
         algorithm = MockAlgorithm()
         callback.notify(algorithm)
 
-        # At gen 1/100 = 1%, tolerance should be close to initial
-        expected = 8.0 * (1 - 0.01/0.7) + 0.5 * (0.01/0.7)
-        assert abs(algorithm.problem.closure_tolerance - expected) < 0.1
+        # At gen 1/100 = 1%, in Phase A (hold), tolerance should be initial
+        assert algorithm.problem.closure_tolerance == 8.0
 
     def test_tolerance_at_end(self, catalog, default_config):
         """After tighten_until, tolerance should be final_tol."""
@@ -205,21 +205,22 @@ class TestEpsilonTightening:
             n_max_gen = 100
 
         class MockAlgorithm:
-            n_gen = 80  # 80% > 70% (tighten_until)
+            n_gen = 90  # 90% > 80% (tighten_until)
             termination = MockTermination()
             problem = TrackOptimizationProblem(catalog, default_config)
 
         callback = EpsilonTightening(
             initial_tol=8.0,
-            final_tol=0.5,
-            tighten_until=0.7
+            final_tol=1.0,
+            hold_until=0.4,
+            tighten_until=0.8,
         )
 
         algorithm = MockAlgorithm()
         callback.notify(algorithm)
 
         # Past tighten_until, should be at final tolerance
-        assert algorithm.problem.closure_tolerance == 0.5
+        assert algorithm.problem.closure_tolerance == 1.0
 
 
 # Backward compatibility aliases should work

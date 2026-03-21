@@ -17,7 +17,8 @@
       "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\encoding.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\encoding_integer.py\")",
       "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\decoder.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\decoder_integer.py\")",
       "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\sampling.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\sampling_integer.py\")",
-      "Bash(timeout /t 60 /nobreak)"
+      "Bash(timeout /t 60 /nobreak)",
+      "Bash(find S:/Programming/Repo/DamianGRZ/LegoTrackOptimizer/.venv/Lib/site-packages/pymoo -name repair.py -path */core/*)"
     ]
   }
 }

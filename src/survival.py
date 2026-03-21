@@ -448,17 +448,18 @@ class StructuralNichingSurvival(Survival):
 
         if soft_feasibility and group_G is not None:
             # SOFT FEASIBILITY for complex group:
-            # - Don't use hard penalty that eliminates infeasible solutions
-            # - Instead, add soft penalty proportional to constraint violation
-            # - This keeps complex solutions alive while preferring closer to feasible
+            # Strong gradient toward feasibility while keeping them alive.
+            # Feasible complex solutions get a large bonus to compete with simple ovals.
 
             # Sum of positive constraint violations (g > 0 means violated)
             cv = np.maximum(group_G, 0).sum(axis=1)  # Total constraint violation
+            is_feasible = np.all(group_G <= 0, axis=1)
 
-            # Soft penalty: 10 per unit of constraint violation
-            # This is much smaller than fitness (pieces * 1000), so fitness dominates
-            # But among similar fitness, less violated is preferred
-            scores += cv * 10
+            # Soft penalty: 50 per unit of CV (strong gradient toward feasibility)
+            scores += cv * 50
+
+            # Feasibility bonus: make feasible complex solutions strongly competitive
+            scores[is_feasible] -= 1500
 
         elif not soft_feasibility and group_G is not None:
             # HARD FEASIBILITY for simple group:
