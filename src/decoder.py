@@ -346,17 +346,8 @@ def _decode_main_loop(
 ) -> DecoderState:
     """Phase 1: Build main loop from chromosome genes using Random-Key decoding.
 
-    Uses Bean's random-key approach:
-    - Gene values are [0,1] keys, not direct piece indices
-    - Build available pieces list from remaining inventory
-    - Map RK value to available piece via bucket selection
-
     Process genes left-to-right using turtle-graphics FK.
     Skip genes where no pieces remain available.
-
-    NOTE: Early closure detection is DISABLED. All valid genes are processed
-    to ensure switches and branches encoded in the chromosome are included.
-    The optimizer handles closure via fitness constraints.
 
     Args:
         chromosome: Full chromosome array with [0,1] RK values.
@@ -370,40 +361,31 @@ def _decode_main_loop(
     state = DecoderState()
     state.states.append((0.0, 0.0, 0.0))  # Initial state at origin
 
-    # Get piece selection keys (all values in [0, 1])
     piece_keys = get_piece_keys(chromosome)
 
     for rk_value in piece_keys:
-        # Skip inactive slots (RK value below threshold)
         if rk_value < RK_INACTIVE_THRESHOLD:
             continue
 
-        # Build available pieces list from remaining inventory
         available_pieces = _get_available_pieces(inventory_by_index, state.inventory_used)
-
         if not available_pieces:
-            continue  # No pieces left
+            continue
 
-        # Map RK value to piece index
         piece_idx = rk_to_piece_index(float(rk_value), available_pieces)
 
         if piece_idx == INACTIVE or piece_idx < 0:
             continue
 
-        # Validate piece index
         if piece_idx >= len(catalog._fk_table):
             continue
 
-        # Get FK deltas for this piece
         fk = catalog._fk_table[piece_idx]
         dx, dy, dtheta = fk[0], fk[1], fk[2]
 
-        # Check angular budget (allow complex layouts with multiple loops)
         new_cumulative = state.cumulative_angle + abs(dtheta)
         if new_cumulative > config.max_cumulative_angle:
-            continue  # Hard limit to prevent infinite layouts
+            continue
 
-        # Apply FK transformation
         theta_rad = np.radians(state.theta)
         cos_t = np.cos(theta_rad)
         sin_t = np.sin(theta_rad)
@@ -412,24 +394,18 @@ def _decode_main_loop(
         new_y = state.y + dx * sin_t + dy * cos_t
         new_theta = state.theta + dtheta
 
-        # Update state
         state.x = new_x
         state.y = new_y
         state.theta = new_theta
         state.cumulative_angle += abs(dtheta)
 
-        # Record piece placement
         state.use_piece(piece_idx)
         state.states.append((new_x, new_y, new_theta))
 
-        # Track switch positions (port 2 is potentially loose)
-        # Switch indices: 5=LEFT_IN, 6=LEFT_OUT, 7=RIGHT_IN, 8=RIGHT_OUT
         if piece_idx in (5, 6, 7, 8):
-            position = len(state.piece_indices) - 1  # Current position
+            position = len(state.piece_indices) - 1
             state.switch_port2_positions.append(position)
 
-        # Track crossing positions (ports 2 and 3 are loose unless connected)
-        # CROSS_90 index = 4
         if piece_idx == 4:
             position = len(state.piece_indices) - 1
             state.crossing_positions.append((position, piece_idx))
@@ -500,6 +476,23 @@ def _extract_switch_pairs(
         if in_pos >= n_main_loop:
             continue
 
+        # Switch FK is (32, 0, 0) — straight, no angle. Only replace
+        # straight pieces to preserve angular geometry for closure.
+        if state.piece_indices[in_pos] not in (0, 1):  # STRAIGHT_16=0, STRAIGHT_24=1
+            # Scan nearby positions for a straight
+            found = False
+            for offset in range(1, 4):
+                for candidate in [in_pos + offset, in_pos - offset]:
+                    if 0 <= candidate < n_main_loop and candidate not in used_positions:
+                        if state.piece_indices[candidate] in (0, 1):
+                            in_pos = candidate
+                            found = True
+                            break
+                if found:
+                    break
+            if not found:
+                continue
+
         # Skip if position already used by another branch slot
         if in_pos in used_positions:
             continue
@@ -539,17 +532,34 @@ def _extract_switch_pairs(
             continue
 
         # All checks passed - inject switches into main loop
+        # Each switch (32 studs) replaces the piece at its position.
+        # To preserve closure geometry, we also absorb the NEXT piece
+        # (a switch covers ~2 straights worth of distance: 32 ≈ 2×16).
         original_in_piece = state.piece_indices[in_pos]
         original_out_piece = state.piece_indices[out_pos]
 
         state.piece_indices[in_pos] = in_switch_idx
         state.piece_indices[out_pos] = out_switch_idx
 
+        # Track which adjacent positions are absorbed by switches
+        # (their FK is "included" in the switch's 32-stud length)
+        absorbed = []
+        if in_pos + 1 < n_main_loop and in_pos + 1 != out_pos:
+            absorbed.append(in_pos + 1)
+            absorbed_piece = state.piece_indices[in_pos + 1]
+            if absorbed_piece >= 0:
+                state.inventory_used[absorbed_piece] = max(0, state.inventory_used.get(absorbed_piece, 1) - 1)
+        if out_pos + 1 < n_main_loop:
+            absorbed.append(out_pos + 1)
+            absorbed_piece = state.piece_indices[out_pos + 1]
+            if absorbed_piece >= 0:
+                state.inventory_used[absorbed_piece] = max(0, state.inventory_used.get(absorbed_piece, 1) - 1)
+
         # Track switch usage
         state.use_piece(in_switch_idx, add_to_main_loop=False)
         state.use_piece(out_switch_idx, add_to_main_loop=False)
 
-        # Return original pieces to inventory if they were valid
+        # Return original pieces to inventory
         if original_in_piece >= 0:
             state.inventory_used[original_in_piece] = max(0, state.inventory_used.get(original_in_piece, 1) - 1)
         if original_out_piece >= 0:
@@ -567,6 +577,7 @@ def _extract_switch_pairs(
             in_switch_idx=in_switch_idx,
             out_switch_idx=out_switch_idx,
             branch_pieces=branch_pieces,
+            absorbed_positions=absorbed,
         )
         switch_pairs.append(pair)
         pair_id += 1
@@ -713,8 +724,15 @@ def _find_out_position_for_siding(
         accumulated += arc_length
 
         # Check if we've reached the required distance
+        # OUT switch must replace a straight AND the section must have ~0° angle
         if abs(accumulated - required_distance) <= tolerance:
-            return pos
+            if piece_idx in (0, 1):  # STRAIGHT_16 or STRAIGHT_24
+                section_angle = _compute_section_angle(
+                    in_pos, pos, piece_indices, catalog
+                )
+                if section_angle < 5.0:  # Near-zero angle = all straights
+                    return pos
+            continue
 
         if accumulated > required_distance + tolerance:
             break  # Overshot
@@ -787,6 +805,14 @@ def _match_switch_pairs(
 
                 # Check if this is a better match (within tolerance)
                 if distance_error < best_distance_error and distance_error < 4.0:
+                    # Section between switches must have ~0° angle
+                    # (branch template has 0° net angle)
+                    section_angle = _compute_section_angle(
+                        in_pos, out_pos, state.piece_indices, catalog
+                    )
+                    if section_angle > 5.0:
+                        continue  # Section has curves — branch can't close
+
                     # Check branch inventory (curves for approach/return)
                     branch_pieces = compute_branch_pieces(template, n_straights)
                     has_inventory = _check_branch_inventory(
@@ -849,6 +875,36 @@ def _compute_main_loop_distance(
                 arc_length = float(catalog.get_arc_lengths(np.array([piece_idx]))[0])
                 total += arc_length
     return total
+
+
+def _compute_section_angle(
+    in_pos: int,
+    out_pos: int,
+    piece_indices: List[int],
+    catalog: TrackCatalog,
+) -> float:
+    """Compute cumulative angle change between two main loop positions.
+
+    The branch template has 0° net angle (approach curve cancels return curve),
+    so a valid siding requires the main loop section between IN and OUT to also
+    have near-zero net angle (all straights, no curves).
+
+    Args:
+        in_pos: IN switch position.
+        out_pos: OUT switch position.
+        piece_indices: Main loop piece indices.
+        catalog: Track catalog.
+
+    Returns:
+        Absolute cumulative angle in degrees.
+    """
+    total_angle = 0.0
+    for pos in range(in_pos + 1, out_pos):
+        if pos < len(piece_indices):
+            piece_idx = piece_indices[pos]
+            if piece_idx >= 0 and piece_idx < len(catalog._fk_table):
+                total_angle += catalog._fk_table[piece_idx][2]  # dtheta
+    return abs(total_angle)
 
 
 def _check_branch_inventory(
@@ -984,14 +1040,12 @@ def _build_multi_path_layout(
     main_loop_pieces = list(state.piece_indices)
     n_switch_pairs = len(switch_pairs)
 
-    # Compute loose port count: switches with unconnected port 2 + crossing loose ports
-    switch_loose = len(state.switch_port2_positions) - len(state.connected_port2_positions)
-
-    # Each CROSS_90 has 2 loose ports (ports 2 and 3 - perpendicular route)
-    # Cannot be connected with R40 curves (geometric impossibility)
+    # Loose port count: only count genuinely broken connections.
+    # Unpaired switches are NOT loose — they operate in straight-through mode
+    # (port 2 simply not used, like a switch with the lever set to "straight").
+    # Only crossings have truly loose ports (perpendicular route can't connect).
     crossing_loose = len(state.crossing_positions) * 2
-
-    loose_port_count = switch_loose + crossing_loose
+    loose_port_count = crossing_loose
 
     # If no switch pairs, just return single main loop path
     if n_switch_pairs == 0:
@@ -1052,6 +1106,11 @@ def _compute_single_path(
     # Sort switch pairs by in_position for correct ordering
     sorted_pairs = sorted(switch_pairs, key=lambda p: p.in_position)
 
+    # Collect all positions absorbed by switches (skip during main loop traversal)
+    absorbed_set = set()
+    for pair in sorted_pairs:
+        absorbed_set.update(pair.absorbed_positions)
+
     # Build piece sequence and route indices for this path
     piece_sequence = []
     route_indices = []
@@ -1060,18 +1119,20 @@ def _compute_single_path(
     for i, pair in enumerate(sorted_pairs):
         choice = route_choices[i] if i < len(route_choices) else 0
 
-        # Add main loop pieces up to IN switch position (all default route)
-        segment = main_loop_pieces[current_pos:pair.in_position]
-        piece_sequence.extend(segment)
-        route_indices.extend([0] * len(segment))
+        # Add main loop pieces up to IN switch position, skipping absorbed
+        for pos in range(current_pos, pair.in_position):
+            if pos not in absorbed_set:
+                piece_sequence.append(main_loop_pieces[pos])
+                route_indices.append(0)
 
         if choice == 0:
             # Straight-through: both switches use route 0 (default)
             piece_sequence.append(pair.in_switch_idx)
             route_indices.append(0)
-            segment = main_loop_pieces[pair.in_position + 1:pair.out_position]
-            piece_sequence.extend(segment)
-            route_indices.extend([0] * len(segment))
+            for pos in range(pair.in_position + 1, pair.out_position):
+                if pos not in absorbed_set:
+                    piece_sequence.append(main_loop_pieces[pos])
+                    route_indices.append(0)
             piece_sequence.append(pair.out_switch_idx)
             route_indices.append(0)
         else:
@@ -1085,10 +1146,11 @@ def _compute_single_path(
 
         current_pos = pair.out_position + 1
 
-    # Add remaining main loop pieces after last switch pair
-    segment = main_loop_pieces[current_pos:]
-    piece_sequence.extend(segment)
-    route_indices.extend([0] * len(segment))
+    # Add remaining main loop pieces after last switch pair, skipping absorbed
+    for pos in range(current_pos, len(main_loop_pieces)):
+        if pos not in absorbed_set:
+            piece_sequence.append(main_loop_pieces[pos])
+            route_indices.append(0)
 
     # Compute FK chain using route-aware catalog lookup
     states = _compute_path_fk(piece_sequence, route_indices, catalog)
@@ -1231,8 +1293,6 @@ def _get_available_pieces(
     used: Dict[int, int],
 ) -> List[int]:
     """Build list of available piece indices from remaining inventory.
-
-    Used by random-key decoder to determine which pieces can be selected.
 
     Args:
         inventory_by_index: Total available inventory {piece_idx: count}.

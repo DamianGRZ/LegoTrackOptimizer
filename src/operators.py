@@ -694,6 +694,118 @@ class NoOpCrossover(Crossover):
 
 
 # =============================================================================
+# Segment-Selective BRKGA Crossover
+# =============================================================================
+
+class SegmentSelectiveCrossover(Crossover):
+    """BRKGA-style crossover with per-segment elite bias.
+
+    Applies different inheritance probabilities to each chromosome segment
+    based on epistasis structure:
+
+    - Main loop [0:100): rho=1.0 — always inherit from elite parent
+      (high epistasis, crossover is destructive)
+    - Priority keys [100:200): rho=0.7 — biased uniform favoring elite
+      (low epistasis, crossover is beneficial)
+    - Branch slots [200:216): rho=0.65 — slot-level uniform
+      (moderate epistasis, block-level exchange)
+    - Start position [216:218): rho=0.5 — uniform blend
+
+    Based on Gonçalves & Resende (2011) BRKGA framework and
+    Londe et al. (2024) comprehensive review of 150+ applications.
+    """
+
+    def __init__(
+        self,
+        rho_main: float = 1.0,
+        rho_priority: float = 0.7,
+        rho_branch: float = 0.65,
+        rho_position: float = 0.5,
+        prob: float = 0.35,
+    ):
+        """Initialize segment-selective crossover.
+
+        Args:
+            rho_main: Elite bias for main loop (1.0 = always elite).
+            rho_priority: Elite bias for priority keys.
+            rho_branch: Elite bias for branch slots.
+            rho_position: Elite bias for start position.
+            prob: Crossover application probability.
+        """
+        super().__init__(n_parents=2, n_offsprings=2)
+        self.rho_main = rho_main
+        self.rho_priority = rho_priority
+        self.rho_branch = rho_branch
+        self.rho_position = rho_position
+        self.prob = prob
+
+    def _do(self, problem, X, **kwargs) -> NDArray:
+        """Apply segment-selective BRKGA crossover.
+
+        For each mating, determine elite parent (better fitness), then
+        apply per-segment biased uniform crossover.
+
+        Args:
+            problem: Optimization problem.
+            X: Parents array of shape (n_parents=2, n_matings, n_var).
+
+        Returns:
+            Offspring array of shape (n_offsprings=2, n_matings, n_var).
+        """
+        _, n_matings, n_var = X.shape
+        Y = np.zeros((self.n_offsprings, n_matings, n_var), dtype=X.dtype)
+
+        for k in range(n_matings):
+            p1, p2 = X[0, k], X[1, k]
+
+            if np.random.random() > self.prob:
+                # No crossover — return parents
+                Y[0, k] = p1.copy()
+                Y[1, k] = p2.copy()
+                continue
+
+            # Create two offspring with different elite assignments
+            Y[0, k] = self._cross_pair(p1, p2)
+            Y[1, k] = self._cross_pair(p2, p1)
+
+        return Y
+
+    def _cross_pair(self, elite: NDArray, non_elite: NDArray) -> NDArray:
+        """Create one offspring from elite and non-elite parent.
+
+        Args:
+            elite: Elite parent chromosome (better fitness).
+            non_elite: Non-elite parent chromosome.
+
+        Returns:
+            Offspring chromosome.
+        """
+        child = elite.copy()
+
+        # Main loop [0:100) — inherit from elite (rho=1.0, no mixing)
+        # Already copied from elite, nothing to do
+
+        # Priority keys [100:200) — biased uniform crossover
+        for i in range(SWITCH_MASK_START, SWITCH_MASK_END):
+            if np.random.random() >= self.rho_priority:
+                child[i] = non_elite[i]
+
+        # Branch slots [200:216) — slot-level uniform (4-gene blocks)
+        for slot in range(B_MAX):
+            if np.random.random() >= self.rho_branch:
+                start = BRANCH_SLOTS_START + slot * B_SLOT
+                end = start + B_SLOT
+                child[start:end] = non_elite[start:end]
+
+        # Start position [216:218) — uniform blend
+        for i in range(BRANCH_SLOTS_END, N_VAR):
+            if np.random.random() >= self.rho_position:
+                child[i] = non_elite[i]
+
+        return child
+
+
+# =============================================================================
 # Switch-Preserving Crossover
 # =============================================================================
 
@@ -1078,29 +1190,22 @@ def create_mutation_operator(
 def create_crossover_operator(
     catalog,
     inventory: Dict[str, int],
-    prob: float = 0.9,
-) -> SwitchPreservingCrossover:
-    """Create switch-preserving crossover operator.
+    prob: float = 0.35,
+) -> SegmentSelectiveCrossover:
+    """Create segment-selective BRKGA crossover operator.
+
+    Uses per-segment elite bias: main loop inherited from elite parent,
+    topology segments (priority keys, branch slots) recombined with bias.
 
     Args:
         catalog: Track catalog.
         inventory: Available inventory {piece_id: count}.
-        prob: Crossover probability.
+        prob: Crossover probability (default 0.35 for BRKGA).
 
     Returns:
-        Configured SwitchPreservingCrossover instance.
+        Configured SegmentSelectiveCrossover instance.
     """
-    # Convert inventory to index-based
-    inventory_by_index = {}
-    for piece_id, count in inventory.items():
-        idx = catalog._id_to_index.get(piece_id)
-        if idx is not None:
-            inventory_by_index[idx] = count
-
-    return SwitchPreservingCrossover(
-        inventory_by_index=inventory_by_index,
-        prob=prob,
-    )
+    return SegmentSelectiveCrossover(prob=prob)
 
 
 # =============================================================================

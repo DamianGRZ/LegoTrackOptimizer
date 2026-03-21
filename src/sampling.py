@@ -408,17 +408,14 @@ class MultiSegmentSampling(Sampling):
         return pattern
 
     def _oval_with_left_siding(self) -> Optional[NDArray]:
-        """Generate oval with left-hand passing siding with actual switches in main loop.
+        """Generate oval with left-hand passing siding with switches in main loop.
 
-        Places actual switch pieces in the main loop:
-        - LEFT_IN (5) at position 4
-        - LEFT_OUT (6) at position 7 (3 straights apart for branch geometry)
-        - Decoder will match these and compute connecting branch pieces
+        Places LEFT_IN (5) and LEFT_OUT (6) switches directly in the main loop.
+        The decoder's Pass 2 will detect and pair them geometrically.
 
         Returns:
             Piece index array for conversion to RK chromosome, or None if invalid.
         """
-        # Main loop: oval with LEFT_IN and LEFT_OUT switches placed
         # LEFT_IN=5, LEFT_OUT=6, STRAIGHT_16=0, R40_LEFT=2
         main_loop = np.array(
             [2, 2, 2, 2] +    # Corner 1 (90 deg) - positions 0-3
@@ -434,32 +431,25 @@ class MultiSegmentSampling(Sampling):
             dtype=np.int32,
         )
 
-        # Check main loop inventory
         if not self._validate_inventory(main_loop):
             return None
 
-        # Check if we have curves for the branch (R40_RIGHT to go parallel, R40_LEFT to return)
-        r40_right_available = self.inventory_by_index.get(3, 0) > 0
-        r40_left_available = self.inventory_by_index.get(2, 0) > 0
-
-        if not all([r40_right_available, r40_left_available]):
+        # Check branch inventory (R40_RIGHT for approach, R40_LEFT for return)
+        if not (self.inventory_by_index.get(3, 0) > 0 and
+                self.inventory_by_index.get(2, 0) > 0):
             return None
 
-        # Return piece index array (will be converted to RK chromosome)
         return main_loop
 
     def _oval_with_right_siding(self) -> Optional[NDArray]:
-        """Generate oval with right-hand passing siding with actual switches in main loop.
+        """Generate oval with right-hand passing siding with switches in main loop.
 
-        Places actual switch pieces in the main loop:
-        - RIGHT_IN (7) at position 4
-        - RIGHT_OUT (8) at position 7 (3 straights apart for branch geometry)
-        - Decoder will match these and compute connecting branch pieces
+        Places RIGHT_IN (7) and RIGHT_OUT (8) switches directly in the main loop.
+        The decoder's Pass 2 will detect and pair them geometrically.
 
         Returns:
             Piece index array for conversion to RK chromosome, or None if invalid.
         """
-        # Main loop: clockwise oval with RIGHT_IN and RIGHT_OUT switches placed
         # RIGHT_IN=7, RIGHT_OUT=8, STRAIGHT_16=0, R40_RIGHT=3
         main_loop = np.array(
             [3, 3, 3, 3] +    # Corner 1 (90 deg right) - positions 0-3
@@ -475,18 +465,13 @@ class MultiSegmentSampling(Sampling):
             dtype=np.int32,
         )
 
-        # Check main loop inventory
         if not self._validate_inventory(main_loop):
             return None
 
-        # Check if we have curves for the branch (R40_LEFT to go parallel, R40_RIGHT to return)
-        r40_left_available = self.inventory_by_index.get(2, 0) > 0
-        r40_right_available = self.inventory_by_index.get(3, 0) > 0
-
-        if not all([r40_left_available, r40_right_available]):
+        # Check branch inventory (R40_LEFT for approach, R40_RIGHT for return)
+        if not (self.inventory_by_index.get(2, 0) > 0 and
+                self.inventory_by_index.get(3, 0) > 0):
             return None
-
-        # Return piece index array (will be converted to RK chromosome)
         return main_loop
 
     def _closure_aware_chromosome(self) -> NDArray:

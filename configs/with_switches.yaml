@@ -9,10 +9,10 @@ inventory:
   R40_LEFT: 40
   R40_RIGHT: 40
   # R40 Switches (straight-through mode in optimizer)
-  R40_SWITCH_LEFT_IN: 4
-  R40_SWITCH_LEFT_OUT: 4
-  R40_SWITCH_RIGHT_IN: 4
-  R40_SWITCH_RIGHT_OUT: 4
+  R40_SWITCH_LEFT_IN: 1
+  R40_SWITCH_LEFT_OUT: 1
+#  R40_SWITCH_RIGHT_IN: 4
+#  R40_SWITCH_RIGHT_OUT: 4
 
 boundary:
   min_x: -250.0

@@ -6,6 +6,7 @@ Single problem class with:
 - Decoder as single source of truth for layout evaluation
 """
 
+import logging
 from typing import Dict, List
 
 import numpy as np
@@ -73,8 +74,8 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         super().__init__(
             n_var=N_VAR,
-            n_obj=1,           # ONE objective: -utilization
-            n_ieq_constr=5,    # 5 constraints via Deb's CV (includes loose ports)
+            n_obj=1,           # ONE objective: -(utilization - loose_port_penalty)
+            n_ieq_constr=4,    # 4 constraints: closure, angle, boundary, inventory
             xl=bounds.xl,
             xu=bounds.xu,
             **kwargs,
@@ -126,22 +127,29 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # Handle empty layouts
         if layout.n_pieces == 0:
             out["F"] = [0.0]
-            out["G"] = [1.0, 1.0, 1.0, 1.0, 1.0]  # All 5 constraints violated
+            out["G"] = [1.0, 1.0, 1.0, 1.0]  # All 4 constraints violated
             return
 
-        # ONE objective: maximize utilization
+        # ONE objective: maximize utilization with loose port penalty.
+        # Loose ports are embedded in the objective (not a hard constraint)
+        # so switch-containing solutions can compete with switch-free ones.
+        # Penalty: each loose port is equivalent to losing 2 pieces of utilization.
         utilization = layout.n_pieces / self.total_inventory
-        out["F"] = [-utilization]  # Minimize negative = maximize
+        loose_port_penalty = layout.loose_port_count * (2.0 / self.total_inventory)
+        out["F"] = [-(utilization - loose_port_penalty)]
 
-        # Constraints normalized to same scale (Deb's CV)
-        # G[i] <= 0 means constraint satisfied
-        g_closure = (layout.max_closure_error - self.closure_tolerance) / self.closure_tolerance
-        g_angle = (layout.max_angle_error - self.angle_tolerance) / self.angle_tolerance
+        # 4 hard constraints via Deb's CV (g <= 0 feasible)
+        # Use main path closure (straight-through) for closure constraint.
+        # Branch path closure depends on template geometry, not GA piece selection.
+        main_path = layout.get_main_path() if hasattr(layout, 'get_main_path') else None
+        closure_err = main_path.closure_error if main_path else layout.closure_error
+        angle_err = main_path.angle_error if main_path else layout.angle_error
+        g_closure = (closure_err - self.closure_tolerance) / self.closure_tolerance
+        g_angle = (angle_err - self.angle_tolerance) / self.angle_tolerance
         g_boundary = self._compute_boundary_violation(layout) / max(self.diagonal, 1.0)
         g_inventory = float(self._compute_inventory_violation(layout))
-        g_loose_ports = float(layout.loose_port_count)  # Must be 0 for feasibility
 
-        out["G"] = [g_closure, g_angle, g_boundary, g_inventory, g_loose_ports]
+        out["G"] = [g_closure, g_angle, g_boundary, g_inventory]
 
     def _compute_boundary_violation(self, layout) -> float:
         """Compute max boundary violation across all paths.
@@ -215,65 +223,153 @@ from pymoo.core.callback import Callback
 class EpsilonTightening(Callback):
     """Tighten closure tolerance over generations.
 
-    Starts with loose tolerance to allow broad exploration, then tightens
-    to force convergence to tight closure.
+    Three-phase schedule designed to give complex layouts (switches, crossings)
+    enough exploration time before tightening constraints:
 
-    Schedule:
-    - Early: closure_tolerance = initial_tolerance (explore broadly)
-    - Late: closure_tolerance = final_tolerance (converge tightly)
-    - Linear interpolation between initial and final until tighten_until
+    - Phase A (0-40%): Hold at initial tolerance — broad exploration
+    - Phase B (40-80%): Linear tighten to final tolerance
+    - Phase C (80-100%): Hold at final tolerance — polishing
 
     Example:
-        callback = EpsilonTightening(initial_tol=8.0, final_tol=0.5, tighten_until=0.7)
+        callback = EpsilonTightening(initial_tol=8.0, final_tol=1.0)
         result = minimize(problem, algorithm, callback=callback)
     """
 
     def __init__(
         self,
         initial_tol: float = 8.0,
-        final_tol: float = 0.5,
-        tighten_until: float = 0.7,
+        final_tol: float = 1.0,
+        hold_until: float = 0.4,
+        tighten_until: float = 0.8,
     ):
         """Initialize epsilon-tightening callback.
 
         Args:
             initial_tol: Starting closure tolerance in studs (loose).
             final_tol: Final closure tolerance in studs (tight).
-            tighten_until: Progress fraction (0-1) at which tightening completes.
+            hold_until: Progress fraction to hold at initial tolerance.
+            tighten_until: Progress fraction at which tightening completes.
         """
         super().__init__()
         self.initial_tol = initial_tol
         self.final_tol = final_tol
+        self.hold_until = hold_until
         self.tighten_until = tighten_until
 
     def notify(self, algorithm):
-        """Called after each generation.
-
-        Args:
-            algorithm: The pymoo algorithm instance.
-        """
-        # Get progress through optimization
+        """Called after each generation."""
         n_gen = algorithm.n_gen
         n_max_gen = getattr(algorithm.termination, 'n_max_gen', None)
 
         if n_max_gen is None:
-            # Termination doesn't have n_max_gen, skip tightening
             return
 
         progress = n_gen / n_max_gen
 
-        # Only tighten until tighten_until fraction
-        if progress < self.tighten_until:
-            # Linear interpolation
-            t = progress / self.tighten_until
+        if progress < self.hold_until:
+            # Phase A: hold at initial (broad exploration)
+            tolerance = self.initial_tol
+        elif progress < self.tighten_until:
+            # Phase B: linear tighten
+            t = (progress - self.hold_until) / (self.tighten_until - self.hold_until)
             tolerance = self.initial_tol * (1 - t) + self.final_tol * t
         else:
-            # Past tighten_until, keep at final tolerance
+            # Phase C: hold at final (polishing)
             tolerance = self.final_tol
 
-        # Update problem tolerance
         if hasattr(algorithm, 'problem'):
             algorithm.problem.closure_tolerance = tolerance
+
+
+class StagnationCallback(Callback):
+    """Detect stagnation and trigger hypermutation response.
+
+    Monitors best feasible fitness over a sliding window. When no improvement
+    is detected for `patience` generations, triggers population restart by
+    injecting fresh random individuals into the worst portion of the population.
+
+    Based on research recommendation: 50 gens no improvement -> hypermutation.
+    """
+
+    def __init__(
+        self,
+        patience: int = 50,
+        inject_ratio: float = 0.10,
+    ):
+        """Initialize stagnation detector.
+
+        Args:
+            patience: Generations without improvement before triggering.
+            inject_ratio: Fraction of population to replace with random.
+        """
+        super().__init__()
+        self.patience = patience
+        self.inject_ratio = inject_ratio
+        self._best_fitness = float('inf')
+        self._gens_without_improvement = 0
+        self._logger = logging.getLogger(__name__)
+
+    def notify(self, algorithm):
+        """Called after each generation."""
+        pop = algorithm.pop
+        F = pop.get("F")
+        G = pop.get("G")
+
+        if F is None or len(F) == 0:
+            return
+
+        # Find best feasible fitness
+        current_best = float('inf')
+        if G is not None:
+            feasible_mask = np.all(G <= 0, axis=1)
+            if np.any(feasible_mask):
+                current_best = float(np.min(F[feasible_mask, 0]))
+
+        # Check for improvement
+        if current_best < self._best_fitness - 1e-8:
+            self._best_fitness = current_best
+            self._gens_without_improvement = 0
+        else:
+            self._gens_without_improvement += 1
+
+        # Trigger stagnation response
+        if self._gens_without_improvement == self.patience:
+            self._logger.info(
+                f"Gen {algorithm.n_gen}: STAGNATION detected "
+                f"({self.patience} gens, best={-self._best_fitness:.1%}). "
+                f"Injecting {self.inject_ratio:.0%} fresh individuals."
+            )
+            self._inject_random(algorithm)
+
+        # Repeated stagnation — inject again every patience/2 gens
+        elif (self._gens_without_improvement > self.patience
+              and self._gens_without_improvement % (self.patience // 2) == 0):
+            self._logger.info(
+                f"Gen {algorithm.n_gen}: Continued stagnation "
+                f"({self._gens_without_improvement} gens). Re-injecting."
+            )
+            self._inject_random(algorithm)
+
+    def _inject_random(self, algorithm):
+        """Replace worst individuals with fresh random chromosomes."""
+        pop = algorithm.pop
+        X = pop.get("X")
+        F = pop.get("F")
+
+        if X is None or F is None:
+            return
+
+        n_inject = max(1, int(len(X) * self.inject_ratio))
+
+        # Find worst individuals (highest F = lowest utilization)
+        worst_indices = np.argsort(F[:, 0])[-n_inject:]
+
+        # Generate fresh random chromosomes in [0, 1]
+        xl = algorithm.problem.xl
+        xu = algorithm.problem.xu
+
+        for idx in worst_indices:
+            X[idx] = np.random.uniform(xl, xu)
 
 
 # =============================================================================

@@ -50,6 +50,9 @@ class SwitchPair:
     in_switch_idx: int = -1  # Determined from switch mask
     out_switch_idx: int = -1  # Determined from switch mask
     branch_pieces: List[int] = field(default_factory=list)
+    # Positions absorbed by switches (their FK is included in the switch FK)
+    # Used to skip these positions during path FK computation to preserve closure
+    absorbed_positions: List[int] = field(default_factory=list)
 
     def is_valid(self) -> bool:
         """Check if switch pair is properly defined."""
@@ -186,9 +189,17 @@ class MultiPathLayout:
     # Backward compatibility with Layout interface
     @property
     def n_pieces(self) -> int:
-        """Number of pieces (from main path for compatibility)."""
+        """Total pieces including main loop and all branch pieces.
+
+        Counts main loop pieces plus branch pieces from switch pairs.
+        This ensures switch-containing layouts get credit for all pieces used.
+        """
         main = self.get_main_path()
-        return main.n_pieces if main else len(self.main_loop_pieces)
+        n = main.n_pieces if main else len(self.main_loop_pieces)
+        # Add branch pieces from switch pairs (not double-counted)
+        for sp in self.switch_pairs:
+            n += len(sp.branch_pieces)
+        return n
 
     @property
     def indices(self) -> NDArray[np.int32]:
