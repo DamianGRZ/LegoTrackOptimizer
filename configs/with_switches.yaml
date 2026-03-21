@@ -1,0 +1,54 @@
+# LEGO Track Optimizer - Configuration with Switches
+# Includes R40 switch tracks for layouts with turnout points
+
+inventory:
+  # Straights
+  #STRAIGHT_24: 8
+  STRAIGHT_16: 80
+  # R40 curves
+  R40_LEFT: 40
+  R40_RIGHT: 40
+  # R40 Switches (straight-through mode in optimizer)
+  R40_SWITCH_LEFT_IN: 4
+  R40_SWITCH_LEFT_OUT: 4
+  R40_SWITCH_RIGHT_IN: 4
+  R40_SWITCH_RIGHT_OUT: 4
+
+boundary:
+  min_x: -250.0
+  max_x: 250.0
+  min_y: -250.0
+  max_y: 250.0
+
+#boundary:
+#  min_x: -100.0
+#  max_x: 100.0
+#  min_y: -100.0
+#  max_y: 100.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 1000
+  n_gen: 300
+  crossover_prob: 0.6
+  crossover_eta: 15.0
+  mutation_prob: 0.5
+  mutation_eta: 20.0
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 100  # Early stop if no improvement for 100 generations
+
+physics:
+  safety_factor: 0.8
+  friction_coeff: 0.30
+  gravity: 9.81
+  motor_top_speed: 1.57
+  max_accel: 3.92
+  brake_decel: 2.45
+  stud_mm: 8.0
+
+closure_tolerance: 0.5
+angle_tolerance: 5.0
+n_workers: 32  # Enable parallel evaluation

@@ -1,0 +1,40 @@
+# LEGO Track Optimizer - Default Configuration
+# Rich inventory with plenty of all piece types
+
+inventory:
+  # Straights
+  STRAIGHT_24: 8
+  STRAIGHT_16: 16
+  # R40 curves (LEGO standard) - 16 needed for circle
+  R40_LEFT: 20
+  R40_RIGHT: 20
+
+boundary:
+  min_x: -150.0
+  max_x: 150.0
+  min_y: -150.0
+  max_y: 150.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 1000
+  n_gen: 100
+  crossover_prob: 0.3
+  crossover_eta: 15.0
+  mutation_prob: 0.5
+  mutation_eta: 20.0
+  eliminate_duplicates: true
+  seed: null
+
+physics:
+  safety_factor: 0.8
+  friction_coeff: 0.30
+  gravity: 9.81
+  motor_top_speed: 1.57
+  max_accel: 3.92
+  brake_decel: 2.45
+  stud_mm: 8.0
+
+closure_tolerance: 0.5
+angle_tolerance: 5.0
+n_workers: 1

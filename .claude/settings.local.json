@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(touch:*)",
+      "WebFetch(domain:pymoo.org)",
+      "Bash(python -c:*)",
+      "Bash(python -m pytest --tb=short -q)",
+      "Bash(python main.py --config configs/with_switches.yaml --verbose)",
+      "Bash(python main.py:*)",
+      "WebFetch(domain:montystrains.net)",
+      "mcp__context7__resolve-library-id",
+      "WebSearch",
+      "mcp__context7__query-docs",
+      "Bash(python:*)",
+      "Bash(dir:*)",
+      "Bash(pytest:*)",
+      "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\encoding.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\encoding_integer.py\")",
+      "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\decoder.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\decoder_integer.py\")",
+      "Bash(copy \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\sampling.py\" \"S:\\\\Programming\\\\Repo\\\\DamianGRZ\\\\LegoTrackOptimizer\\\\src\\\\legacy\\\\sampling_integer.py\")",
+      "Bash(timeout /t 60 /nobreak)"
+    ]
+  }
+}
