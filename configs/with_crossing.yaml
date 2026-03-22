@@ -9,7 +9,7 @@ inventory:
   R40_LEFT: 20
   R40_RIGHT: 20
   # 90-degree crossing (allows track to cross itself)
-  CROSS_90: 2
+  CROSS_90: 20
 
 boundary:
   min_x: -100.0
@@ -18,15 +18,17 @@ boundary:
   max_y: 100.0
 
 algorithm:
-  name: NSGA2
+  name: BRKGA
   pop_size: 1000
   n_gen: 100
-  crossover_prob: 0.8
-  crossover_eta: 15.0
-  mutation_prob: 0.8
-  mutation_eta: 20.0
+  n_elites: 200
+  n_offsprings: 700
+  n_mutants: 100
+  bias: 0.70
+  heuristic_ratio: 0.08
+  seed_noise_sigma: 0.10
   eliminate_duplicates: true
-  seed: 22
+  seed: null
   termination:
     n_max_gen: 1000
     period: 100  # Early stop if no improvement for 100 generations

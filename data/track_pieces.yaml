@@ -203,7 +203,7 @@ crossings:
       - name: "vertical"
         entry_port: 2  # south
         exit_port: 3   # north
-        fk: {dx: 0.0, dy: 16.0, dtheta: 0.0}
+        fk: {dx: 16.0, dy: 0.0, dtheta: 0.0}  # In train's frame (entering north, going straight)
         physics: {radius_mm: null, speed_limit_ms: 1.57}
 
   # Double Crossover - allows trains to cross between parallel tracks

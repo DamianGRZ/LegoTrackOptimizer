@@ -181,8 +181,9 @@ class TestMultiSegmentSampling:
         assert np.all(X >= 0)
         assert np.all(X <= 1)
 
-        # The heuristic_ratio should be 0.20 (20%)
-        assert sampling.HEURISTIC_RATIO == 0.20
+        # Default heuristic ratio is 0.08 (8%) for BRKGA compatibility
+        assert sampling.HEURISTIC_RATIO == 0.08
+        assert sampling.heuristic_ratio == 0.08
 
     def test_simple_circle_pattern(self, catalog, default_config):
         """Simple circle has 16 R40_LEFT pieces."""

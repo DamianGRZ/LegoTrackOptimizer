@@ -1,6 +1,6 @@
 """Main entry point for LEGO Track Optimizer.
 
-Single-objective optimization to maximize piece utilization with Deb's CV constraints.
+BRKGA-based single-objective optimization to maximize piece utilization with Deb's CV constraints.
 """
 
 import argparse
@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from pymoo.algorithms.soo.nonconvex.ga import GA
+from pymoo.algorithms.soo.nonconvex.brkga import BRKGA
 from pymoo.core.callback import Callback
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
@@ -18,11 +18,15 @@ from src.data import TrackCatalog
 from src.decoder import decode_chromosome
 from src.encoding import N_VAR
 from src.sampling import INDEX_TO_ID
-from src.operators import create_crossover_operator, create_mutation_operator
-from src.problem import TrackOptimizationProblem, EpsilonTightening, StagnationCallback
+from src.problem import (
+    TrackOptimizationProblem,
+    EpsilonEliteSurvival,
+    EpsilonDecayCallback,
+    LocalSearchCallback,
+    StagnationCallback,
+)
 from src.repair import TrackRepairPipeline
 from src.sampling import MultiSegmentSampling
-from src.survival import StructuralNichingSurvival
 from src.visualization import plot_layout, plot_multi_path_layout
 
 
@@ -139,11 +143,22 @@ class ProgressCallback(Callback):
                     best_utilization = -np.min(F[:, 0])
                     best_pieces = int(best_utilization * self.total_inventory) if self.total_inventory > 0 else 0
                     pieces_str = f"{best_pieces}/{self.total_inventory}" if self.total_inventory > 0 else f"{best_pieces}"
+
+                    # Show ε-feasibility info if survival has epsilon
+                    eps_str = ""
+                    survival = getattr(algorithm, 'survival', None)
+                    epsilon = getattr(survival, 'epsilon', None)
+                    if epsilon is not None:
+                        cv = pop.get("cv")
+                        n_eps_feasible = int(np.sum(cv <= epsilon)) if cv is not None else 0
+                        eps_str = f" | ε-feas: {n_eps_feasible} | ε={epsilon:.2f}"
+
                     self.logger.info(
                         f"Gen {n_gen:4d} | "
                         f"Feasible: {n_feasible:4d}/{len(F)} | "
                         f"Pieces: {pieces_str} | "
                         f"Util: {best_utilization:.1%}"
+                        f"{eps_str}"
                     )
                 else:
                     # Bi-objective: F is (n, 2)
@@ -168,61 +183,39 @@ def run_optimization(
     config: OptimizationConfig,
     catalog: TrackCatalog,
     verbose: bool = False,
-    use_epsilon_tightening: bool = True,
-    initial_tolerance: float = 8.0,
-    final_tolerance: float = 0.5,
-    tighten_until: float = 0.7,
-    complex_ratio: float = 0.33,
 ) -> object:
-    """Run single-objective track optimization.
+    """Run BRKGA-based single-objective track optimization.
 
     Uses TrackOptimizationProblem with:
     - ONE objective: maximize piece utilization
-    - 4 constraints via Deb's CV rules (closure, angle, boundary, inventory)
-    - Optional epsilon-tightening for closure tolerance
+    - 4 constraints with ε-constraint survival (adaptive relaxation)
+    - EpsilonEliteSurvival: infeasible solutions compete by objective when cv <= ε
 
     Args:
         config: Optimization configuration.
         catalog: Track catalog.
         verbose: If True, log progress every 10 generations.
-        use_epsilon_tightening: Whether to use epsilon-tightening for closure.
-        initial_tolerance: Starting closure tolerance in studs (loose).
-        final_tolerance: Final closure tolerance in studs (tight).
-        tighten_until: Fraction of generations at which tightening completes.
-        complex_ratio: Minimum fraction of survivors with complex pieces.
 
     Returns:
         pymoo Result object.
     """
     logger = logging.getLogger(__name__)
 
-    # Create problem with initial tolerance
-    start_tolerance = initial_tolerance if use_epsilon_tightening else config.closure_tolerance
+    # Create problem with config tolerance (no epsilon tightening on the constraint itself)
     problem = TrackOptimizationProblem(
         catalog, config,
-        closure_tolerance=start_tolerance,
+        closure_tolerance=config.closure_tolerance,
         angle_tolerance=config.angle_tolerance,
     )
 
-    # Create sampler (needed for available_pieces list)
-    sampler = MultiSegmentSampling(catalog, config)
-
-    # Create structural niching survival to preserve complex solutions
-    # Pass available_pieces for proper RK decoding
-    survival = StructuralNichingSurvival(
-        complex_ratio=complex_ratio,
-        prefer_balanced_switches=True,
-        available_pieces=sampler.valid_pieces,
+    # Create sampler with BRKGA-tuned seeding (reduced ratio + noise)
+    sampler = MultiSegmentSampling(
+        catalog, config,
+        heuristic_ratio=config.algorithm.heuristic_ratio,
+        seed_noise_sigma=config.algorithm.seed_noise_sigma,
     )
 
-    # Create operators
-    crossover = create_crossover_operator(
-        catalog, config.inventory,
-        prob=config.algorithm.crossover_prob,
-    )
-    mutation = create_mutation_operator(catalog, config.inventory)
-
-    # Create repair pipeline (now RK-aware using decode-modify-re-encode)
+    # Create repair pipeline (RK-aware decode-modify-re-encode)
     repair = TrackRepairPipeline(
         catalog, config.inventory,
         enable_closure_repair=True,
@@ -230,16 +223,26 @@ def run_optimization(
         prefer_add_switches=True,
     )
 
-    # Create GA algorithm
-    algorithm = GA(
-        pop_size=config.algorithm.pop_size,
-        sampling=sampler,
-        crossover=crossover,
-        mutation=mutation,
-        repair=repair,
-        survival=survival,
-        eliminate_duplicates=True,
+    # Create ε-constraint survival (replaces pymoo's default EliteSurvival)
+    survival = EpsilonEliteSurvival(
+        n_elites=config.algorithm.n_elites,
+        eliminate_duplicates=config.algorithm.eliminate_duplicates,
     )
+
+    # Create BRKGA algorithm with custom survival
+    algorithm = BRKGA(
+        n_elites=config.algorithm.n_elites,
+        n_offsprings=config.algorithm.n_offsprings,
+        n_mutants=config.algorithm.n_mutants,
+        bias=config.algorithm.bias,
+        sampling=sampler,
+        survival=survival,
+        repair=repair,
+        eliminate_duplicates=config.algorithm.eliminate_duplicates,
+    )
+
+    # Store sampler ref for structured stagnation injection
+    algorithm._sampler_ref = sampler
 
     termination = get_termination("n_gen", config.algorithm.n_gen)
 
@@ -253,29 +256,32 @@ def run_optimization(
             total_inventory=config.total_inventory,
         ))
 
-    if use_epsilon_tightening:
-        callbacks.append(EpsilonTightening(
-            initial_tol=initial_tolerance,
-            final_tol=final_tolerance,
-            hold_until=0.4,
-            tighten_until=tighten_until,
-        ))
+    # ε-decay controls survival.epsilon: exploration → strict feasibility
+    callbacks.append(EpsilonDecayCallback(
+        n_max_gen=config.algorithm.n_gen,
+        hold_until=0.4, decay_until=0.8,
+    ))
 
-    # Always add stagnation detection
+    # RK-space local search on elites (research Topic 3)
+    callbacks.append(LocalSearchCallback(
+        problem, every_n_gen=5, n_elite_frac=0.1, max_steps=3,
+    ))
+
+    # Stagnation detection with fresh individual injection
     callbacks.append(StagnationCallback(patience=50, inject_ratio=0.10))
 
     # Log optimization parameters
-    logger.info("Starting track optimization...")
-    logger.info(f"Population size: {config.algorithm.pop_size}")
-    logger.info(f"Generations: {config.algorithm.n_gen}")
+    logger.info("Starting BRKGA track optimization...")
+    logger.info(f"Population: {config.algorithm.pop_size} "
+                f"(elites={config.algorithm.n_elites}, "
+                f"offspring={config.algorithm.n_offsprings}, "
+                f"mutants={config.algorithm.n_mutants})")
+    logger.info(f"Generations: {config.algorithm.n_gen}, bias: {config.algorithm.bias}")
     logger.info(f"Chromosome length: {N_VAR} genes")
     logger.info(f"Total inventory: {config.total_inventory} pieces")
-    logger.info("Objective: maximize piece utilization")
-    logger.info("Constraints: closure, angle, boundary, inventory, loose_ports (Deb's CV)")
-    logger.info(f"Structural niching: {complex_ratio*100:.0f}% complex pieces preserved")
-    if use_epsilon_tightening:
-        tighten_gen = int(config.algorithm.n_gen * tighten_until)
-        logger.info(f"Epsilon-tightening: {initial_tolerance:.1f} -> {final_tolerance:.1f} studs (until gen {tighten_gen})")
+    logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%} "
+                f"(noise sigma={config.algorithm.seed_noise_sigma})")
+    logger.info("ε-constraint survival: auto ε₀ → 0 (hold 40%, decay by 80%)")
 
     # Combine callbacks
     if len(callbacks) == 1:
@@ -364,42 +370,69 @@ def save_results(
     if G is not None:
         np.savetxt(output_dir / "constraints.csv", G, delimiter=",")
 
-    # Find best feasible solution
+    # Find best feasible and best infeasible solutions
     feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
     feasible_indices = np.where(feasible_mask)[0]
 
-    if len(feasible_indices) > 0:
-        # Best feasible (highest utilization = most negative F)
-        best_idx = feasible_indices[np.argmin(F[feasible_indices, 0])]
-        best_chromosome = X[best_idx]
-        best_utilization = -F[best_idx, 0]
-
-        logger.info(f"Best feasible utilization: {best_utilization:.2%}")
-
-        # Decode and plot best layout
-        layout = decode_chromosome(best_chromosome, catalog, config.inventory)
+    def _plot_layout(layout, title, path):
         if layout.n_switch_pairs > 0 and layout.n_paths > 1:
-            # Use multi-path plot to show all traversal paths including branch
-            plot_multi_path_layout(
-                layout, catalog, config.boundary,
-                f"Best Layout ({layout.n_pieces} pieces, {best_utilization:.1%} util)",
-                output_dir / "best_layout.png"
-            )
-            logger.info(f"Best layout: {layout.n_pieces} pieces, {layout.n_switch_pairs} switch pairs, {layout.n_paths} paths")
+            plot_multi_path_layout(layout, catalog, config.boundary, title, path)
         else:
-            plot_layout(
-                layout, catalog, config.boundary,
-                f"Best Layout ({layout.n_pieces} pieces, {best_utilization:.1%} util)",
-                output_dir / "best_layout.png"
+            plot_layout(layout, catalog, config.boundary, title, path)
+
+    # Always save best overall (by objective, ignoring feasibility)
+    best_overall_idx = np.argmin(F[:, 0])
+    best_overall_chr = X[best_overall_idx]
+    best_overall_layout = decode_chromosome(best_overall_chr, catalog, config.inventory)
+    best_overall_util = -F[best_overall_idx, 0]
+    best_overall_cv = float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
+    is_feasible = feasible_mask[best_overall_idx] if G is not None else True
+
+    logger.info(
+        f"Best overall: {best_overall_layout.n_pieces} pieces, "
+        f"{best_overall_util:.1%} util, CV={best_overall_cv:.2f}"
+        f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
+    )
+
+    if len(feasible_indices) > 0:
+        best_feas_idx = feasible_indices[np.argmin(F[feasible_indices, 0])]
+        best_feas_chr = X[best_feas_idx]
+        best_feas_util = -F[best_feas_idx, 0]
+        best_feas_layout = decode_chromosome(best_feas_chr, catalog, config.inventory)
+        logger.info(f"Best feasible: {best_feas_layout.n_pieces} pieces, {best_feas_util:.1%} util")
+
+        # Plot feasible as best_layout.png
+        _plot_layout(
+            best_feas_layout,
+            f"Best Feasible ({best_feas_layout.n_pieces} pieces, {best_feas_util:.1%} util)",
+            output_dir / "best_layout.png",
+        )
+
+        # Also save best infeasible solution (may have more pieces)
+        infeasible_indices = np.where(~feasible_mask)[0]
+        if len(infeasible_indices) > 0:
+            best_inf_idx = infeasible_indices[np.argmin(F[infeasible_indices, 0])]
+            best_inf_layout = decode_chromosome(X[best_inf_idx], catalog, config.inventory)
+            best_inf_util = -F[best_inf_idx, 0]
+            best_inf_cv = float(np.sum(np.maximum(0, G[best_inf_idx])))
+            _plot_layout(
+                best_inf_layout,
+                f"Best Infeasible ({best_inf_layout.n_pieces} pieces, "
+                f"{best_inf_util:.1%} util, CV={best_inf_cv:.1f})",
+                output_dir / "best_infeasible.png",
             )
-            logger.info(f"Best layout: {layout.n_pieces} pieces, closure={layout.closure_error:.2f}")
+            logger.info(
+                f"Best infeasible: {best_inf_layout.n_pieces} pieces, "
+                f"{best_inf_util:.1%} util, CV={best_inf_cv:.2f}"
+            )
     else:
-        # No feasible solutions - plot best infeasible
-        best_idx = np.argmin(F[:, 0])
-        best_chromosome = X[best_idx]
-        layout = decode_chromosome(best_chromosome, catalog, config.inventory)
-        plot_layout(layout, catalog, config.boundary, "Best Layout (infeasible)", output_dir / "best_layout.png")
-        logger.warning("No feasible solutions - saved best infeasible")
+        # No feasible — save best infeasible as best_layout.png
+        _plot_layout(
+            best_overall_layout,
+            f"Best Layout (infeasible, {best_overall_layout.n_pieces} pieces, CV={best_overall_cv:.1f})",
+            output_dir / "best_layout.png",
+        )
+        logger.warning("No feasible solutions found")
 
     logger.info(f"Results saved to {output_dir}")
 
@@ -435,36 +468,6 @@ def main() -> None:
         action="store_true",
         help="Run quick test (20 generations, pop_size=20)",
     )
-    parser.add_argument(
-        "--no-epsilon-tightening",
-        action="store_true",
-        help="Disable epsilon-tightening for closure tolerance",
-    )
-    parser.add_argument(
-        "--initial-tolerance",
-        type=float,
-        default=8.0,
-        help="Initial closure tolerance in studs (default: 8.0)",
-    )
-    parser.add_argument(
-        "--final-tolerance",
-        type=float,
-        default=1.0,
-        help="Final closure tolerance in studs (default: 1.0)",
-    )
-    parser.add_argument(
-        "--tighten-until",
-        type=float,
-        default=0.7,
-        help="Fraction of generations at which tightening completes (default: 0.7)",
-    )
-    parser.add_argument(
-        "--complex-ratio",
-        type=float,
-        default=0.33,
-        help="Minimum fraction of survivors with complex pieces (switches, crossings). Default: 0.33",
-    )
-
     args = parser.parse_args()
 
     # Setup logging
@@ -478,6 +481,9 @@ def main() -> None:
     # Override for quick test
     if args.quick_test:
         config.algorithm.n_gen = 20
+        config.algorithm.n_elites = 4
+        config.algorithm.n_offsprings = 14
+        config.algorithm.n_mutants = 2
         config.algorithm.pop_size = 20
         logger.info("Quick test mode: 20 generations, pop_size=20")
 
@@ -490,11 +496,6 @@ def main() -> None:
     res = run_optimization(
         config, catalog,
         verbose=args.verbose,
-        use_epsilon_tightening=not args.no_epsilon_tightening,
-        initial_tolerance=args.initial_tolerance,
-        final_tolerance=args.final_tolerance,
-        tighten_until=args.tighten_until,
-        complex_ratio=args.complex_ratio,
     )
     save_results(res, output_dir, catalog, config)
 

@@ -292,6 +292,9 @@ class TrackCatalog:
         # Build route FK tables for multi-route pieces
         self._build_route_tables()
 
+        # Build piece role classification tables (fork/merge/crossing)
+        self._build_role_tables()
+
     def _build_route_tables(self) -> None:
         """Build multi-route FK tables."""
         for idx, topology in self._topologies.items():
@@ -439,6 +442,80 @@ class TrackCatalog:
             for idx, t in self._topologies.items()
             if t.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
         ]
+
+    # =========================================================================
+    # Port-based piece role classification (Phase B)
+    # =========================================================================
+
+    def get_piece_role(self, piece_idx: int) -> str:
+        """Classify piece by its route structure: 'fork', 'merge', 'crossing', or 'simple'.
+
+        Derived programmatically from routes — no hardcoded piece lists.
+        - Fork: same entry port, multiple exit ports (e.g., SWITCH_LEFT_IN)
+        - Merge: multiple entry ports, same exit port (e.g., SWITCH_LEFT_OUT)
+        - Crossing: disjoint port sets per route (e.g., CROSS_90)
+        """
+        topo = self.get_topology(piece_idx)
+        if topo is None or len(topo.routes) < 2:
+            return "simple"
+
+        entry_ports = {r.entry_port for r in topo.routes}
+        exit_ports = {r.exit_port for r in topo.routes}
+
+        if len(entry_ports) == 1 and len(exit_ports) > 1:
+            return "fork"
+        if len(entry_ports) > 1 and len(exit_ports) == 1:
+            return "merge"
+        return "crossing"
+
+    def get_alternate_route(self, piece_idx: int) -> Optional[FKRoute]:
+        """Get the non-default route for a multi-route piece.
+
+        For forks: the diverge route. For merges: the merge route.
+        Returns None for simple pieces or pieces without alternate routes.
+        """
+        topo = self.get_topology(piece_idx)
+        if topo is None or len(topo.routes) < 2:
+            return None
+        return topo.routes[1]  # Route 0 is default, route 1 is alternate
+
+    def can_pair(self, fork_idx: int, merge_idx: int) -> bool:
+        """Check if fork piece can pair with merge piece for a branch.
+
+        Pairing requires their alternate route angles to cancel
+        (fork diverges +θ, merge converges -θ, or vice versa).
+        """
+        fork_alt = self.get_alternate_route(fork_idx)
+        merge_alt = self.get_alternate_route(merge_idx)
+        if not fork_alt or not merge_alt:
+            return False
+        # Angles must cancel: LEFT_IN (+22.5) + LEFT_OUT (-22.5) = 0
+        return abs(fork_alt.dtheta + merge_alt.dtheta) < 1.0
+
+    def _build_role_tables(self) -> None:
+        """Build lookup tables for piece roles and compatibility."""
+        self._fork_indices: set = set()
+        self._merge_indices: set = set()
+        self._crossing_indices: set = set()
+        self._compatible_pairs: Dict[int, List[int]] = {}
+
+        for idx in self._topologies:
+            role = self.get_piece_role(idx)
+            if role == "fork":
+                self._fork_indices.add(idx)
+            elif role == "merge":
+                self._merge_indices.add(idx)
+            elif role == "crossing":
+                self._crossing_indices.add(idx)
+
+        # Build compatibility map: which merges can each fork pair with?
+        for fork_idx in self._fork_indices:
+            compatible = [
+                merge_idx for merge_idx in self._merge_indices
+                if self.can_pair(fork_idx, merge_idx)
+            ]
+            if compatible:
+                self._compatible_pairs[fork_idx] = compatible
 
     def validate_inventory(self, usage: Dict[int, int], inventory: Dict[str, int]) -> bool:
         """Check if usage is within inventory limits.

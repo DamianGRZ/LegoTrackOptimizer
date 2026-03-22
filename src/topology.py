@@ -132,6 +132,7 @@ class MultiPathLayout:
     paths: List[TraversalPath] = field(default_factory=list)
     start_position: Tuple[float, float] = (0.0, 0.0)
     loose_port_count: int = 0  # Unconnected switch/crossing port count
+    secondary_closure_error: float = 0.0  # Closure error of secondary crossing loop
 
     @property
     def n_switch_pairs(self) -> int:
