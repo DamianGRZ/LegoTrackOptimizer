@@ -153,8 +153,9 @@ class TestTemplateSidingExtraction:
         state = _decode_main_loop(chromosome, catalog, inventory_by_index, config)
         switch_pairs = _extract_switch_pairs(chromosome, state, catalog, inventory_by_index, config)
 
-        # Inactive branch should not be extracted
-        assert len(switch_pairs) == 0
+        # Inactive branch slot should not trigger injection
+        # (Pass 2 scan may still find naturally-placed switches)
+        assert all(sp.in_position != 1 for sp in switch_pairs)  # No injection at slot's in_pos
 
     def test_invalid_in_position_rejected(self, catalog: TrackCatalog, switches_config: OptimizationConfig):
         """Branch with IN position beyond main loop should be rejected."""
@@ -303,9 +304,10 @@ class TestSwitchesInMainLoop:
         config = DecoderConfig()
         state = _decode_main_loop(chromosome, catalog, inventory_by_index, config)
 
-        # Check that switches were placed in the main loop
-        assert R40_SWITCH_LEFT_IN in state.piece_indices
-        assert R40_SWITCH_LEFT_OUT in state.piece_indices
+        # Switches are now reserved for injection (not placed during main loop construction)
+        # Verify main loop was built without switches
+        assert R40_SWITCH_LEFT_IN not in state.piece_indices
+        assert R40_SWITCH_LEFT_OUT not in state.piece_indices
 
     def test_switch_pair_matching(self, catalog: TrackCatalog, switches_config: OptimizationConfig):
         """LEFT_IN and LEFT_OUT switches should be matched as a pair."""

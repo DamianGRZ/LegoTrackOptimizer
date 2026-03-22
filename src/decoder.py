@@ -52,15 +52,7 @@ from .encoding import (
     rk_to_position,
 )
 from .geometry import Layout, compute_fk_chain
-from .templates import (
-    LEFT_SIDING,
-    RIGHT_SIDING,
-    TEMPLATES,
-    STRAIGHT_16,
-    check_siding_inventory,
-    compute_branch_pieces,
-    compute_required_main_distance,
-)
+# templates.py no longer used by decoder — port-based branch computation (Phase B)
 from .topology import MultiPathLayout, SwitchPair, TraversalPath
 
 
@@ -295,15 +287,38 @@ def decode_chromosome(
         chromosome, state, switch_pairs, catalog, inventory_by_index, config
     )
 
-    # Apply starting position translation
-    # Get RK position values [0, 1] and scale to world coordinates
-    rk_start_x, rk_start_y = get_start_position(chromosome)
-    start_x, start_y = config.scale_position(rk_start_x, rk_start_y)
-    multi_path.start_position = (start_x, start_y)
-    for path in multi_path.paths:
-        if len(path.states) > 0:
-            path.states[:, 0] += start_x
-            path.states[:, 1] += start_y
+    # Phase 4: Build secondary loops through crossings
+    secondary_loops = _build_secondary_loops(
+        chromosome, state, catalog, inventory_by_index, config
+    )
+    for sec_path in secondary_loops:
+        multi_path.paths.append(sec_path)
+    # Store secondary closure for constraint
+    if secondary_loops:
+        multi_path.secondary_closure_error = min(p.closure_error for p in secondary_loops)
+    else:
+        multi_path.secondary_closure_error = 0.0
+
+    # Auto-center layout within boundary instead of using RK start position.
+    # This eliminates boundary violations for correctly-shaped layouts and
+    # removes 2 genes from the effective search space.
+    # Closure and angle are translation-invariant — centering doesn't affect them.
+    all_x = np.concatenate([p.states[:, 0] for p in multi_path.paths if len(p.states) > 0])
+    all_y = np.concatenate([p.states[:, 1] for p in multi_path.paths if len(p.states) > 0])
+
+    if len(all_x) > 0:
+        layout_cx = (all_x.min() + all_x.max()) / 2
+        layout_cy = (all_y.min() + all_y.max()) / 2
+        boundary_cx = (config.boundary_min_x + config.boundary_max_x) / 2
+        boundary_cy = (config.boundary_min_y + config.boundary_max_y) / 2
+        shift_x = boundary_cx - layout_cx
+        shift_y = boundary_cy - layout_cy
+
+        multi_path.start_position = (shift_x, shift_y)
+        for path in multi_path.paths:
+            if len(path.states) > 0:
+                path.states[:, 0] += shift_x
+                path.states[:, 1] += shift_y
 
     return multi_path
 
@@ -361,13 +376,29 @@ def _decode_main_loop(
     state = DecoderState()
     state.states.append((0.0, 0.0, 0.0))  # Initial state at origin
 
+    # Track signed angle for closure-aware piece filtering
+    signed_angle = 0.0
+
     piece_keys = get_piece_keys(chromosome)
 
     for rk_value in piece_keys:
         if rk_value < RK_INACTIVE_THRESHOLD:
             continue
 
-        available_pieces = _get_available_pieces(inventory_by_index, state.inventory_used)
+        available_pieces = _get_available_pieces(
+            inventory_by_index, state.inventory_used,
+            fk_table=catalog._fk_table,
+            signed_angle=signed_angle,
+            target_angle=config.target_angle,
+        )
+        if not available_pieces:
+            continue
+
+        # Exclude fork/merge pieces from natural placement — reserved for injection
+        available_pieces = [
+            p for p in available_pieces
+            if p not in catalog._fork_indices and p not in catalog._merge_indices
+        ]
         if not available_pieces:
             continue
 
@@ -394,10 +425,14 @@ def _decode_main_loop(
         new_y = state.y + dx * sin_t + dy * cos_t
         new_theta = state.theta + dtheta
 
+        # No position-budget check — BRKGA evolves compact layouts
+        # through closure-scaled objective and heuristic seeds
+
         state.x = new_x
         state.y = new_y
         state.theta = new_theta
         state.cumulative_angle += abs(dtheta)
+        signed_angle += dtheta
 
         state.use_piece(piece_idx)
         state.states.append((new_x, new_y, new_theta))
@@ -417,16 +452,8 @@ def _decode_main_loop(
 
 
 # =============================================================================
-# Phase 2: Template-Based Siding Extraction
+# Phase 2: Port-Based Switch Pair Extraction
 # =============================================================================
-
-# Switch piece indices (from track_pieces.yaml)
-SWITCH_PIECE_IDS = {
-    "R40_SWITCH_LEFT_IN": 5,
-    "R40_SWITCH_LEFT_OUT": 6,
-    "R40_SWITCH_RIGHT_IN": 7,
-    "R40_SWITCH_RIGHT_OUT": 8,
-}
 
 
 def _extract_switch_pairs(
@@ -436,16 +463,17 @@ def _extract_switch_pairs(
     inventory_by_index: Dict[int, int],
     config: DecoderConfig,
 ) -> List[SwitchPair]:
-    """Extract switch pairs from branch slots AND existing switches in main loop.
+    """Extract switch pairs using port-based role classification.
 
-    Two-pass approach:
-    1. Template-based: Read branch slots and inject switches into main loop
-    2. Legacy detection: Scan main loop for switches already placed and pair them
+    Unified single-pass approach (replaces template-based Pass 1 + legacy Pass 2):
+    1. Scan main loop for fork pieces (catalog._fork_indices)
+    2. For each fork, search downstream for compatible merge (catalog._compatible_pairs)
+    3. Check main section straightness, compute branch from FK, verify inventory
 
     Args:
-        chromosome: Full chromosome array with branch slot params.
+        chromosome: Full chromosome array (branch slots still influence placement).
         state: Decoder state with main loop pieces.
-        catalog: Track catalog.
+        catalog: Track catalog with role classification.
         inventory_by_index: Available inventory by piece index.
         config: Decoder configuration.
 
@@ -459,452 +487,427 @@ def _extract_switch_pairs(
         return switch_pairs
 
     pair_id = 0
-    used_positions = set()  # Track positions already used in pairs
+    used_positions: Set[int] = set()
 
     # =========================================================================
-    # Pass 1: Template-based branch slot processing
+    # Pass 1: Branch slot injection (chromosome-driven switch placement)
+    # Reads branch slot genes [200-216] to inject switches at straight sections
     # =========================================================================
     for slot_idx in range(B_MAX):
-        # Read template parameters from branch slot
-        in_pos, handedness, n_straights, active = get_branch_template_params(chromosome, slot_idx)
-
-        # Skip inactive branches
-        if not active or in_pos < 0:
-            continue
-
-        # Validate IN_pos is within main loop
-        if in_pos >= n_main_loop:
-            continue
-
-        # Switch FK is (32, 0, 0) — straight, no angle. Only replace
-        # straight pieces to preserve angular geometry for closure.
-        if state.piece_indices[in_pos] not in (0, 1):  # STRAIGHT_16=0, STRAIGHT_24=1
-            # Scan nearby positions for a straight
-            found = False
-            for offset in range(1, 4):
-                for candidate in [in_pos + offset, in_pos - offset]:
-                    if 0 <= candidate < n_main_loop and candidate not in used_positions:
-                        if state.piece_indices[candidate] in (0, 1):
-                            in_pos = candidate
-                            found = True
-                            break
-                if found:
-                    break
-            if not found:
-                continue
-
-        # Skip if position already used by another branch slot
-        if in_pos in used_positions:
-            continue
-
-        # Get template for this handedness (0=LEFT, 1=RIGHT)
-        template = TEMPLATES.get(handedness)
-        if template is None:
-            continue
-
-        # Compute required main loop distance for this siding
-        required_distance = compute_required_main_distance(template, n_straights)
-
-        # Find OUT position based on template geometry
-        out_pos = _find_out_position_for_siding(
-            in_pos, required_distance, state.piece_indices, catalog
+        in_pos, handedness, n_straights, active = get_branch_template_params(
+            chromosome, slot_idx
         )
-
-        # Skip if no valid OUT position found
-        if out_pos is None or out_pos >= n_main_loop:
+        if not active or in_pos < 0 or in_pos >= n_main_loop:
             continue
 
-        # Check inventory for switch pair
-        in_switch_idx = template.in_switch_idx
-        out_switch_idx = template.out_switch_idx
+        # Determine fork/merge indices from handedness using catalog roles
+        if handedness in (0, 2):  # LEFT or LEFT_REVERSE
+            fork_candidates = [
+                idx for idx in catalog._fork_indices
+                if catalog.get_alternate_route(idx) is not None
+                and catalog.get_alternate_route(idx).dtheta > 0
+            ]
+        else:  # RIGHT or RIGHT_REVERSE
+            fork_candidates = [
+                idx for idx in catalog._fork_indices
+                if catalog.get_alternate_route(idx) is not None
+                and catalog.get_alternate_route(idx).dtheta < 0
+            ]
 
-        in_avail = inventory_by_index.get(in_switch_idx, 0) - state.get_usage(in_switch_idx)
-        out_avail = inventory_by_index.get(out_switch_idx, 0) - state.get_usage(out_switch_idx)
+        if not fork_candidates:
+            continue
+        fork_idx = fork_candidates[0]
+        compatible = catalog._compatible_pairs.get(fork_idx, [])
+        if not compatible:
+            continue
+        merge_idx = compatible[0]
 
-        if in_avail < 1 or out_avail < 1:
-            continue  # No switch inventory
-
-        # Generate branch pieces from template
-        branch_pieces = compute_branch_pieces(template, n_straights)
-
-        # Check inventory for branch pieces
-        if not _check_branch_inventory(branch_pieces, inventory_by_index, state.inventory_used):
+        # Find IN position: nearest straight that can be replaced
+        actual_in = _find_straight_near(state.piece_indices, in_pos, used_positions)
+        if actual_in is None:
             continue
 
-        # All checks passed - inject switches into main loop
-        # Each switch (32 studs) replaces the piece at its position.
-        # To preserve closure geometry, we also absorb the NEXT piece
-        # (a switch covers ~2 straights worth of distance: 32 ≈ 2×16).
-        original_in_piece = state.piece_indices[in_pos]
-        original_out_piece = state.piece_indices[out_pos]
+        # Check switch inventory
+        fork_avail = inventory_by_index.get(fork_idx, 0) - state.inventory_used.get(fork_idx, 0)
+        merge_avail = inventory_by_index.get(merge_idx, 0) - state.inventory_used.get(merge_idx, 0)
+        if fork_avail < 1 or merge_avail < 1:
+            continue
 
-        state.piece_indices[in_pos] = in_switch_idx
-        state.piece_indices[out_pos] = out_switch_idx
+        # Find OUT position: near-straight section downstream
+        out_pos = _find_out_for_injection(
+            actual_in, state.piece_indices, used_positions,
+            fk_table=catalog._fk_table,
+        )
+        if out_pos is None:
+            continue
 
-        # Track which adjacent positions are absorbed by switches
-        # (their FK is "included" in the switch's 32-stud length)
-        absorbed = []
-        if in_pos + 1 < n_main_loop and in_pos + 1 != out_pos:
-            absorbed.append(in_pos + 1)
-            absorbed_piece = state.piece_indices[in_pos + 1]
-            if absorbed_piece >= 0:
-                state.inventory_used[absorbed_piece] = max(0, state.inventory_used.get(absorbed_piece, 1) - 1)
-        if out_pos + 1 < n_main_loop:
-            absorbed.append(out_pos + 1)
-            absorbed_piece = state.piece_indices[out_pos + 1]
-            if absorbed_piece >= 0:
-                state.inventory_used[absorbed_piece] = max(0, state.inventory_used.get(absorbed_piece, 1) - 1)
+        # Compute branch from FK
+        main_dist = _compute_main_fk_distance(
+            state.piece_indices, actual_in, out_pos, catalog._fk_table
+        )
+        branch = compute_branch_from_fk(fork_idx, merge_idx, main_dist, catalog)
+        if branch is None:
+            continue
 
-        # Track switch usage
-        state.use_piece(in_switch_idx, add_to_main_loop=False)
-        state.use_piece(out_switch_idx, add_to_main_loop=False)
+        # Check branch inventory
+        if not _check_branch_inventory(branch, inventory_by_index, state.inventory_used):
+            continue
+
+        # INJECT: replace straights with switches
+        original_in = state.piece_indices[actual_in]
+        original_out = state.piece_indices[out_pos]
+        state.piece_indices[actual_in] = fork_idx
+        state.piece_indices[out_pos] = merge_idx
 
         # Return original pieces to inventory
-        if original_in_piece >= 0:
-            state.inventory_used[original_in_piece] = max(0, state.inventory_used.get(original_in_piece, 1) - 1)
-        if original_out_piece >= 0:
-            state.inventory_used[original_out_piece] = max(0, state.inventory_used.get(original_out_piece, 1) - 1)
+        if original_in >= 0:
+            state.inventory_used[original_in] = max(
+                0, state.inventory_used.get(original_in, 1) - 1
+            )
+        if original_out >= 0:
+            state.inventory_used[original_out] = max(
+                0, state.inventory_used.get(original_out, 1) - 1
+            )
 
-        # Consume branch inventory
-        for piece_idx in branch_pieces:
-            state.inventory_used[piece_idx] = state.inventory_used.get(piece_idx, 0) + 1
+        # Track switch usage
+        state.inventory_used[fork_idx] = state.inventory_used.get(fork_idx, 0) + 1
+        state.inventory_used[merge_idx] = state.inventory_used.get(merge_idx, 0) + 1
 
         # Create switch pair
         pair = SwitchPair(
             pair_id=pair_id,
-            in_position=in_pos,
+            in_position=actual_in,
             out_position=out_pos,
-            in_switch_idx=in_switch_idx,
-            out_switch_idx=out_switch_idx,
+            in_switch_idx=fork_idx,
+            out_switch_idx=merge_idx,
+            branch_pieces=branch,
+        )
+        switch_pairs.append(pair)
+        pair_id += 1
+        used_positions.add(actual_in)
+        used_positions.add(out_pos)
+        state.connected_port2_positions.add(actual_in)
+        state.connected_port2_positions.add(out_pos)
+
+        # Consume branch inventory
+        for p in branch:
+            state.inventory_used[p] = state.inventory_used.get(p, 0) + 1
+
+    # =========================================================================
+    # Pass 2: Scan for naturally-placed switches (fallback)
+    # =========================================================================
+
+    # Find all fork and merge positions in main loop
+    fork_positions = []
+    merge_positions = []
+
+    for pos, piece_idx in enumerate(state.piece_indices):
+        if piece_idx in catalog._fork_indices:
+            fork_positions.append((pos, piece_idx))
+        elif piece_idx in catalog._merge_indices:
+            merge_positions.append((pos, piece_idx))
+
+    # For each fork, find the best compatible merge downstream
+    for fork_pos, fork_idx in fork_positions:
+        if fork_pos in used_positions:
+            continue
+
+        compatible_merges = catalog._compatible_pairs.get(fork_idx, [])
+        if not compatible_merges:
+            continue
+
+        best_pair = None
+        best_gap = float('inf')
+
+        for merge_pos, merge_idx in merge_positions:
+            # Merge must come after fork and not already used
+            if merge_pos <= fork_pos or merge_pos in used_positions:
+                continue
+            if merge_idx not in compatible_merges:
+                continue
+
+            # Check main section straightness (critical — prevents branch endpoint gap)
+            if not _main_section_is_straight(
+                state.piece_indices, fork_pos, merge_pos, catalog._fk_table
+            ):
+                continue
+
+            # Compute main FK distance between fork and merge
+            main_dist = _compute_main_fk_distance(
+                state.piece_indices, fork_pos, merge_pos, catalog._fk_table
+            )
+
+            # Compute branch pieces from FK
+            branch = compute_branch_from_fk(fork_idx, merge_idx, main_dist, catalog)
+            if branch is None:
+                continue
+
+            # Check branch inventory
+            if not _check_branch_inventory(branch, inventory_by_index, state.inventory_used):
+                continue
+
+            # Compute endpoint gap for ranking candidates
+            gap = abs(main_dist - sum(float(catalog._fk_table[p, 0]) for p in branch))
+            if gap < best_gap:
+                best_gap = gap
+                best_pair = (merge_pos, merge_idx, branch, main_dist)
+
+        if best_pair is None:
+            continue
+
+        merge_pos, merge_idx, branch_pieces, main_dist = best_pair
+
+        # Create switch pair
+        pair = SwitchPair(
+            pair_id=pair_id,
+            in_position=fork_pos,
+            out_position=merge_pos,
+            in_switch_idx=fork_idx,
+            out_switch_idx=merge_idx,
             branch_pieces=branch_pieces,
-            absorbed_positions=absorbed,
         )
         switch_pairs.append(pair)
         pair_id += 1
 
         # Mark positions as used
-        used_positions.add(in_pos)
-        used_positions.add(out_pos)
+        used_positions.add(fork_pos)
+        used_positions.add(merge_pos)
 
-        # Mark port 2 as connected for both switches
-        state.connected_port2_positions.add(in_pos)
-        state.connected_port2_positions.add(out_pos)
+        # Mark port 2 as connected
+        state.connected_port2_positions.add(fork_pos)
+        state.connected_port2_positions.add(merge_pos)
 
-    # =========================================================================
-    # Pass 2: Legacy switch detection from main loop
-    # =========================================================================
-    # Scan for switches already placed in main loop and try to pair them
-    # Process both left and right handedness
-    for handedness in [0, 1]:  # 0=LEFT, 1=RIGHT
-        template = TEMPLATES.get(handedness)
-        if template is None:
-            continue
+        # Consume branch inventory
+        for piece_idx in branch_pieces:
+            state.inventory_used[piece_idx] = state.inventory_used.get(piece_idx, 0) + 1
 
-        in_switch_idx = template.in_switch_idx
-        out_switch_idx = template.out_switch_idx
-
-        # Find all IN and OUT switch positions in main loop
-        in_positions = []
-        out_positions = []
-
-        for pos, piece_idx in enumerate(state.piece_indices):
-            if pos in used_positions:
-                continue  # Already used in a pair
-            if piece_idx == in_switch_idx:
-                in_positions.append(pos)
-            elif piece_idx == out_switch_idx:
-                out_positions.append(pos)
-
-        # Match IN switches with compatible OUT switches
-        for in_pos in sorted(in_positions):
-            best_out_pos = None
-            best_n_straights = None
-            best_distance_error = float('inf')
-
-            for out_pos in sorted(out_positions):
-                # OUT must come after IN
-                if out_pos <= in_pos:
-                    continue
-                # Don't reuse OUT switches
-                if out_pos in used_positions:
-                    continue
-
-                # Compute main loop distance between IN and OUT
-                main_distance = _compute_main_loop_distance(
-                    in_pos, out_pos, state.piece_indices, catalog
-                )
-
-                # Try different n_straights to find best match
-                for n_straights in range(9):  # 0 to 8 straights
-                    required_distance = compute_required_main_distance(template, n_straights)
-                    distance_error = abs(main_distance - required_distance)
-
-                    # Check if this is a better match (within tolerance)
-                    if distance_error < best_distance_error and distance_error < 8.0:
-                        # Check branch inventory
-                        branch_pieces = compute_branch_pieces(template, n_straights)
-                        has_inventory = _check_branch_inventory(
-                            branch_pieces, inventory_by_index, state.inventory_used
-                        )
-                        if has_inventory:
-                            best_out_pos = out_pos
-                            best_n_straights = n_straights
-                            best_distance_error = distance_error
-
-            # Create pair if match found
-            if best_out_pos is not None:
-                branch_pieces = compute_branch_pieces(template, best_n_straights)
-
-                pair = SwitchPair(
-                    pair_id=pair_id,
-                    in_position=in_pos,
-                    out_position=best_out_pos,
-                    in_switch_idx=in_switch_idx,
-                    out_switch_idx=out_switch_idx,
-                    branch_pieces=branch_pieces,
-                )
-                switch_pairs.append(pair)
-                pair_id += 1
-
-                # Mark positions as used
-                used_positions.add(in_pos)
-                used_positions.add(best_out_pos)
-
-                # Mark port 2 as connected for both switches
-                state.connected_port2_positions.add(in_pos)
-                state.connected_port2_positions.add(best_out_pos)
-
-                # Consume branch inventory
-                for piece_idx in branch_pieces:
-                    state.inventory_used[piece_idx] = state.inventory_used.get(piece_idx, 0) + 1
-
-    # Track all switch positions for loose port counting
+    # Track all multi-port positions for loose port counting
     for pos, piece_idx in enumerate(state.piece_indices):
-        if piece_idx in (5, 6, 7, 8):  # Switch indices
+        if piece_idx in catalog._fork_indices or piece_idx in catalog._merge_indices:
             if pos not in state.switch_port2_positions:
                 state.switch_port2_positions.append(pos)
 
     return switch_pairs
 
 
-def _find_out_position_for_siding(
-    in_pos: int,
-    required_distance: float,
+# =============================================================================
+# Port-Based Branch Computation (Phase B — replaces template-based approach)
+# =============================================================================
+
+
+def _find_straight_near(
     piece_indices: List[int],
-    catalog: TrackCatalog,
+    target_pos: int,
+    used_positions: Set[int],
+    search_range: int = 5,
 ) -> Optional[int]:
-    """Find OUT switch position based on template geometry.
+    """Find nearest straight piece to target position for switch injection."""
+    STRAIGHTS = {0, 1}  # STR_16, STR_24
+    n = len(piece_indices)
+    for offset in range(search_range):
+        for candidate in [target_pos + offset, target_pos - offset]:
+            if 0 <= candidate < n and candidate not in used_positions:
+                if piece_indices[candidate] in STRAIGHTS:
+                    return candidate
+    return None
 
-    Scans forward from IN position, accumulating arc length until
-    the required distance is reached.
 
-    Args:
-        in_pos: IN switch position in main loop.
-        required_distance: Required main loop distance for branch (studs).
-        piece_indices: Main loop piece indices.
-        catalog: Track catalog.
+def _find_out_for_injection(
+    in_pos: int,
+    piece_indices: List[int],
+    used_positions: Set[int],
+    fk_table: Optional[NDArray] = None,
+    min_gap: int = 3,
+    max_gap: int = 12,
+) -> Optional[int]:
+    """Find OUT position downstream from IN with near-straight section between.
 
-    Returns:
-        OUT switch position, or None if no valid position found.
+    The OUT position must be a straight piece. The section between IN and OUT
+    must have ≤5° net angle (allows some curves if they cancel).
     """
-    if in_pos < 0 or in_pos >= len(piece_indices):
-        return None
+    STRAIGHTS = {0, 1}
+    n = len(piece_indices)
 
-    accumulated = 0.0
-    tolerance = 8.0  # studs - allow slack for geometric matching
-
-    # Start after IN switch position
-    for pos in range(in_pos + 1, len(piece_indices)):
-        piece_idx = piece_indices[pos]
-        if piece_idx < 0:
+    for out_pos in range(in_pos + min_gap, min(in_pos + max_gap, n)):
+        if out_pos in used_positions:
             continue
-
-        # Get arc length for this piece
-        arc_length = float(catalog.get_arc_lengths(np.array([piece_idx]))[0])
-        accumulated += arc_length
-
-        # Check if we've reached the required distance
-        # OUT switch must replace a straight AND the section must have ~0° angle
-        if abs(accumulated - required_distance) <= tolerance:
-            if piece_idx in (0, 1):  # STRAIGHT_16 or STRAIGHT_24
-                section_angle = _compute_section_angle(
-                    in_pos, pos, piece_indices, catalog
-                )
-                if section_angle < 5.0:  # Near-zero angle = all straights
-                    return pos
+        if piece_indices[out_pos] not in STRAIGHTS:
             continue
-
-        if accumulated > required_distance + tolerance:
-            break  # Overshot
+        # Check section straightness (allows canceling curves)
+        if fk_table is not None:
+            if _main_section_is_straight(piece_indices, in_pos, out_pos, fk_table, tolerance=5.0):
+                return out_pos
+        else:
+            # Fallback: require all-straight
+            section = piece_indices[in_pos + 1 : out_pos]
+            if section and all(p in STRAIGHTS for p in section):
+                return out_pos
 
     return None
 
 
-def _match_switch_pairs(
-    in_positions: List[int],
-    out_positions: List[int],
-    in_switch_idx: int,
-    out_switch_idx: int,
-    handedness: int,
-    state: DecoderState,
-    catalog: TrackCatalog,
-    inventory_by_index: Dict[int, int],
-    config: DecoderConfig,
-) -> List[SwitchPair]:
-    """Match IN switches with compatible OUT switches.
+def _main_section_is_straight(
+    main_pieces: List[int],
+    fork_pos: int,
+    merge_pos: int,
+    fk_table: NDArray,
+    tolerance: float = 5.0,
+) -> bool:
+    """Check that main loop between fork and merge has ~0° net angle.
 
-    For each IN switch, find the nearest OUT switch that:
-    1. Comes AFTER the IN switch in the main loop
-    2. Is at approximately the right distance for a valid branch
+    Branch geometry assumes the main section is straight (parallel to branch).
+    If the main section curves, the branch endpoint will miss the merge port.
 
     Args:
-        in_positions: Main loop positions of IN switches.
-        out_positions: Main loop positions of OUT switches.
-        in_switch_idx: Piece index of IN switch type.
-        out_switch_idx: Piece index of OUT switch type.
-        handedness: 0=LEFT, 1=RIGHT.
-        state: Decoder state.
-        catalog: Track catalog.
-        inventory_by_index: Available inventory.
-        config: Decoder configuration.
+        main_pieces: Main loop piece indices.
+        fork_pos: Position of fork (IN switch) in main loop.
+        merge_pos: Position of merge (OUT switch) in main loop.
+        fk_table: FK table from catalog.
+        tolerance: Maximum allowed net angle in degrees.
 
     Returns:
-        List of matched SwitchPair objects.
+        True if main section is approximately straight.
     """
-    pairs = []
-    template = TEMPLATES.get(handedness)
-    if template is None:
-        return pairs
-
-    used_out_positions = set()
-    pair_id = 0
-
-    for in_pos in sorted(in_positions):
-        # Find best matching OUT switch
-        best_out_pos = None
-        best_n_straights = None
-        best_distance_error = float('inf')
-
-        for out_pos in sorted(out_positions):
-            # OUT must come after IN
-            if out_pos <= in_pos:
-                continue
-            # Don't reuse OUT switches
-            if out_pos in used_out_positions:
-                continue
-
-            # Compute main loop distance between IN and OUT
-            main_distance = _compute_main_loop_distance(
-                in_pos, out_pos, state.piece_indices, catalog
-            )
-
-            # Try different n_straights to find best match
-            for n_straights in range(9):  # 0 to 8 straights
-                required_distance = compute_required_main_distance(template, n_straights)
-                distance_error = abs(main_distance - required_distance)
-
-                # Check if this is a better match (within tolerance)
-                if distance_error < best_distance_error and distance_error < 4.0:
-                    # Section between switches must have ~0° angle
-                    # (branch template has 0° net angle)
-                    section_angle = _compute_section_angle(
-                        in_pos, out_pos, state.piece_indices, catalog
-                    )
-                    if section_angle > 5.0:
-                        continue  # Section has curves — branch can't close
-
-                    # Check branch inventory (curves for approach/return)
-                    branch_pieces = compute_branch_pieces(template, n_straights)
-                    has_inventory = _check_branch_inventory(
-                        branch_pieces, inventory_by_index, state.inventory_used
-                    )
-                    if has_inventory:
-                        best_out_pos = out_pos
-                        best_n_straights = n_straights
-                        best_distance_error = distance_error
-
-        # Create pair if match found
-        if best_out_pos is not None:
-            branch_pieces = compute_branch_pieces(template, best_n_straights)
-
-            pair = SwitchPair(
-                pair_id=pair_id,
-                in_position=in_pos,
-                out_position=best_out_pos,
-                in_switch_idx=in_switch_idx,
-                out_switch_idx=out_switch_idx,
-                branch_pieces=branch_pieces,
-            )
-            pairs.append(pair)
-            used_out_positions.add(best_out_pos)
-            pair_id += 1
-
-            # Mark port 2 as connected for both switches
-            state.connected_port2_positions.add(in_pos)
-            state.connected_port2_positions.add(best_out_pos)
-
-            # Consume branch inventory
-            for piece_idx in branch_pieces:
-                state.inventory_used[piece_idx] = state.inventory_used.get(piece_idx, 0) + 1
-
-    return pairs
+    between = main_pieces[fork_pos + 1 : merge_pos]
+    if not between:
+        return True
+    total_angle = sum(float(fk_table[int(p), 2]) for p in between)
+    return abs(total_angle) <= tolerance
 
 
-def _compute_main_loop_distance(
-    in_pos: int,
-    out_pos: int,
-    piece_indices: List[int],
-    catalog: TrackCatalog,
+def _compute_main_fk_distance(
+    main_pieces: List[int],
+    fork_pos: int,
+    merge_pos: int,
+    fk_table: NDArray,
 ) -> float:
-    """Compute arc length along main loop between two positions.
+    """Compute forward FK distance along main loop between fork and merge.
 
     Args:
-        in_pos: Start position.
-        out_pos: End position.
-        piece_indices: Main loop piece indices.
+        main_pieces: Main loop piece indices.
+        fork_pos: Fork position.
+        merge_pos: Merge position.
+        fk_table: FK table from catalog.
+
+    Returns:
+        Total forward distance in studs (sum of dx values).
+    """
+    between = main_pieces[fork_pos + 1 : merge_pos]
+    return sum(float(fk_table[int(p), 0]) for p in between)
+
+
+def compute_branch_from_fk(
+    fork_idx: int,
+    merge_idx: int,
+    main_distance: float,
+    catalog: 'TrackCatalog',
+) -> Optional[List[int]]:
+    """Compute branch pieces from FK deltas of fork/merge alternate routes.
+
+    Replaces template-based compute_branch_pieces(). Derives everything
+    from piece FK data — works for ANY fork/merge combination.
+
+    Branch structure: [approach_curve] + [N × STRAIGHT_16] + [return_curve]
+    - Approach curve: matches fork's diverge angle direction
+    - Return curve: matches merge's convergence angle direction
+
+    Args:
+        fork_idx: Fork piece index (e.g., SWITCH_LEFT_IN=5).
+        merge_idx: Merge piece index (e.g., SWITCH_LEFT_OUT=6).
+        main_distance: FK distance along main loop between fork and merge.
         catalog: Track catalog.
 
     Returns:
-        Total arc length in studs.
+        List of piece indices for the branch, or None if impossible.
     """
-    total = 0.0
-    for pos in range(in_pos, out_pos):
-        if pos < len(piece_indices):
-            piece_idx = piece_indices[pos]
-            if piece_idx >= 0:
-                arc_length = float(catalog.get_arc_lengths(np.array([piece_idx]))[0])
-                total += arc_length
-    return total
+    fork_alt = catalog.get_alternate_route(fork_idx)
+    merge_alt = catalog.get_alternate_route(merge_idx)
+    if not fork_alt or not merge_alt:
+        return None
+
+    # Determine approach/return curve from diverge angle
+    # Fork diverges left (+dtheta) → approach with R40_RIGHT (matching curve on branch side)
+    # Fork diverges right (-dtheta) → approach with R40_LEFT
+    R40_LEFT = 2
+    R40_RIGHT = 3
+    STRAIGHT_16 = 0
+
+    if fork_alt.dtheta > 0:
+        approach_idx = R40_RIGHT
+        return_idx = R40_LEFT
+    else:
+        approach_idx = R40_LEFT
+        return_idx = R40_RIGHT
+
+    # Compute how many straights fill the forward gap
+    approach_dx = float(catalog._fk_table[approach_idx, 0])
+    return_dx = float(catalog._fk_table[return_idx, 0])
+    straight_dx = float(catalog._fk_table[STRAIGHT_16, 0])
+
+    if straight_dx <= 0:
+        return None
+
+    available = main_distance - approach_dx - return_dx
+    if available < -straight_dx:
+        return None  # Branch can't fit
+
+    n_straights = max(0, round(available / straight_dx))
+
+    return [approach_idx] + [STRAIGHT_16] * n_straights + [return_idx]
 
 
-def _compute_section_angle(
-    in_pos: int,
-    out_pos: int,
-    piece_indices: List[int],
-    catalog: TrackCatalog,
-) -> float:
-    """Compute cumulative angle change between two main loop positions.
+def _verify_branch_endpoint(
+    branch_pieces: List[int],
+    fork_idx: int,
+    merge_idx: int,
+    main_distance: float,
+    catalog: 'TrackCatalog',
+    tolerance: float = 8.0,
+) -> bool:
+    """Verify branch FK endpoint is within tolerance of merge port.
 
-    The branch template has 0° net angle (approach curve cancels return curve),
-    so a valid siding requires the main loop section between IN and OUT to also
-    have near-zero net angle (all straights, no curves).
+    Computes the full branch FK chain (diverge + branch + converge)
+    and checks if the endpoint matches what the merge port expects.
 
     Args:
-        in_pos: IN switch position.
-        out_pos: OUT switch position.
-        piece_indices: Main loop piece indices.
+        branch_pieces: Branch piece indices.
+        fork_idx: Fork piece index.
+        merge_idx: Merge piece index.
+        main_distance: Main loop FK distance between fork and merge.
         catalog: Track catalog.
+        tolerance: Maximum allowed endpoint gap in studs.
 
     Returns:
-        Absolute cumulative angle in degrees.
+        True if branch endpoint is within tolerance.
     """
-    total_angle = 0.0
-    for pos in range(in_pos + 1, out_pos):
-        if pos < len(piece_indices):
-            piece_idx = piece_indices[pos]
-            if piece_idx >= 0 and piece_idx < len(catalog._fk_table):
-                total_angle += catalog._fk_table[piece_idx][2]  # dtheta
-    return abs(total_angle)
+    from .geometry import compute_fk_chain
+
+    fork_alt = catalog.get_alternate_route(fork_idx)
+    merge_alt = catalog.get_alternate_route(merge_idx)
+    if not fork_alt or not merge_alt:
+        return False
+
+    # Build full branch FK chain: diverge route + branch pieces
+    # Start from fork's diverge endpoint
+    indices = np.array(branch_pieces, dtype=np.int32)
+    deltas = catalog._fk_table[indices]
+
+    # Prepend the fork's diverge delta
+    fork_delta = np.array([[fork_alt.dx, fork_alt.dy, fork_alt.dtheta]])
+    full_deltas = np.vstack([fork_delta, deltas])
+    states = compute_fk_chain(full_deltas)
+
+    branch_end_x = states[-1, 0]
+    branch_end_y = states[-1, 1]
+
+    # Expected: merge port entry is at (main_distance + fork_default_dx, 0)
+    # because the main loop goes straight for main_distance from fork to merge
+    fork_default = catalog._fk_table[fork_idx]
+    expected_x = fork_default[0] + main_distance
+    expected_y = 0.0  # Merge entry is on the main loop axis
+
+    gap = np.sqrt((branch_end_x - expected_x) ** 2 + (branch_end_y - expected_y) ** 2)
+    return gap <= tolerance
 
 
 def _check_branch_inventory(
@@ -922,12 +925,10 @@ def _check_branch_inventory(
     Returns:
         True if all branch pieces are available.
     """
-    # Count required pieces
-    required = {}
+    required: Dict[int, int] = {}
     for piece_idx in branch_pieces:
         required[piece_idx] = required.get(piece_idx, 0) + 1
 
-    # Check availability
     for piece_idx, count in required.items():
         avail = available.get(piece_idx, 0)
         already_used = used.get(piece_idx, 0)
@@ -937,80 +938,176 @@ def _check_branch_inventory(
     return True
 
 
-def _find_out_position(
-    in_pos: int,
-    required_distance: float,
-    piece_indices: List[int],
-    catalog: TrackCatalog,
-) -> Optional[int]:
-    """Find main loop position for OUT switch based on required distance.
+# =============================================================================
+# Phase 3: Multi-Path Layout Construction
+# =============================================================================
 
-    Scans forward from IN position, accumulating arc length until
-    the required distance is reached. The OUT switch should be placed
-    at the position where accumulated distance matches branch length.
+# =============================================================================
+# Phase 3: Secondary Loop Construction (CROSS_90 Support)
+# =============================================================================
+
+SECONDARY_LOOP_START = 100  # Genes [100-150) for secondary loop piece keys
+SECONDARY_LOOP_SIZE = 50
+
+
+def _build_secondary_loops(
+    chromosome: NDArray,
+    state: DecoderState,
+    catalog: TrackCatalog,
+    inventory_by_index: Dict[int, int],
+    config: DecoderConfig,
+) -> List[TraversalPath]:
+    """Build secondary loops through crossing pieces in the main loop.
+
+    For each CROSS_90, constructs an independent closed loop using
+    the crossing's perpendicular route (route 1) and remaining inventory.
 
     Args:
-        in_pos: IN switch position in main loop.
-        required_distance: Required X-distance for branch (studs).
-        piece_indices: Main loop piece indices.
-        catalog: Track catalog for arc length lookup.
+        chromosome: Full chromosome array.
+        state: Decoder state with main loop pieces and FK states.
+        catalog: Track catalog.
+        inventory_by_index: Available inventory.
+        config: Decoder configuration.
 
     Returns:
-        OUT switch position, or None if no valid position found.
+        List of secondary TraversalPath objects.
     """
-    if in_pos < 0 or in_pos >= len(piece_indices):
-        return None
+    secondary_paths = []
 
-    accumulated = 0.0
-    tolerance = 4.0  # studs - allow some slack for geometric matching
+    if not state.crossing_positions:
+        return secondary_paths
 
-    # Start after IN switch position
-    for pos in range(in_pos + 1, len(piece_indices)):
-        piece_idx = piece_indices[pos]
-        if piece_idx < 0:
+    # Get secondary loop piece keys from chromosome
+    sec_keys = chromosome[SECONDARY_LOOP_START:SECONDARY_LOOP_START + SECONDARY_LOOP_SIZE]
+
+    for cross_pos, cross_idx in state.crossing_positions:
+        # Get main loop FK state at crossing position
+        if cross_pos >= len(state.states):
             continue
 
-        # Get arc length for this piece (approximate as FK dx for straights)
-        arc_length = float(catalog.get_arc_lengths(np.array([piece_idx]))[0])
-        accumulated += arc_length
+        piece_x, piece_y, piece_theta = state.states[cross_pos]
 
-        # Check if we've reached the required distance
-        if abs(accumulated - required_distance) <= tolerance:
-            # Found a position at approximately the right distance
-            return pos
+        # Port 2 world position: local (8, -8) rotated by piece heading
+        theta_rad = np.radians(piece_theta)
+        cos_t, sin_t = np.cos(theta_rad), np.sin(theta_rad)
+        port2_x = piece_x + 8.0 * cos_t + 8.0 * sin_t  # (8, -8) rotated
+        port2_y = piece_y + 8.0 * sin_t - 8.0 * cos_t
 
-        if accumulated > required_distance + tolerance:
-            # Overshot - no valid position
-            break
+        # Secondary loop entry heading: train enters from south heading north
+        entry_heading = piece_theta + 90.0
 
-    return None
+        # Build secondary loop from remaining inventory
+        sec_pieces = _construct_secondary_loop(
+            sec_keys, cross_idx, catalog, inventory_by_index,
+            state.inventory_used, config,
+        )
+
+        if not sec_pieces:
+            continue
+
+        # Build FK chain for secondary loop
+        # First piece: crossing route 1 (FK 16,0,0 in train's frame)
+        piece_indices = [cross_idx] + sec_pieces
+        route_indices = [1] + [0] * len(sec_pieces)  # Route 1 for crossing, 0 for others
+
+        # Compute FK chain starting at port 2 position/heading
+        fk_deltas = catalog.get_fk_with_routes(
+            np.array(piece_indices, dtype=np.int32),
+            np.array(route_indices, dtype=np.int32),
+        )
+        states = compute_fk_chain(fk_deltas)
+
+        # Translate to world position
+        states[:, 0] += port2_x
+        states[:, 1] += port2_y
+        # Rotate by entry heading (FK chain starts at heading 0, we need entry_heading)
+        if abs(entry_heading) > 0.01:
+            rot_rad = np.radians(entry_heading)
+            cos_r, sin_r = np.cos(rot_rad), np.sin(rot_rad)
+            # Rotate around port2 position
+            dx = states[:, 0] - port2_x
+            dy = states[:, 1] - port2_y
+            states[:, 0] = port2_x + dx * cos_r - dy * sin_r
+            states[:, 1] = port2_y + dx * sin_r + dy * cos_r
+            states[:, 2] += entry_heading
+
+        # Compute closure
+        closure_error, angle_error = _compute_closure_metrics(states)
+
+        path = TraversalPath(
+            path_id=len(secondary_paths) + 100,  # Offset to distinguish from main paths
+            route_choices=(),
+            piece_sequence=piece_indices,
+            states=states,
+            closure_error=closure_error,
+            angle_error=angle_error,
+        )
+        secondary_paths.append(path)
+
+        # Mark crossing ports as connected (removes loose port penalty)
+        state.connected_port2_positions.add(cross_pos)
+
+        # Track secondary loop piece usage
+        for p in sec_pieces:
+            state.inventory_used[p] = state.inventory_used.get(p, 0) + 1
+
+    return secondary_paths
 
 
-def _consume_siding_inventory(
-    template,
-    n_straights: int,
-    state: DecoderState,
-) -> None:
-    """Mark siding pieces as used in decoder state.
+def _construct_secondary_loop(
+    piece_keys: NDArray,
+    cross_idx: int,
+    catalog: TrackCatalog,
+    inventory_by_index: Dict[int, int],
+    used: Dict[int, int],
+    config: DecoderConfig,
+) -> List[int]:
+    """Construct secondary loop piece sequence from RK keys.
 
-    Args:
-        template: Passing siding template.
-        n_straights: Number of straights in parallel section.
-        state: Decoder state to update.
+    Similar to main loop construction but uses remaining inventory
+    and excludes crossing pieces (already placed).
     """
-    # Mark switches as used
-    state.use_piece(template.in_switch_idx, add_to_main_loop=False)
-    state.use_piece(template.out_switch_idx, add_to_main_loop=False)
+    pieces = []
+    local_used = dict(used)  # Copy to track secondary usage
+    signed_angle = 0.0
+    CROSS_INDICES = catalog._crossing_indices
 
-    # Mark branch pieces as used
-    state.use_piece(template.approach_curve_idx, add_to_main_loop=False)
-    state.use_piece(template.return_curve_idx, add_to_main_loop=False)
-    for _ in range(n_straights):
-        state.use_piece(template.straight_idx, add_to_main_loop=False)
+    for rk_value in piece_keys:
+        if rk_value < RK_INACTIVE_THRESHOLD:
+            continue
+
+        available = _get_available_pieces(
+            inventory_by_index, local_used,
+            fk_table=catalog._fk_table,
+            signed_angle=signed_angle,
+            target_angle=config.target_angle,
+        )
+        if not available:
+            continue
+
+        # Exclude crossing and switch pieces from secondary loop
+        available = [
+            p for p in available
+            if p not in CROSS_INDICES
+            and p not in catalog._fork_indices
+            and p not in catalog._merge_indices
+        ]
+        if not available:
+            continue
+
+        piece_idx = rk_to_piece_index(float(rk_value), available)
+        if piece_idx == INACTIVE or piece_idx < 0:
+            continue
+
+        signed_angle += catalog._fk_table[piece_idx, 2]
+        local_used[piece_idx] = local_used.get(piece_idx, 0) + 1
+        pieces.append(piece_idx)
+
+    return pieces
 
 
 # =============================================================================
-# Phase 3: Multi-Path Layout Construction
+# Multi-Path Layout Construction
 # =============================================================================
 
 def _build_multi_path_layout(
@@ -1291,12 +1388,23 @@ def _convert_inventory_to_index(
 def _get_available_pieces(
     inventory_by_index: Dict[int, int],
     used: Dict[int, int],
+    fk_table: Optional[NDArray] = None,
+    signed_angle: float = 0.0,
+    target_angle: float = 360.0,
 ) -> List[int]:
     """Build list of available piece indices from remaining inventory.
+
+    Strict angle-budget enforcement: reject any piece that makes the target
+    angle unreachable with remaining inventory. At each step, computes the
+    min/max achievable angle from remaining pieces AFTER placing this one.
+    If target falls outside [min, max], the piece is rejected.
 
     Args:
         inventory_by_index: Total available inventory {piece_idx: count}.
         used: Already used inventory {piece_idx: count}.
+        fk_table: FK table for angle checking (optional).
+        signed_angle: Current accumulated signed angle in degrees.
+        target_angle: Target angle for closure (360.0 for closed loop).
 
     Returns:
         Sorted list of piece indices that have remaining inventory.
@@ -1306,7 +1414,54 @@ def _get_available_pieces(
         already_used = used.get(piece_idx, 0)
         if already_used < total:
             available.append(piece_idx)
-    return sorted(available)
+
+    if not available or fk_table is None:
+        return sorted(available)
+
+    # Compute remaining angle capacity in each direction (from ALL remaining pieces)
+    remaining_positive = 0.0  # Max additional positive angle achievable
+    remaining_negative = 0.0  # Max additional negative angle achievable (negative number)
+    for idx in available:
+        angle = fk_table[idx, 2]
+        remaining_count = inventory_by_index.get(idx, 0) - used.get(idx, 0)
+        if angle > 0:
+            remaining_positive += angle * remaining_count
+        elif angle < 0:
+            remaining_negative += angle * remaining_count
+
+    filtered = []
+    for idx in available:
+        piece_angle = fk_table[idx, 2]
+
+        # Straights never change angle — always OK
+        if piece_angle == 0:
+            filtered.append(idx)
+            continue
+
+        # After placing this piece, what's the new signed angle?
+        new_signed = signed_angle + piece_angle
+        # How much more do we need?
+        still_needed = target_angle - new_signed
+
+        # Remaining capacity AFTER using one of this piece
+        if piece_angle > 0:
+            future_pos = remaining_positive - piece_angle
+            future_neg = remaining_negative
+        else:
+            future_pos = remaining_positive
+            future_neg = remaining_negative - piece_angle
+
+        # Can we still reach target? Target must be within [min_achievable, max_achievable]
+        min_achievable = still_needed - future_pos  # Best case: use all remaining positive
+        max_achievable = still_needed - future_neg  # Best case: use all remaining negative
+
+        # If 0 is within [min_achievable, max_achievable], we CAN reach exactly target
+        # min_achievable <= 0 means we have enough positive capacity
+        # max_achievable >= 0 means we have enough negative capacity (or need is positive)
+        if min_achievable <= 22.5 and max_achievable >= -22.5:
+            filtered.append(idx)
+
+    return sorted(filtered) if filtered else sorted(available)
 
 
 # =============================================================================

@@ -611,47 +611,44 @@ def plot_multi_path_layout(
 
 
 def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
-    """Plot all paths overlaid on same axes with switch markers."""
-    # First, identify switch positions in main loop
-    switch_positions = []
-    for i, piece_idx in enumerate(layout.main_loop_pieces):
-        if piece_idx in SWITCH_INDICES:
-            switch_positions.append(i)
+    """Plot main path with branch sections highlighted differently."""
+    # Draw main path (path 0) with proper piece geometry
+    main_path = layout.paths[0] if layout.paths else None
+    if main_path is None or len(main_path.states) <= 1:
+        return
 
-    for path_idx, path in enumerate(layout.paths):
-        if len(path.states) <= 1:
-            continue
+    x = main_path.states[:, 0]
+    y = main_path.states[:, 1]
+    theta = main_path.states[:, 2]
 
-        x = path.states[:, 0]
-        y = path.states[:, 1]
-        theta = path.states[:, 2]
+    for i in range(len(main_path.piece_sequence)):
+        if i < len(x) - 1:
+            piece_idx = main_path.piece_sequence[i]
+            _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
 
-        # Draw main path (path 0) with proper piece geometry
-        if path_idx == 0:
-            for i in range(len(path.piece_sequence)):
-                if i < len(x) - 1:
-                    piece_idx = path.piece_sequence[i]
-                    _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
+    ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
+    ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
 
-            ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
-            ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
+    # Mark switch positions on main path (from switch pairs, not raw scan)
+    for sp in layout.switch_pairs:
+        for pos, idx in [(sp.in_position, sp.in_switch_idx), (sp.out_position, sp.out_switch_idx)]:
+            if pos < len(x) - 1:
+                sw_color = get_piece_color(idx)
+                mid_x = (x[pos] + x[pos + 1]) / 2
+                mid_y = (y[pos] + y[pos + 1]) / 2
+                ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
+                       markeredgecolor="black", markeredgewidth=1.5, zorder=8)
 
-            # Mark switch positions on main path
-            for sw_pos in switch_positions:
-                if sw_pos < len(x) - 1:
-                    piece_idx = layout.main_loop_pieces[sw_pos]
-                    sw_color = get_piece_color(piece_idx)
-                    mid_x = (x[sw_pos] + x[sw_pos + 1]) / 2
-                    mid_y = (y[sw_pos] + y[sw_pos + 1]) / 2
-                    ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
-                           markeredgecolor="black", markeredgewidth=1.5, zorder=8)
-        else:
-            # Branch paths: draw individual pieces (same as main path)
-            for i in range(len(path.piece_sequence)):
-                if i < len(x) - 1:
-                    piece_idx = path.piece_sequence[i]
-                    _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
-                                draw_rails_flag=True)
+    # Draw branch paths with dashed style to distinguish from main
+    for path_idx, path in enumerate(layout.paths[1:], 1):
+        if len(path.states) <= 1 or path.path_id >= 100:
+            continue  # Skip secondary crossing loops (drawn separately if needed)
+
+        bx = path.states[:, 0]
+        by = path.states[:, 1]
+        # Draw branch as a simple colored line (thinner, dashed) to show divergence
+        ax.plot(bx, by, color='#e74c3c', linewidth=3, linestyle='--',
+                alpha=0.7, zorder=5, label=f'Branch {path_idx}' if path_idx == 1 else None)
 
     # Draw boundary
     if boundary is not None:

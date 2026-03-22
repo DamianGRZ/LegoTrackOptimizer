@@ -79,19 +79,29 @@ class MultiSegmentSampling(Sampling):
     - Ovals with passing sidings (template-based branches)
     """
 
-    HEURISTIC_RATIO = 0.20  # 20% heuristic, 80% random (research recommends 20-30%)
+    HEURISTIC_RATIO = 0.08  # 8% heuristic, 92% random (BRKGA research: 5-8%)
 
-    def __init__(self, catalog: TrackCatalog, config: OptimizationConfig):
+    def __init__(
+        self,
+        catalog: TrackCatalog,
+        config: OptimizationConfig,
+        heuristic_ratio: float = 0.08,
+        seed_noise_sigma: float = 0.10,
+    ):
         """Initialize multi-segment sampling.
 
         Args:
             catalog: Track catalog for piece properties.
             config: Optimization configuration with inventory limits.
+            heuristic_ratio: Fraction of population seeded with heuristic patterns.
+            seed_noise_sigma: Gaussian noise std dev added to heuristic seeds.
         """
         super().__init__()
         self.catalog = catalog  # Store for round-trip validation and FK lookup
         self.config = config
         self.inventory = config.inventory
+        self.heuristic_ratio = heuristic_ratio
+        self.seed_noise_sigma = seed_noise_sigma
 
         # Use dynamic index_to_id from catalog (auto-adapts to new pieces)
         self.index_to_id = catalog.index_to_id
@@ -132,7 +142,7 @@ class MultiSegmentSampling(Sampling):
         Returns:
             Population array of shape (n_samples, N_VAR).
         """
-        n_heuristic = int(n_samples * self.HEURISTIC_RATIO)
+        n_heuristic = int(n_samples * self.heuristic_ratio)
         n_random = n_samples - n_heuristic
 
         heuristic_samples = self._generate_heuristic_population(n_heuristic)
@@ -185,6 +195,8 @@ class MultiSegmentSampling(Sampling):
             self._symmetric_oval,
             self._racetrack,
             self._large_oval,
+            self._wide_racetrack,
+            self._extended_racetrack,
             self._double_oval,
             self._oval_with_left_siding,
             self._oval_with_right_siding,
@@ -205,6 +217,10 @@ class MultiSegmentSampling(Sampling):
 
                 # Round-trip validation: decode and check closure
                 if self._validate_closure(chromosome, pattern):
+                    # Add Gaussian noise for genotypic diversity (main + priority genes only)
+                    if self.seed_noise_sigma > 0:
+                        noise = np.random.normal(0, self.seed_noise_sigma, size=200)
+                        chromosome[:200] = np.clip(chromosome[:200] + noise, 0.0, 1.0)
                     population[i] = chromosome
                 else:
                     # Pattern failed round-trip - use closure-aware random
@@ -399,6 +415,61 @@ class MultiSegmentSampling(Sampling):
             [3, 3, 3, 3] +  # 90 deg corner (right)
             [0, 0] +        # Short straight
             [3, 3, 3, 3],   # 90 deg corner (right)
+            dtype=np.int32,
+        )
+
+        if not self._validate_inventory(pattern):
+            return None
+
+        return pattern
+
+    def _wide_racetrack(self) -> Optional[NDArray]:
+        """Generate wide racetrack using both LEFT and RIGHT curves.
+
+        Pattern: 4 wide corners, each 5×LEFT + 1×RIGHT = 90° net turn,
+        with mixed STR_16/STR_24 between corners.
+        Total: 20 LEFT + 4 RIGHT + 12 STR_16 + 8 STR_24 = 44 pieces, 360°.
+
+        Returns:
+            Main loop array or None if invalid.
+        """
+        # Each corner: 5×LEFT(+112.5°) then 1×RIGHT(-22.5°) = net +90°
+        # Between corners: 3 STR_16 + 2 STR_24 = 5 straights
+        corner = [2, 2, 2, 2, 2, 3]  # 5 LEFT + 1 RIGHT = 90°
+        straight_section = [0, 0, 0, 1, 1]  # 3 STR_16 + 2 STR_24
+
+        pattern = np.array(
+            corner + straight_section +  # Section 1
+            corner + straight_section +  # Section 2
+            corner + straight_section +  # Section 3
+            corner + straight_section,   # Section 4
+            dtype=np.int32,
+        )
+
+        if not self._validate_inventory(pattern):
+            return None
+
+        return pattern
+
+    def _extended_racetrack(self) -> Optional[NDArray]:
+        """Generate extended racetrack using STR_24 pieces.
+
+        Pattern: 4 corners of 4×LEFT, with mix of STR_16 and STR_24 straights.
+        Total: 16 LEFT + 16 STR_16 + 8 STR_24 = 40 pieces, 360° net angle.
+        Uses all STR_24 inventory.
+
+        Returns:
+            Main loop array or None if invalid.
+        """
+        pattern = np.array(
+            [2, 2, 2, 2] +          # Corner 1 (90°)
+            [0, 0, 1, 1, 0, 0] +    # Mixed straights (STR_16 + STR_24)
+            [2, 2, 2, 2] +          # Corner 2 (90°)
+            [1, 1, 0, 0, 1, 1] +    # Mixed straights
+            [2, 2, 2, 2] +          # Corner 3 (90°)
+            [0, 0, 1, 1, 0, 0] +    # Mixed straights
+            [2, 2, 2, 2] +          # Corner 4 (90°)
+            [1, 1, 0, 0, 1, 1],     # Mixed straights
             dtype=np.int32,
         )
 

@@ -30,7 +30,7 @@ class TestTrackOptimizationProblem:
 
         assert problem.n_var == N_VAR  # Fixed chromosome length
         assert problem.n_obj == 1  # Single objective: -utilization
-        assert problem.n_ieq_constr == 4  # closure, angle, boundary, inventory
+        assert problem.n_ieq_constr == 5  # closure, angle, boundary, inventory, secondary_closure
 
     def test_evaluate_valid_circle(self, catalog, default_config):
         """16 R40 circle evaluates without error."""
@@ -47,7 +47,7 @@ class TestTrackOptimizationProblem:
         assert "F" in out
         assert "G" in out
         assert len(out["F"]) == 1  # Single objective
-        assert len(out["G"]) == 4  # 4 constraints (closure, angle, boundary, inventory)
+        assert len(out["G"]) == 5  # 5 constraints (closure, angle, boundary, inventory, secondary)
 
     def test_evaluate_minimal_chromosome(self, catalog, default_config):
         """Minimal RK chromosome (NEAT-style) evaluates without error.
@@ -93,7 +93,7 @@ class TestTrackOptimizationProblem:
         problem._evaluate(chromosome, out)
 
         G = np.array(out["G"])
-        assert G.shape == (4,)
+        assert G.shape == (5,)
 
     def test_objective_correct_sign(self, catalog, default_config):
         """Objective has correct sign for minimization (negative utilization)."""
