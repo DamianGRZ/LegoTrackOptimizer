@@ -639,16 +639,30 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
                 ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
                        markeredgecolor="black", markeredgewidth=1.5, zorder=8)
 
-    # Draw branch paths with dashed style to distinguish from main
+    # Draw only the DIVERGENT section of branch paths (not the entire loop)
     for path_idx, path in enumerate(layout.paths[1:], 1):
         if len(path.states) <= 1 or path.path_id >= 100:
-            continue  # Skip secondary crossing loops (drawn separately if needed)
+            continue
 
-        bx = path.states[:, 0]
-        by = path.states[:, 1]
-        # Draw branch as a simple colored line (thinner, dashed) to show divergence
-        ax.plot(bx, by, color='#e74c3c', linewidth=3, linestyle='--',
-                alpha=0.7, zorder=5, label=f'Branch {path_idx}' if path_idx == 1 else None)
+        # Find where branch path differs from main path
+        main_seq = layout.paths[0].piece_sequence
+        branch_seq = path.piece_sequence
+        min_len = min(len(main_seq), len(branch_seq))
+
+        # Find divergence start/end
+        div_start = None
+        div_end = None
+        for k in range(min_len):
+            if main_seq[k] != branch_seq[k]:
+                if div_start is None:
+                    div_start = max(0, k - 1)  # Include the switch before
+                div_end = min(k + 2, len(path.states))  # Include the switch after
+
+        if div_start is not None and div_end is not None:
+            bx = path.states[div_start:div_end, 0]
+            by = path.states[div_start:div_end, 1]
+            ax.plot(bx, by, color='#e74c3c', linewidth=4, linestyle='-',
+                    alpha=0.8, zorder=5, label='Branch' if path_idx == 1 else None)
 
     # Draw boundary
     if boundary is not None:
@@ -663,10 +677,8 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8, loc="upper right")
 
-    # Count switches
-    n_switches = len(switch_positions)
-
     # Metrics
+    n_switches = sum(1 for p in layout.main_loop_pieces if p in SWITCH_INDICES)
     metrics = (
         f"Pieces: {layout.n_pieces}\n"
         f"Switches: {n_switches}\n"

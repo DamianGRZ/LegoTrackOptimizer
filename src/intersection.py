@@ -348,3 +348,157 @@ def _get_merge_port_pose(
     elif piece_idx == SWITCH_RIGHT_OUT:
         return _transform_local_to_world(state, 0.6927, -3.0448, -22.5)
     return state.copy()
+
+
+# =============================================================================
+# Self-Intersection Counting (for constraint/penalty)
+# =============================================================================
+
+CROSS_90_INDEX = 4
+
+
+def count_segment_crossings(
+    states: NDArray[np.float64],
+    piece_indices: Optional[List[int]] = None,
+    min_separation: int = 3,
+) -> int:
+    """Count track segments that cross each other without a CROSS_90 piece.
+
+    Uses 2D line segment intersection test on all non-adjacent segment pairs.
+    Crossings at positions where a CROSS_90 exists are exempt (valid crossings).
+
+    Efficient: O(N²) but with early bounding-box rejection. For N=100 segments,
+    this is ~5000 checks × ~10 ops = ~50K operations — negligible vs FK chain.
+
+    Args:
+        states: (n+1, 3) FK states array [x, y, theta].
+        piece_indices: Piece index at each position (for CROSS_90 exemption).
+        min_separation: Minimum index distance between segments to check.
+
+    Returns:
+        Number of invalid (non-CROSS_90) segment crossings.
+    """
+    n = len(states) - 1  # Number of segments
+    if n < min_separation + 1:
+        return 0
+
+    # Build set of CROSS_90 positions (crossings here are valid)
+    cross_positions = set()
+    if piece_indices is not None:
+        for i, idx in enumerate(piece_indices):
+            if idx == CROSS_90_INDEX:
+                cross_positions.add(i)
+
+    x = states[:, 0]
+    y = states[:, 1]
+    crossings = 0
+
+    for i in range(n - min_separation):
+        # Segment i: (x[i], y[i]) → (x[i+1], y[i+1])
+        ax, ay = x[i], y[i]
+        bx, by = x[i + 1], y[i + 1]
+
+        # Bounding box for segment i
+        i_min_x, i_max_x = min(ax, bx), max(ax, bx)
+        i_min_y, i_max_y = min(ay, by), max(ay, by)
+
+        for j in range(i + min_separation, n):
+            # Segment j: (x[j], y[j]) → (x[j+1], y[j+1])
+            cx, cy = x[j], y[j]
+            dx, dy = x[j + 1], y[j + 1]
+
+            # Bounding box rejection
+            j_min_x, j_max_x = min(cx, dx), max(cx, dx)
+            j_min_y, j_max_y = min(cy, dy), max(cy, dy)
+
+            if i_max_x < j_min_x or j_max_x < i_min_x:
+                continue
+            if i_max_y < j_min_y or j_max_y < i_min_y:
+                continue
+
+            # 2D cross product segment intersection test
+            if _segments_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                # Check if crossing is at a CROSS_90 position (valid)
+                if i in cross_positions or j in cross_positions:
+                    continue
+                crossings += 1
+
+    return crossings
+
+
+def count_path_crossings(
+    states_a: NDArray[np.float64],
+    states_b: NDArray[np.float64],
+    shared_tolerance: float = 2.0,
+) -> int:
+    """Count crossings between two different paths (e.g., main vs branch).
+
+    Skips segment pairs where both endpoints are nearly identical
+    (shared sections of main/branch paths that overlap by design).
+
+    Args:
+        states_a: FK states of path A.
+        states_b: FK states of path B.
+        shared_tolerance: Skip segments whose endpoints are within this distance
+                         (they're shared between paths, not actual crossings).
+
+    Returns:
+        Number of crossings between the two paths.
+    """
+    na = len(states_a) - 1
+    nb = len(states_b) - 1
+    if na < 2 or nb < 2:
+        return 0
+
+    crossings = 0
+    xa, ya = states_a[:, 0], states_a[:, 1]
+    xb, yb = states_b[:, 0], states_b[:, 1]
+
+    for i in range(na):
+        ax1, ay1 = xa[i], ya[i]
+        ax2, ay2 = xa[i + 1], ya[i + 1]
+        i_min_x, i_max_x = min(ax1, ax2), max(ax1, ax2)
+        i_min_y, i_max_y = min(ay1, ay2), max(ay1, ay2)
+
+        for j in range(nb):
+            bx1, by1 = xb[j], yb[j]
+            bx2, by2 = xb[j + 1], yb[j + 1]
+
+            # Skip shared segments (same start AND end points)
+            d_start = np.sqrt((ax1 - bx1) ** 2 + (ay1 - by1) ** 2)
+            d_end = np.sqrt((ax2 - bx2) ** 2 + (ay2 - by2) ** 2)
+            if d_start < shared_tolerance and d_end < shared_tolerance:
+                continue
+
+            # Bounding box rejection
+            j_min_x, j_max_x = min(bx1, bx2), max(bx1, bx2)
+            j_min_y, j_max_y = min(by1, by2), max(by1, by2)
+            if i_max_x < j_min_x or j_max_x < i_min_x:
+                continue
+            if i_max_y < j_min_y or j_max_y < i_min_y:
+                continue
+
+            if _segments_intersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2):
+                crossings += 1
+
+    return crossings
+
+
+def _segments_intersect(
+    ax: float, ay: float, bx: float, by: float,
+    cx: float, cy: float, dx: float, dy: float,
+) -> bool:
+    """Check if segment (a,b) intersects segment (c,d) using cross products."""
+    def cross(ox, oy, px, py, qx, qy):
+        return (px - ox) * (qy - oy) - (py - oy) * (qx - ox)
+
+    d1 = cross(cx, cy, dx, dy, ax, ay)
+    d2 = cross(cx, cy, dx, dy, bx, by)
+    d3 = cross(ax, ay, bx, by, cx, cy)
+    d4 = cross(ax, ay, bx, by, dx, dy)
+
+    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
+       ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
+        return True
+
+    return False

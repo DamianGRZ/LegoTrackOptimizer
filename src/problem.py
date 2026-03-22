@@ -17,6 +17,7 @@ from .config import OptimizationConfig
 from .data import TrackCatalog
 from .decoder import DecoderConfig, decode_chromosome
 from .encoding import N_VAR, generate_bounds
+from .intersection import count_segment_crossings, count_path_crossings
 
 
 class TrackOptimizationProblem(ElementwiseProblem):
@@ -155,12 +156,24 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # Combined closure scale: ALL qualities must be good for full credit
         closure_scale = 0.3 + 0.7 * min(angle_quality, position_quality, boundary_quality)
 
-        out["F"] = [-(utilization * closure_scale - loose_port_penalty)]
-
-        # 4 hard constraints via Deb's CV (g <= 0 feasible)
-        # Use main path closure (straight-through) for closure constraint.
-        # Branch path closure depends on template geometry, not GA piece selection.
+        # Self-intersection penalty: each crossing without CROSS_90 costs 3 pieces
         main_path = layout.get_main_path() if hasattr(layout, 'get_main_path') else None
+        n_crossings = 0
+        if main_path is not None and len(main_path.states) > 4:
+            n_crossings += count_segment_crossings(
+                main_path.states, main_path.piece_sequence,
+            )
+            # Also penalize branch-vs-main crossings
+            for path in layout.paths[1:]:
+                if path.path_id < 100 and len(path.states) > 4:
+                    n_crossings += count_path_crossings(
+                        main_path.states, path.states,
+                    )
+        crossing_penalty = n_crossings * (3.0 / self.total_inventory)
+
+        out["F"] = [-(utilization * closure_scale - loose_port_penalty - crossing_penalty)]
+
+        # Hard constraints via Deb's CV (g <= 0 feasible)
         closure_err = main_path.closure_error if main_path else layout.closure_error
         angle_err = main_path.angle_error if main_path else layout.angle_error
         g_closure = (closure_err - self.closure_tolerance) / self.closure_tolerance
