@@ -52,6 +52,7 @@ from .encoding import (
     rk_to_position,
 )
 from .geometry import Layout, compute_fk_chain
+from .intersection import CROSS_90_INDEX, find_crossing_pairs
 # templates.py no longer used by decoder — port-based branch computation (Phase B)
 from .topology import MultiPathLayout, SwitchPair, TraversalPath
 
@@ -279,6 +280,9 @@ def decode_chromosome(
     # Phase 1: Main loop construction
     state = _decode_main_loop(chromosome, catalog, inventory_by_index, config)
 
+    # Phase 1.5: Replace self-intersections with CROSS_90 pieces
+    _apply_crossing_repair(state, catalog, inventory_by_index)
+
     # Phase 2: Extract switch pairs from branch slots
     switch_pairs = _extract_switch_pairs(chromosome, state, catalog, inventory_by_index, config)
 
@@ -449,6 +453,136 @@ def _decode_main_loop(
         # switches and branches are included. Optimizer handles closure.
 
     return state
+
+
+# =============================================================================
+# Phase 1.5: Crossing Repair — replace self-intersections with CROSS_90
+# =============================================================================
+
+
+def _apply_crossing_repair(
+    state: DecoderState,
+    catalog: TrackCatalog,
+    inventory_by_index: Dict[int, int],
+    angle_tolerance: float = 15.0,
+) -> None:
+    """Replace self-intersections with CROSS_90 pieces.
+
+    When the main loop crosses itself at ~90°, replace the piece at one
+    crossing position with CROSS_90 and remove the piece at the other
+    (they are physically the same crossing piece). Recomputes FK chain.
+
+    Mutates state in-place.
+    """
+    n = len(state.piece_indices)
+    if n < 4:
+        return
+
+    cross_avail = (
+        inventory_by_index.get(CROSS_90_INDEX, 0)
+        - state.get_usage(CROSS_90_INDEX)
+    )
+    if cross_avail <= 0:
+        return
+
+    # Build numpy states array from tuple list
+    states_array = np.array(state.states, dtype=np.float64)
+
+    pairs = find_crossing_pairs(states_array, state.piece_indices)
+    if not pairs:
+        return
+
+    # Greedy assignment: best 90° crossings first
+    claimed: set = set()
+    replacements: list = []  # (pos_i → CROSS_90)
+    removals: list = []      # pos_j to delete
+
+    for pos_i, pos_j, angle_diff in pairs:
+        if abs(angle_diff - 90.0) > angle_tolerance:
+            continue
+        if cross_avail <= 0:
+            break
+        if pos_i in claimed or pos_j in claimed:
+            continue
+
+        claimed.add(pos_i)
+        claimed.add(pos_j)
+        replacements.append(pos_i)
+        removals.append(pos_j)
+        cross_avail -= 1
+
+    if not replacements:
+        return
+
+    # --- Apply inventory changes ---
+    for pos_i, pos_j in zip(replacements, removals):
+        orig_i = state.piece_indices[pos_i]
+        orig_j = state.piece_indices[pos_j]
+
+        # Return originals
+        state.inventory_used[orig_i] = state.inventory_used.get(orig_i, 0) - 1
+        state.inventory_used[orig_j] = state.inventory_used.get(orig_j, 0) - 1
+
+        # Consume one CROSS_90
+        state.inventory_used[CROSS_90_INDEX] = (
+            state.inventory_used.get(CROSS_90_INDEX, 0) + 1
+        )
+
+        # Replace piece at pos_i
+        state.piece_indices[pos_i] = CROSS_90_INDEX
+
+    # --- Remove pieces at removal positions (reverse order) ---
+    for pos_j in sorted(removals, reverse=True):
+        state.piece_indices.pop(pos_j)
+        # states list has n+1 entries; entry pos_j+1 corresponds to piece pos_j's exit
+        if pos_j + 1 < len(state.states):
+            state.states.pop(pos_j + 1)
+
+    # --- Shift switch/crossing position tracking ---
+    def _shift(positions: list, removed: list) -> list:
+        removed_sorted = sorted(removed)
+        result = []
+        for p in positions:
+            if p in removed:
+                continue
+            shift = sum(1 for r in removed_sorted if r < p)
+            result.append(p - shift)
+        return result
+
+    state.switch_port2_positions = _shift(
+        state.switch_port2_positions, removals,
+    )
+    old_cross = state.crossing_positions
+    shifted_cross_pos = _shift([p for p, _ in old_cross], removals)
+    state.crossing_positions = [
+        (p, idx) for p, idx in zip(shifted_cross_pos, [idx for _, idx in old_cross])
+    ]
+
+    # Add new crossing positions from replacements
+    shifted_replacements = _shift(replacements, removals)
+    for p in shifted_replacements:
+        state.crossing_positions.append((p, CROSS_90_INDEX))
+
+    # --- Recompute FK chain ---
+    fk_deltas = np.array(
+        [catalog._fk_table[idx] for idx in state.piece_indices],
+        dtype=np.float64,
+    )
+    new_states = compute_fk_chain(fk_deltas)
+
+    # Rebuild state.states as list of tuples
+    state.states = [(float(new_states[i, 0]), float(new_states[i, 1]),
+                     float(new_states[i, 2])) for i in range(len(new_states))]
+
+    # Update turtle state to final position
+    final = new_states[-1]
+    state.x = float(final[0])
+    state.y = float(final[1])
+    state.theta = float(final[2])
+
+    # Recompute cumulative angle
+    state.cumulative_angle = float(np.sum(np.abs(fk_deltas[:, 2])))
+    state.pieces_placed = len(state.piece_indices)
 
 
 # =============================================================================

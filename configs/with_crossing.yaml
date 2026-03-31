@@ -3,7 +3,7 @@
 
 inventory:
   # Straights
-  STRAIGHT_24: 8
+  # STRAIGHT_24: 8
   STRAIGHT_16: 40
   # R40 curves
   R40_LEFT: 20
@@ -11,16 +11,22 @@ inventory:
   # 90-degree crossing (allows track to cross itself)
   CROSS_90: 20
 
+#boundary:
+#  min_x: -100.0
+#  max_x: 100.0
+#  min_y: -100.0
+#  max_y: 100.0
+
 boundary:
-  min_x: -100.0
-  max_x: 100.0
-  min_y: -100.0
-  max_y: 100.0
+  min_x: -200.0
+  max_x: 200.0
+  min_y: -200.0
+  max_y: 200.0
 
 algorithm:
   name: BRKGA
   pop_size: 1000
-  n_gen: 100
+  n_gen: 500
   n_elites: 200
   n_offsprings: 700
   n_mutants: 100
