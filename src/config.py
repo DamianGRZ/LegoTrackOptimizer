@@ -56,9 +56,9 @@ class TerminationConfig(BaseModel):
 
 
 class AlgorithmConfig(BaseModel):
-    """GA algorithm parameters."""
+    """NSGA-II algorithm parameters."""
 
-    name: str = Field(default="GA", description="Algorithm name")
+    name: str = Field(default="NSGA2", description="Algorithm name")
     pop_size: int = Field(default=1000, ge=10, description="Population size")
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
     heuristic_ratio: float = Field(default=0.08, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")

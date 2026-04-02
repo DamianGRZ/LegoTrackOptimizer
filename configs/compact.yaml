@@ -15,7 +15,7 @@ boundary:
   max_y: 60.0
 
 algorithm:
-  name: GA
+  name: NSGA2
   pop_size: 1000
   n_gen: 300
   heuristic_ratio: 0.08

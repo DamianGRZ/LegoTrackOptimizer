@@ -27,15 +27,12 @@ boundary:
 #  max_y: 100.0
 
 algorithm:
-  name: BRKGA
+  name: NSGA2
   pop_size: 1000
   n_gen: 500
-  n_elites: 200
-  n_offsprings: 700
-  n_mutants: 100
-  bias: 0.70
   heuristic_ratio: 0.08
-  seed_noise_sigma: 0.10
+  crossover_prob: 0.9
+  mutation_prob: 0.1
   eliminate_duplicates: true
   seed: null
   termination:
