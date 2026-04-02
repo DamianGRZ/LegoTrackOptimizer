@@ -56,37 +56,17 @@ class TerminationConfig(BaseModel):
 
 
 class AlgorithmConfig(BaseModel):
-    """Algorithm parameters (supports both GA and BRKGA)."""
+    """GA algorithm parameters."""
 
-    name: str = Field(default="BRKGA", description="Algorithm name")
+    name: str = Field(default="GA", description="Algorithm name")
     pop_size: int = Field(default=1000, ge=10, description="Population size")
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
-    # BRKGA-specific parameters
-    n_elites: int = Field(default=200, ge=1, description="Elite individuals preserved each gen")
-    n_offsprings: int = Field(default=700, ge=1, description="Offspring via biased crossover")
-    n_mutants: int = Field(default=100, ge=1, description="Fresh random mutants per gen")
-    bias: float = Field(default=0.70, ge=0.5, le=0.95, description="Elite parent inheritance probability")
     heuristic_ratio: float = Field(default=0.08, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")
-    seed_noise_sigma: float = Field(default=0.10, ge=0.0, description="Gaussian noise on heuristic seeds")
-    # Legacy GA fields (kept for backward compatibility)
     crossover_prob: float = Field(default=0.9, ge=0, le=1, description="Crossover probability")
-    crossover_eta: float = Field(default=15.0, ge=1, description="Crossover distribution index")
     mutation_prob: float = Field(default=0.1, ge=0, le=1, description="Mutation probability")
-    mutation_eta: float = Field(default=20.0, ge=1, description="Mutation distribution index")
     eliminate_duplicates: bool = Field(default=True, description="Remove duplicate solutions")
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     termination: TerminationConfig = Field(default_factory=TerminationConfig)
-
-    @field_validator("pop_size")
-    @classmethod
-    def validate_pop_size(cls, v: int, info) -> int:
-        """Ensure pop_size matches BRKGA partition sizes if all are provided."""
-        data = info.data
-        if "n_elites" in data and "n_offsprings" in data and "n_mutants" in data:
-            expected = data["n_elites"] + data["n_offsprings"] + data["n_mutants"]
-            if v != expected:
-                return expected
-        return v
 
 
 class OptimizationConfig(BaseModel):

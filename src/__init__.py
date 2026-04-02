@@ -1,20 +1,9 @@
 # LEGO Track Optimizer - Source Package
+#
+# NOTE: Imports reduced during BRKGA→NSGA-II encoding migration.
+# Modules not yet migrated (sampling, operators, repair, survival, etc.)
+# are imported lazily to avoid import errors.
 
-# Re-export key classes for convenient imports
-from .problem import (
-    TrackOptimizationProblem,
-    ConvergenceTracker,
-    EpsilonTightening,
-)
-from .island_model import (
-    IslandConfig,
-    IslandOptimizer,
-    run_island_optimization,
-)
-from .sampling import (
-    MultiSegmentSampling,
-    HeuristicSampling,
-)
 from .data import (
     TrackCatalog,
     TrackPiece,
@@ -24,17 +13,6 @@ from .config import (
 )
 
 __all__ = [
-    # Problem
-    "TrackOptimizationProblem",
-    "ConvergenceTracker",
-    "EpsilonTightening",
-    # Island Model
-    "IslandConfig",
-    "IslandOptimizer",
-    "run_island_optimization",
-    # Sampling
-    "MultiSegmentSampling",
-    "HeuristicSampling",
     # Data
     "TrackCatalog",
     "TrackPiece",
