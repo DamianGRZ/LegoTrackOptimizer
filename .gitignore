@@ -40,6 +40,7 @@ htmlcov/
 
 # Project specific
 outputs/
+docs/PDF/
 *.log
 
 # OS
