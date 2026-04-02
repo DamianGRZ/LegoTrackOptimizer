@@ -226,6 +226,10 @@ class MultiPathLayout:
         """Angle error (max across all paths)."""
         return self.max_angle_error
 
+    def is_closed(self, pos_tol: float = 0.5, angle_tol: float = 5.0) -> bool:
+        """Check if main path forms a closed loop."""
+        return self.max_closure_error < pos_tol and self.max_angle_error < angle_tol
+
     @property
     def bounding_box(self) -> Tuple[float, float, float, float]:
         """Combined bounding box across all paths."""
