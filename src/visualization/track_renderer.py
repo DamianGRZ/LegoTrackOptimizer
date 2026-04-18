@@ -10,13 +10,13 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from numpy.typing import NDArray
 
-from .config import BoundaryConfig
-from .data import TrackCatalog
-from .geometry import Layout
-from .topology import MultiPathLayout
+from src.config import BoundaryConfig
+from src.catalog import TrackCatalog
+from src.geometry import Layout
+from src.types import MultiPathLayout
 
 # Import geometry helpers from track models (do not modify these)
-from .lego_track_models import (
+from src.lego_track_models import (
     R40,
     RAIL_OFFSET,
     CURVE_ANGLE,
@@ -749,118 +749,3 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
     )
     ax.text(0.02, 0.98, metrics, transform=ax.transAxes, fontsize=8,
             verticalalignment="top", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8))
-
-
-def plot_pareto_front(
-    F: NDArray[np.float64],
-    G: Optional[NDArray[np.float64]] = None,
-    title: str = "Pareto Front",
-    save_path: Optional[Union[str, Path]] = None,
-) -> Figure:
-    """Plot 2D Pareto front with objective values.
-
-    Args:
-        F: Objective array of shape (n, 2) with columns [utilization, speed].
-        G: Optional constraint array of shape (n, 5) for feasibility coloring.
-        title: Plot title.
-        save_path: Optional path to save plot as PNG.
-
-    Returns:
-        Matplotlib figure with 2D scatter plot.
-    """
-    fig, ax = plt.subplots(figsize=(10, 8))
-
-    # Flip signs for maximization objectives (both F[0] and F[1] are negated)
-    utilization = -F[:, 0]
-    avg_speed = -F[:, 1]
-
-    # Determine feasibility for coloring
-    if G is not None:
-        feasible = np.all(G <= 0, axis=1)
-        colors = np.where(feasible, "green", "red")
-        labels = ["Feasible", "Infeasible"]
-    else:
-        colors = "blue"
-        labels = ["Solutions"]
-
-    # Create scatter plot
-    if isinstance(colors, np.ndarray):
-        for color, label in zip(["green", "red"], labels):
-            mask = colors == color
-            if np.any(mask):
-                ax.scatter(
-                    utilization[mask],
-                    avg_speed[mask],
-                    c=color,
-                    marker="o",
-                    s=50,
-                    alpha=0.6,
-                    label=label,
-                )
-    else:
-        ax.scatter(utilization, avg_speed, c=colors, marker="o", s=50, alpha=0.6, label=labels[0])
-
-    ax.set_xlabel("Utilization (fraction)", fontsize=11)
-    ax.set_ylabel("Avg Speed (m/s)", fontsize=11)
-    ax.set_title(title, fontsize=14)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
-
-    return fig
-
-
-def plot_convergence(
-    history: list,
-    title: str = "Optimization Convergence",
-    save_path: Optional[Union[str, Path]] = None,
-) -> Figure:
-    """Plot optimization convergence over generations.
-
-    Args:
-        history: Optimization history from pymoo (list of snapshots).
-        title: Plot title.
-        save_path: Optional path to save plot as PNG.
-
-    Returns:
-        Matplotlib figure.
-    """
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-    generations = []
-    best_utilization = []
-    best_speed = []
-
-    for gen, snapshot in enumerate(history):
-        F = snapshot.opt.get("F")
-        if F is None or len(F) == 0:
-            continue
-
-        generations.append(gen)
-
-        # Track best values (both F[0] and F[1] are negated)
-        best_utilization.append(-np.min(F[:, 0]))
-        best_speed.append(-np.min(F[:, 1]))
-
-    # Plot utilization convergence
-    ax1.plot(generations, best_utilization, "b-", linewidth=2)
-    ax1.set_ylabel("Best Utilization", fontsize=11)
-    ax1.set_title(title, fontsize=14)
-    ax1.grid(True, alpha=0.3)
-
-    # Plot speed convergence
-    ax2.plot(generations, best_speed, "g-", linewidth=2)
-    ax2.set_xlabel("Generation", fontsize=11)
-    ax2.set_ylabel("Best Speed (m/s)", fontsize=11)
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
-
-    return fig
