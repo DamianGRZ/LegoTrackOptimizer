@@ -1,0 +1,55 @@
+[importlinter]
+root_packages =
+    src
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = Three-tier architecture (domain → EA → infrastructure)
+type = layers
+layers =
+    src.algorithm
+    (src.problem) : (src.operators) : (src.decoder) : (src.encoding) : (src.repair) : (src.sampling) : (src.intersection)
+    (src.train) : (src.geometry) : (src.catalog) : (src.types) : (src.templates) : (src.lego_track_models) : (src.config)
+exhaustive = false
+
+[importlinter:contract:train-isolation]
+name = train/ must not import EA or infrastructure code
+type = forbidden
+source_modules =
+    src.train
+forbidden_modules =
+    pymoo
+    src.decoder
+    src.operators
+    src.problem
+    src.algorithm
+    src.visualization
+    src.sampling
+    src.repair
+    src.encoding
+
+[importlinter:contract:catalog-isolation]
+name = catalog/ must not import framework code
+type = forbidden
+source_modules =
+    src.catalog
+forbidden_modules =
+    pymoo
+    matplotlib
+    src.decoder
+    src.operators
+    src.problem
+    src.algorithm
+    src.visualization
+
+[importlinter:contract:visualization-isolation]
+name = visualization/ is a consumer of domain types, not of EA internals
+type = forbidden
+source_modules =
+    src.visualization
+forbidden_modules =
+    pymoo
+    src.operators
+    src.sampling
+    src.repair
+    src.algorithm
