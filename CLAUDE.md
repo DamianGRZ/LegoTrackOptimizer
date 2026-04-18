@@ -1,8 +1,45 @@
 # LEGO Track Optimizer
 
-Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
-
 **Code Quality**: Always use pymoo and Python best practices. Write professional, clean code - avoid excessive if/else chains and AI-generated patterns. Prefer vectorized numpy operations, early returns, and functional decomposition.
+
+---
+
+## Testing & Verification
+
+- **Always run the FULL test suite after code changes.** Do not use `--quick` or `-k <subset>` for validation unless explicitly told otherwise.
+- **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
+- **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
+- **Use `/verify-fix`** for the full run-edit-test-inspect loop.
+
+---
+
+## MCP Servers
+
+| Server | When to use |
+|--------|-------------|
+| `context7` | **Before guessing any pymoo API.** Use proactively for library/API shapes, callback signatures, operator conventions, version-specific syntax. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs`. Do not guess pymoo internals from memory. |
+
+---
+
+## File & Git Operations
+
+- **"Remove" or "untrack" never means `rm` from disk.** Use `git rm --cached <file>` or update `.gitignore`. Deleting files without asking is a hard-don't.
+- **Never `git init`** without first verifying the directory is not already a git repo.
+- **Auto-edits are enabled.** Do not ask for confirmation on routine file edits inside `src/`, `tests/`, `configs/`, or `data/`.
+- **Still confirm for destructive ops**: `git reset --hard`, `git push --force`, deleting branches, dropping files.
+
+---
+
+## Project Invariants
+
+Recurring mistakes that must not repeat:
+
+- **Chromosome length scales with inventory dynamically.** Never hardcode `N_VAR`. The optimizer maximizes piece usage, so fixed-size slots cap the search space artificially.
+- **No hardcoded dimensional or constraint limits.** Boundary, branch count, switch-pair count must all derive from inventory and config at runtime.
+- **Repair must be wired into the evaluation pipeline**, not called ad-hoc. Constraint metric for switches is orphan-switch count, not just `loose_port_count`.
+- **Fitness must reward branches.** If the objective does not credit multi-path topology, the GA eliminates switches as pure overhead.
+
+---
 
 ## What, Why, How
 
@@ -23,6 +60,7 @@ Always use Context7 MCP when I need library/API documentation, code generation, 
 | `/review` | Invoke with Skill tool | Compact code review against pymoo/project conventions | After writing or modifying src/ files |
 | `/diag` | Invoke with Skill tool | Parse outputs/ directory and report fitness, constraints, layout | After any optimization run completes |
 | `/quality` | Invoke with Skill tool | Deep Python & pymoo quality gate — rewrites code to project standards | After implementing new features or refactoring. Use instead of `/review` for deep analysis |
+| `/verify-fix` | Invoke with Skill tool | End-to-end verification loop: full tests + optimizer run + diag, with literal output | After every bug fix. Enforces no-assertion-without-evidence. |
 
 ---
 
@@ -41,14 +79,6 @@ Use with the Task tool for specialized work. **Prefer skills over agents when po
 
 ---
 
-## MCP Servers
-
-| Server | Usage |
-|--------|-------|
-| `context7` | Use for up-to-date library/API documentation via `mcp__context7__resolve-library-id` and `mcp__context7__query-docs` tools |
-
----
-
 ## Tech Stack
 
 - **pymoo 0.6.1.6**: Multi-objective optimization (NSGA-II, GA)
@@ -63,23 +93,23 @@ Use with the Task tool for specialized work. **Prefer skills over agents when po
 
 ### Core Code (`/src`)
 
-| File | Purpose |
+| File/Package | Purpose |
 |------|---------|
-| `problem.py` | `TrackLayoutProblem`, `MultiSegmentProblem`, `SingleObjectiveProblem`, `TrackRepair` |
+| `types.py` | Shared domain types: `SwitchPair`, `TraversalPath`, `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology` |
+| `catalog/` | `TrackCatalog`, `TrackPiece`, `FKDeltas`, YAML loader |
+| `train/` | `TrainConfig`, `SpeedProfile`, `compute_speed_profile`, lateral stability physics |
 | `geometry.py` | `Layout`, `build_layout()`, `compute_fk_chain()` |
-| `evaluation.py` | `SpeedProfile`, objectives, constraints |
-| `data.py` | `TrackCatalog`, `TrackPiece`, `FKDeltas`, YAML loader |
-| `config.py` | Pydantic models: `OptimizationConfig`, `PhysicsConfig` |
-| `decoder.py` | Construction-based 4-phase decoder for multi-segment chromosomes |
-| `encoding.py` | Multi-segment chromosome encoding (N_VAR=218) |
+| `problem.py` | `TrackOptimizationProblem` — bi-objective NSGA-II problem |
+| `decoder.py` | Construction-based decoder for partitioned chromosomes |
+| `encoding.py` | Partitioned chromosome encoding, `PartitionedDimensions` |
+| `config.py` | Pydantic models: `OptimizationConfig`, `BoundaryConfig` |
 | `templates.py` | Template-based passing siding definitions (LEFT_SIDING, RIGHT_SIDING) |
-| `sampling.py` | `HeuristicSampling`, `MultiSegmentSampling` - seeds with valid closed loops |
-| `operators.py` | `NoOpCrossover`, `SwitchPreservingCrossover`, mutation operators |
+| `sampling.py` | `IntegerSampling` — seeds with valid closed loops |
+| `operators.py` | `PartitionedCrossover`, `PartitionedMutation` |
 | `repair.py` | `TrackRepairPipeline` for fixing chromosomes |
-| `survival.py` | `StructuralNichingSurvival` for preserving complex solutions |
-| `topology.py` | `SwitchPair`, `TraversalPath`, `MultiPathLayout`, phase-based data structures |
+| `intersection.py` | Crossing detection for self-intersecting layouts |
 | `visualization.py` | `plot_layout()`, `plot_multi_path_layout()`, `plot_pareto_front()` |
-| `intersection.py` | Intersection detection |
+| `lego_track_models.py` | Geometry constants for visualization rendering |
 
 ### Data & Configs
 
@@ -113,6 +143,9 @@ Prefer skills over raw commands — they handle argument parsing and result form
 # Raw commands (when skills don't fit)
 python main.py --config configs/default.yaml --verbose
 pytest --tb=short -q
+
+# Architecture enforcement
+lint-imports                        # Verify layer contracts (import-linter)
 ```
 
 ---
