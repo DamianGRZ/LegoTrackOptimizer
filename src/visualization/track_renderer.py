@@ -1,6 +1,5 @@
 """Visualization functions for track layouts and optimization results."""
 
-from io import BytesIO
 from pathlib import Path
 from typing import Optional, Union
 
@@ -8,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
-from numpy.typing import NDArray
 
 from src.config import BoundaryConfig
 from src.catalog import TrackCatalog
