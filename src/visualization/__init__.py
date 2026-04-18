@@ -11,7 +11,6 @@ from src.visualization.track_renderer import (
     plot_multi_path_layout,
 )
 from src.visualization.pareto_plot import plot_pareto_front
-from src.visualization.convergence import plot_convergence
 
 __all__ = [
     "get_piece_color",
@@ -19,5 +18,4 @@ __all__ = [
     "plot_layout",
     "plot_multi_path_layout",
     "plot_pareto_front",
-    "plot_convergence",
 ]
