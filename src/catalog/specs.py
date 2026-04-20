@@ -96,3 +96,50 @@ class TrackPieceSpec(BaseModel):
             if abs(nearest * ATOMIC_ANGLE_RAD - port.dtheta) > LATTICE_TOLERANCE:
                 return False
         return True
+
+
+class CatalogMeta(BaseModel):
+    model_config = _FROZEN
+
+    schema_version: str = Field(min_length=1, description="MAJOR.MINOR.PATCH")
+    unit: Literal["stud"] = "stud"
+    stud_mm: float = 8.0
+    angle_unit: Literal["rad"] = "rad"
+    atomic_angle_rad: float = ATOMIC_ANGLE_RAD
+
+
+class TrackCatalogSpec(BaseModel):
+    """Top-level catalog: meta block + tuple of pieces."""
+
+    model_config = _FROZEN
+
+    meta: CatalogMeta
+    pieces: tuple[TrackPieceSpec, ...]
+
+    @model_validator(mode="after")
+    def _piece_ids_unique(self):
+        ids = [p.piece_id for p in self.pieces]
+        dups = sorted({x for x in ids if ids.count(x) > 1})
+        if dups:
+            raise ValueError(f"Duplicate piece_id(s): {dups}. "
+                             f"Each TrackPieceSpec.piece_id must be unique.")
+        return self
+
+    @property
+    def by_id(self) -> Mapping[str, TrackPieceSpec]:
+        return {p.piece_id: p for p in self.pieces}
+
+    def by_kind(self, kind: str) -> tuple[TrackPieceSpec, ...]:
+        return tuple(p for p in self.pieces if p.kind == kind)
+
+    def by_manufacturer(self, m: str) -> tuple[TrackPieceSpec, ...]:
+        return tuple(p for p in self.pieces if p.manufacturer == m)
+
+    @property
+    def n_types(self) -> int:
+        return len(self.pieces)
+
+    @property
+    def piece_ids(self) -> tuple[str, ...]:
+        """Canonical stable ordering; chromosome uses this index mapping."""
+        return tuple(p.piece_id for p in self.pieces)
