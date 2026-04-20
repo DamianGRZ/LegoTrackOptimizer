@@ -31,3 +31,100 @@ class TestPortDef:
         """Missing required fields raise ValidationError."""
         with pytest.raises(ValidationError):
             PortDef(dx=0.0, dy=0.0)  # missing dtheta
+
+
+class TestTrackPieceSpec:
+    def _base_straight(self, **overrides):
+        from src.catalog.specs import TrackPieceSpec
+        payload = dict(
+            piece_id="straight_16",
+            kind="straight",
+            manufacturer="lego",
+            part_numbers=("53401",),
+            length_studs=16.0,
+            ports={
+                "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                "B": {"dx": 16.0, "dy": 0.0, "dtheta": 0.0},
+            },
+            routes={"main": ("A", "B")},
+        )
+        payload.update(overrides)
+        return TrackPieceSpec.model_validate(payload)
+
+    def test_valid_straight_constructs(self):
+        spec = self._base_straight()
+        assert spec.piece_id == "straight_16"
+        assert spec.kind == "straight"
+        assert spec.manufacturer == "lego"
+
+    def test_port_a_must_be_at_origin(self):
+        with pytest.raises(ValidationError) as exc:
+            self._base_straight(ports={
+                "A": {"dx": 1.0, "dy": 0.0, "dtheta": 0.0},
+                "B": {"dx": 16.0, "dy": 0.0, "dtheta": 0.0},
+            })
+        assert "Port 'A'" in str(exc.value)
+
+    def test_port_a_must_exist(self):
+        with pytest.raises(ValidationError) as exc:
+            self._base_straight(ports={
+                "X": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                "B": {"dx": 16.0, "dy": 0.0, "dtheta": 0.0},
+            })
+        assert "Port 'A'" in str(exc.value)
+
+    def test_route_references_real_port(self):
+        with pytest.raises(ValidationError) as exc:
+            self._base_straight(routes={"main": ("A", "Z")})
+        assert "route" in str(exc.value).lower() or "undefined" in str(exc.value).lower()
+
+    def test_curve_requires_radius(self):
+        from src.catalog.specs import TrackPieceSpec
+        with pytest.raises(ValidationError) as exc:
+            TrackPieceSpec.model_validate(dict(
+                piece_id="curve_missing",
+                kind="curve",
+                manufacturer="lego",
+                ports={
+                    "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                    "B": {"dx": 15.307, "dy": 3.045, "dtheta": 0.3927},
+                },
+                routes={"main": ("A", "B")},
+                # radius_studs and sector_angle_rad deliberately missing
+            ))
+        assert "radius_studs" in str(exc.value) or "curve" in str(exc.value)
+
+    def test_switch_requires_diverging_radius(self):
+        from src.catalog.specs import TrackPieceSpec
+        with pytest.raises(ValidationError):
+            TrackPieceSpec.model_validate(dict(
+                piece_id="switch_missing",
+                kind="switch",
+                manufacturer="lego",
+                ports={
+                    "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                    "B": {"dx": 32.0, "dy": 0.0, "dtheta": 0.0},
+                    "C": {"dx": 31.0, "dy": 6.2, "dtheta": 0.3927},
+                },
+                routes={"through": ("A", "B"), "diverging": ("A", "C")},
+                body_length_studs=32.0,
+                # diverging_radius_studs deliberately missing
+            ))
+
+    def test_on_angle_lattice_for_lego_r40(self):
+        """R40 curve at 22.5° is on the π/32 lattice (k=4)."""
+        from src.catalog.specs import TrackPieceSpec
+        spec = TrackPieceSpec.model_validate(dict(
+            piece_id="r40_left",
+            kind="curve",
+            manufacturer="lego",
+            radius_studs=40.0,
+            sector_angle_rad=math.pi / 8,
+            hand="left",
+            ports={
+                "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                "B": {"dx": 15.307, "dy": 3.045, "dtheta": math.pi / 8},
+            },
+            routes={"main": ("A", "B")},
+        ))
+        assert spec.on_angle_lattice is True
