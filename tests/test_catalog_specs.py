@@ -148,3 +148,56 @@ class TestTrackPieceSpec:
             routes={"main": ("A", "B")},
         ))
         assert spec.on_angle_lattice is False
+
+
+class TestTrackCatalogSpec:
+    def _minimal(self, pieces_override=None):
+        from src.catalog.specs import TrackCatalogSpec
+        if pieces_override is None:
+            pieces_override = [
+                dict(piece_id="straight_16", kind="straight", manufacturer="lego",
+                     length_studs=16.0,
+                     ports={"A": {"dx": 0, "dy": 0, "dtheta": 0},
+                            "B": {"dx": 16, "dy": 0, "dtheta": 0}},
+                     routes={"main": ("A", "B")}),
+            ]
+        return TrackCatalogSpec.model_validate(dict(
+            meta={"schema_version": "1.0.0"},
+            pieces=pieces_override,
+        ))
+
+    def test_valid_minimal_catalog(self):
+        cat = self._minimal()
+        assert cat.n_types == 1
+        assert cat.piece_ids == ("straight_16",)
+
+    def test_duplicate_piece_id_rejected(self):
+        with pytest.raises(ValidationError) as exc:
+            self._minimal(pieces_override=[
+                dict(piece_id="dup", kind="straight", manufacturer="lego",
+                     length_studs=16.0,
+                     ports={"A": {"dx": 0, "dy": 0, "dtheta": 0},
+                            "B": {"dx": 16, "dy": 0, "dtheta": 0}},
+                     routes={"main": ("A", "B")}),
+                dict(piece_id="dup", kind="straight", manufacturer="lego",
+                     length_studs=24.0,
+                     ports={"A": {"dx": 0, "dy": 0, "dtheta": 0},
+                            "B": {"dx": 24, "dy": 0, "dtheta": 0}},
+                     routes={"main": ("A", "B")}),
+            ])
+        assert "Duplicate" in str(exc.value) or "unique" in str(exc.value).lower()
+
+    def test_by_id_lookup(self):
+        cat = self._minimal()
+        assert cat.by_id["straight_16"].length_studs == 16.0
+
+    def test_by_kind_filter(self):
+        cat = self._minimal()
+        straights = cat.by_kind("straight")
+        assert len(straights) == 1
+        assert straights[0].piece_id == "straight_16"
+
+    def test_by_manufacturer_filter(self):
+        cat = self._minimal()
+        assert len(cat.by_manufacturer("lego")) == 1
+        assert len(cat.by_manufacturer("4dbrix")) == 0
