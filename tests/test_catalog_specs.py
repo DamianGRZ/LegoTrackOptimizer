@@ -128,3 +128,23 @@ class TestTrackPieceSpec:
             routes={"main": ("A", "B")},
         ))
         assert spec.on_angle_lattice is True
+
+    def test_on_angle_lattice_false_for_off_lattice_piece(self):
+        """A piece whose port dtheta is NOT a multiple of π/32 should return False."""
+        from src.catalog.specs import TrackPieceSpec, ATOMIC_ANGLE_RAD
+        # Deliberately off-lattice: π/8 + a clearly-non-lattice offset (> tolerance)
+        off_lattice_theta = math.pi / 8 + 1e-3
+        spec = TrackPieceSpec.model_validate(dict(
+            piece_id="off_lattice_curve",
+            kind="curve",
+            manufacturer="fxbricks",
+            radius_studs=64.0,
+            sector_angle_rad=off_lattice_theta,
+            hand="left",
+            ports={
+                "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                "B": {"dx": 15.0, "dy": 3.0, "dtheta": off_lattice_theta},
+            },
+            routes={"main": ("A", "B")},
+        ))
+        assert spec.on_angle_lattice is False
