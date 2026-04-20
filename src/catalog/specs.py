@@ -19,3 +19,80 @@ class PortDef(BaseModel):
     dx: float = Field(description="forward offset in studs")
     dy: float = Field(description="left offset in studs (y = left)")
     dtheta: float = Field(description="heading delta in radians, CCW positive")
+
+
+ATOMIC_ANGLE_RAD = math.pi / 32  # 5.625°; see V2 catalog report §Atomic angle
+LATTICE_TOLERANCE = 1e-6         # corrected from V2 spec's 1e-9 per research finding
+
+
+class TrackPieceSpec(BaseModel):
+    """A single track piece: kind, manufacturer, ports, and named routes."""
+
+    model_config = _FROZEN
+
+    piece_id: str = Field(min_length=1)
+    kind: Literal["straight", "curve", "switch", "wye", "crossing"]
+    manufacturer: Literal["lego", "4dbrix", "fxbricks", "bricktracks", "trixbrix"]
+    part_numbers: tuple[str, ...] = ()
+
+    # kind-conditional geometry
+    length_studs: float | None = None
+    radius_studs: float | None = None
+    sector_angle_rad: float | None = None
+    hand: Literal["left", "right"] | None = None
+    body_length_studs: float | None = None
+    diverging_radius_studs: float | None = None
+
+    # topology
+    ports: Mapping[str, PortDef]
+    routes: Mapping[str, tuple[str, ...]]
+
+    @field_validator("ports")
+    @classmethod
+    def _port_A_is_origin(cls, v: Mapping[str, PortDef]) -> Mapping[str, PortDef]:
+        a = v.get("A")
+        if a is None or (a.dx, a.dy, a.dtheta) != (0.0, 0.0, 0.0):
+            raise ValueError(
+                "Port 'A' must exist and be at (0, 0, 0); "
+                "the piece-local frame is defined by port A."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _routes_reference_real_ports(self):
+        for route_name, port_seq in self.routes.items():
+            missing = [p for p in port_seq if p not in self.ports]
+            if missing:
+                raise ValueError(
+                    f"Route '{route_name}' references undefined port(s) {missing}; "
+                    f"known ports are {sorted(self.ports)}."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _kind_geometry_complete(self):
+        required: dict[str, list[str]] = {
+            "straight": ["length_studs"],
+            "curve": ["radius_studs", "sector_angle_rad"],
+            "switch": ["body_length_studs", "diverging_radius_studs"],
+            "wye": [],
+            "crossing": [],
+        }
+        missing = [f for f in required.get(self.kind, [])
+                   if getattr(self, f) is None]
+        if missing:
+            raise ValueError(
+                f"kind='{self.kind}' requires field(s) {missing}; "
+                f"piece_id='{self.piece_id}' is missing them."
+            )
+        return self
+
+    @property
+    def on_angle_lattice(self) -> bool:
+        """True iff every port.dtheta is an integer multiple of π/32 within tolerance."""
+        for port in self.ports.values():
+            ratio = port.dtheta / ATOMIC_ANGLE_RAD
+            nearest = round(ratio)
+            if abs(nearest * ATOMIC_ANGLE_RAD - port.dtheta) > LATTICE_TOLERANCE:
+                return False
+        return True
