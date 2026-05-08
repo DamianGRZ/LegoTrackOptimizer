@@ -17,10 +17,10 @@ inventory:
 #  R40_SWITCH_RIGHT_OUT: 4
 
 boundary:
-  min_x: -250.0
-  max_x: 250.0
-  min_y: -250.0
-  max_y: 250.0
+  min_x: -350.0
+  max_x: 350.0
+  min_y: -350.0
+  max_y: 350.0
 
 #boundary:
 #  min_x: -100.0
@@ -33,7 +33,7 @@ algorithm:
   pop_size: 1000
   n_gen: 500
   heuristic_ratio: 0.20
-  crossover_prob: 0.01
+  crossover_prob: 0.2
   mutation_prob: 0.8
   eliminate_duplicates: true
   seed: null

@@ -16,6 +16,7 @@ from .physics import (
     v_eff_array,
 )
 from .scoring import SpeedProfile, compute_speed_profile
+from .evaluation import PhysicalEvaluation, evaluate_layout
 
 __all__ = [
     "DEFAULT_TRAIN_CONFIG",
@@ -24,4 +25,6 @@ __all__ = [
     "v_eff_array",
     "SpeedProfile",
     "compute_speed_profile",
+    "PhysicalEvaluation",
+    "evaluate_layout",
 ]

@@ -14,7 +14,7 @@ from ..catalog import TrackCatalog
 from ..geometry import Layout
 
 
-@dataclass
+@dataclass(frozen=True)
 class SpeedProfile:
     """Time-optimal speed profile along track layout."""
 
@@ -30,6 +30,7 @@ def compute_speed_profile(
     layout: Layout,
     catalog: TrackCatalog,
     train_config: TrainConfig = DEFAULT_TRAIN_CONFIG,
+    safety_margin: float = 1.0,
 ) -> SpeedProfile:
     """Compute time-optimal speed profile using 3-pass algorithm.
 
@@ -45,6 +46,9 @@ def compute_speed_profile(
         layout: Track layout with geometry
         catalog: Track catalog for piece properties (also provides stud_mm)
         train_config: Portable locomotive physics (default: DEFAULT_TRAIN_CONFIG)
+        safety_margin: Multiplier (in (0, 1]) applied to every Pass-1 cap so
+            the operating speed stays strictly below the derailment cap.
+            Default 1.0 preserves legacy behavior.
 
     Returns:
         SpeedProfile with speeds, avg_speed, lap_time, etc.
@@ -65,9 +69,11 @@ def compute_speed_profile(
     radii_m = catalog.get_radii(layout.indices) / 1000.0  # meters
     speed_limits = catalog.get_speed_limits(layout.indices)  # m/s
 
-    # Pass 1: Curvature speed limits (vectorized) - THIS PREVENTS DERAILING
+    # Pass 1: Curvature speed limits (vectorized) - THIS PREVENTS DERAILING.
+    # safety_margin (default 1.0) scales every cap so the operating speed
+    # stays strictly below the derailment cap.
     v_curve = v_eff_array(train_config, radii_m)
-    v_limit = np.minimum(v_curve, speed_limits)
+    v_limit = np.minimum(v_curve, speed_limits) * safety_margin
 
     # Apply 3-pass algorithm (friction ellipse reduces accel/brake on curves)
     is_closed = layout.is_closed(pos_tol=1.0, angle_tol=10.0)

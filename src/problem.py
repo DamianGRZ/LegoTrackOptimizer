@@ -2,11 +2,11 @@
 
 Bi-objective NSGA-II with Deb's constraint handling:
 - F[0] = -utilization (maximize piece usage)
-- F[1] = -min_speed (maximize bottleneck speed, V2 semantics)
+- F[1] = -avg_speed  (maximize length-independent average speed at safety_margin=0.95)
 - 5 inequality constraints via Deb's CV rules
 """
 
-from typing import Dict
+from __future__ import annotations
 
 import numpy as np
 from pymoo.core.problem import ElementwiseProblem
@@ -15,7 +15,7 @@ from .config import OptimizationConfig
 from .catalog import TrackCatalog
 from .decoder import DecoderConfig, decode_chromosome
 from .encoding import compute_dimensions, generate_bounds
-from .train import compute_speed_profile
+from .train import evaluate_layout
 from .intersection import count_segment_crossings
 
 
@@ -24,7 +24,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
     Objectives (both minimized for pymoo):
         F[0] = -utilization  (maximize piece usage)
-        F[1] = -min_speed    (maximize bottleneck, V2 semantics)
+        F[1] = lap_time      (minimize lap time at safety_margin=0.95)
 
     Constraints (V2 shape, g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
@@ -81,7 +81,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
             boundary_max_y=config.boundary.max_y,
         )
 
-    def _convert_inventory(self, inventory: Dict[str, int]) -> Dict[int, int]:
+    def _convert_inventory(self, inventory: dict[str, int]) -> dict[int, int]:
         """Convert inventory from piece_id to piece_index."""
         result = {}
         for piece_id, count in inventory.items():
@@ -109,15 +109,16 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # F[0]: -utilization
         utilization = layout.n_pieces / self.total_inventory
 
-        # F[1] = -min_speed (V2 bottleneck). avg_speed was a 3-pass harmonic-mean
-        # profile that masks dangerous curves behind fast straights — a safety
-        # failure mode. min_speed is the minimum over per-segment speed caps,
-        # which is the V2 v_bottleneck semantics (strictly conservative).
-        speed_profile = compute_speed_profile(
-            layout, self.catalog, train_config=self._train_config,
+        # F[1] = -avg_speed (i.e., maximize average speed) at safety_margin=0.95.
+        # avg_speed = total_distance / lap_time is length-independent: it
+        # measures how fast the train moves, not how long the lap is.
+        # Using lap_time directly would penalize layouts for adding pieces,
+        # conflicting with F[0] = -utilization.
+        phys = evaluate_layout(
+            layout, self.catalog, self._train_config, safety_margin=0.95,
         )
 
-        out["F"] = [-utilization, -speed_profile.min_speed]
+        out["F"] = [-utilization, -phys.speed_profile.avg_speed]
 
         # Constraints (V2 shape: 5 + n_piece_types inequalities, g <= 0 feasible).
         # G[0..2]: closure split into per-axis inequalities (shim: degrees for theta
@@ -186,7 +187,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         scalar summary helper for external callers. The per-type version
         below is the constraint-facing metric.
         """
-        piece_counts: Dict[int, int] = {}
+        piece_counts: dict[int, int] = {}
 
         for piece_idx in layout.main_loop_pieces:
             if piece_idx >= 0:
