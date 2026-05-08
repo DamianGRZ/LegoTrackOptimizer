@@ -36,6 +36,7 @@ edits.
 
 from __future__ import annotations
 
+<<<<<<< Updated upstream
 import os
 
 # matplotlib's TkAgg default is not thread-safe and crashes the
@@ -44,6 +45,8 @@ import os
 # Set BEFORE any matplotlib import (transitively pulled in via src_v2).
 os.environ["MPLBACKEND"] = "Agg"
 
+=======
+>>>>>>> Stashed changes
 import io
 import json
 import logging
@@ -114,9 +117,12 @@ def run_optimization_streaming(
     pop_size: int,
     n_gen: int,
     heuristic_ratio: float,
+<<<<<<< Updated upstream
     crossover_prob: float,
     mutation_prob: float,
     n_workers: int,
+=======
+>>>>>>> Stashed changes
     on_log,
 ):
     """Run V2 optimization, emitting log lines via on_log(str).
@@ -135,7 +141,10 @@ def run_optimization_streaming(
     from src_v2.encoding import iter_active_slots
     from src_v2.problem import PortPairProblem
     from src_v2.runner import run_optimization, save_results
+<<<<<<< Updated upstream
     from src_v2.visualization import port_graph_to_json
+=======
+>>>>>>> Stashed changes
 
     handler = _StreamingLogHandler(on_log)
     root_logger = logging.getLogger()
@@ -149,6 +158,7 @@ def run_optimization_streaming(
         config.algorithm.pop_size = int(pop_size)
         config.algorithm.n_gen = int(n_gen)
         config.algorithm.heuristic_ratio = float(heuristic_ratio)
+<<<<<<< Updated upstream
         config.algorithm.crossover_prob = float(crossover_prob)
         config.algorithm.mutation_prob = float(mutation_prob)
         config.n_workers = int(n_workers)
@@ -165,6 +175,17 @@ def run_optimization_streaming(
         res = run_optimization(config, catalog, verbose=True, output_dir=out_dir)
         elapsed = time.time() - t0
 
+=======
+
+        on_log(f"Config '{config_name}' loaded — pop={pop_size}, gen={n_gen}, "
+               f"heuristic={heuristic_ratio:.0%}")
+
+        t0 = time.time()
+        res = run_optimization(config, catalog, verbose=True)
+        elapsed = time.time() - t0
+
+        out_dir = OUTPUT_DIR / config_name
+>>>>>>> Stashed changes
         save_results(res, out_dir, catalog, config)
 
         F = res.pop.get("F")
@@ -179,6 +200,7 @@ def run_optimization_streaming(
             "elapsed_sec": elapsed,
             "n_feasible": n_feasible,
             "pop_size": int(pop_size),
+<<<<<<< Updated upstream
             "total_inventory": int(config.total_inventory),
             "inventory": dict(config.inventory),
         }
@@ -191,11 +213,23 @@ def run_optimization_streaming(
         if n_feasible > 0:
             feas_idx = np.where(feasible)[0]
             best_idx = feas_idx[np.argmin(F[feas_idx, 0])]
+=======
+        }
+
+        if n_feasible > 0:
+            feas_idx = np.where(feasible)[0]
+            best_idx = feas_idx[np.argmin(F[feas_idx, 0])]
+            problem = PortPairProblem(catalog, config)
+>>>>>>> Stashed changes
             graph = decode_chromosome(
                 res.pop.get("X")[best_idx], problem.dims, catalog,
                 problem.decoder_config,
             )
+<<<<<<< Updated upstream
             counts: dict[str, int] = {}
+=======
+            counts = {}
+>>>>>>> Stashed changes
             for _, idx in iter_active_slots(res.pop.get("X")[best_idx], problem.dims):
                 pid = catalog.index_to_id.get(idx, f"?{idx}")
                 counts[pid] = counts.get(pid, 0) + 1
@@ -209,6 +243,7 @@ def run_optimization_streaming(
                 "closure_angle_deg": float(graph.max_closure_angle_deg),
                 "piece_counts": counts,
             })
+<<<<<<< Updated upstream
             layout_json = port_graph_to_json(graph, catalog, config)
 
         # Best-infeasible layout: highest utilization among infeasible+finite.
@@ -221,12 +256,17 @@ def run_optimization_streaming(
                 problem.decoder_config,
             )
             layout_infeasible_json = port_graph_to_json(graph_inf, catalog, config)
+=======
+>>>>>>> Stashed changes
 
         return {
             "elapsed_sec": elapsed,
             "summary": summary,
+<<<<<<< Updated upstream
             "layout": layout_json,
             "layout_infeasible": layout_infeasible_json,
+=======
+>>>>>>> Stashed changes
             "best_layout": (
                 f"outputs_v2/{config_name}/best_layout.png"
                 if (out_dir / "best_layout.png").exists() else None
@@ -265,6 +305,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/configs":
             self._send_json({"configs": self._list_configs()})
             return
+<<<<<<< Updated upstream
         if path == "/api/catalog":
             self._handle_catalog()
             return
@@ -274,6 +315,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/topology-showcase":
             self._handle_topology_showcase()
             return
+=======
+>>>>>>> Stashed changes
         if path.startswith("/outputs_v2/"):
             rel = path.lstrip("/")
             self._serve_static(REPO_ROOT / unquote(rel))
@@ -286,6 +329,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_text(404, "not found")
 
+<<<<<<< Updated upstream
     def _handle_catalog(self) -> None:
         """Serialize the V2 catalog as render-ready JSON. Reloads on every
         request so edits to the YAML or to the serializer are picked up
@@ -327,6 +371,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json({"error": str(e), "trace": traceback.format_exc()})
 
+=======
+>>>>>>> Stashed changes
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/run":
@@ -367,9 +413,12 @@ class Handler(BaseHTTPRequestHandler):
         pop_size = int(params.get("pop_size", 500))
         n_gen = int(params.get("n_gen", 200))
         heuristic_ratio = float(params.get("heuristic_ratio", 0.30))
+<<<<<<< Updated upstream
         crossover_prob = float(params.get("crossover_prob", 0.9))
         mutation_prob = float(params.get("mutation_prob", 0.1))
         n_workers = int(params.get("n_workers", 1))
+=======
+>>>>>>> Stashed changes
 
         # NDJSON streaming response — one JSON object per line
         self.send_response(200)
@@ -390,8 +439,12 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             result = run_optimization_streaming(
+<<<<<<< Updated upstream
                 config_name, pop_size, n_gen, heuristic_ratio,
                 crossover_prob, mutation_prob, n_workers, emit_log,
+=======
+                config_name, pop_size, n_gen, heuristic_ratio, emit_log,
+>>>>>>> Stashed changes
             )
             payload = json.dumps({"type": "result", **result}) + "\n"
             self.wfile.write(payload.encode("utf-8"))

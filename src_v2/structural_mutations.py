@@ -7,6 +7,7 @@ chromosome, analyse the layout, and apply targeted graph surgery in a single
 step. They are V2-native — no V1 imports — and they keep the chromosome's
 topology invariants intact (no double-booked ports, no self-loops).
 
+<<<<<<< Updated upstream
 Phase 2/3 (closure):
 
 - :func:`introduce_crossing` — convert a near-perpendicular self-intersection
@@ -28,6 +29,13 @@ Phase 4 (diversification):
   non-adjacent edges of a single cycle.
 - :func:`mutate_closure_repair_lamarckian` — window-substitution on a cycle
   with non-trivial closure_gap (Lamarckian local search).
+=======
+Currently implemented:
+
+- :func:`introduce_crossing` — find a near-perpendicular self-intersection in
+  the FK chain and insert a CROSS_90 piece that routes both segments through
+  it (port A↔B for one, port C↔D for the other).
+>>>>>>> Stashed changes
 """
 
 from __future__ import annotations
@@ -35,11 +43,17 @@ from __future__ import annotations
 import random
 from typing import Optional
 
+<<<<<<< Updated upstream
 import numpy as np
 from numpy.typing import NDArray
 
 from .branch_grow import find_branch_path
 from .decoder import _port_local_pose, decode_chromosome
+=======
+from numpy.typing import NDArray
+
+from .decoder import decode_chromosome
+>>>>>>> Stashed changes
 from .encoding import (
     INACTIVE,
     PortPairDimensions,
@@ -49,6 +63,7 @@ from .encoding import (
     iter_active_slots,
     set_piece_slot,
     set_port_pair,
+<<<<<<< Updated upstream
     set_slot_flip,
     set_slot_rotate,
 )
@@ -65,6 +80,10 @@ _BRANCH_MAX_DEPTH: int = 16
 # Goal tolerance (in studs) for branch closure; matches
 # OptimizationConfig.branch_closure_tolerance default.
 _BRANCH_TOLERANCE_STUDS: float = 8.0
+=======
+)
+from .intersection import find_perpendicular_intersections
+>>>>>>> Stashed changes
 
 
 def introduce_crossing(
@@ -149,6 +168,7 @@ def introduce_crossing(
     set_port_pair(x, dims, new_row_2, cross_slot, 3, slot_j_b, port_j_b_idx)
 
     return True
+<<<<<<< Updated upstream
 
 
 def introduce_switch_pair(
@@ -1053,3 +1073,5 @@ def _perpendicular_edge_pairs_in_cycles(graph, catalog) -> list:
                  (j, sa_j, pa_j, sb_j, pb_j)),
             )
     return pairs
+=======
+>>>>>>> Stashed changes

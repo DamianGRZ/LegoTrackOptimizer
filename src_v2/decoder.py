@@ -26,12 +26,19 @@ visualization) happens in a downstream step yet to be implemented.
 from __future__ import annotations
 
 import math
+<<<<<<< Updated upstream
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 import networkx as nx
+=======
+from collections import deque
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Set, Tuple
+
+>>>>>>> Stashed changes
 from numpy.typing import NDArray
 
 from .catalog import TrackCatalog
@@ -40,8 +47,11 @@ from .encoding import (
     INACTIVE,
     PortPairDimensions,
     get_anchor,
+<<<<<<< Updated upstream
     get_slot_flip,
     get_slot_rotate,
+=======
+>>>>>>> Stashed changes
     iter_active_pairs,
     iter_active_slots,
 )
@@ -97,8 +107,11 @@ def decode_chromosome(
         )
 
     slot_pieces, slot_indices = _read_slots(x, dims, catalog)
+<<<<<<< Updated upstream
     slot_flips = _read_slot_flips(x, dims, slot_pieces, spec)
     slot_rotates = _read_slot_rotates(x, dims, slot_pieces, spec)
+=======
+>>>>>>> Stashed changes
     raw_edges = _read_raw_edges(x, dims, catalog, spec, slot_pieces)
     sanitized_edges, dropped = _sanitize_edges(raw_edges)
 
@@ -106,6 +119,7 @@ def decode_chromosome(
 
     anchor = _anchor_pose_from_chromosome(x, dims)
     slot_poses, residuals = _propagate_poses(
+<<<<<<< Updated upstream
         slot_pieces, slot_flips, slot_rotates,
         sanitized_edges, components, spec, anchor,
     )
@@ -122,10 +136,14 @@ def decode_chromosome(
         boundary_min_y=config.boundary_min_y,
         boundary_max_y=config.boundary_max_y,
         anchor_offset_xy=(anchor[0], anchor[1]),
+=======
+        slot_pieces, sanitized_edges, components, spec, anchor,
+>>>>>>> Stashed changes
     )
 
     loose_ports = _find_loose_ports(slot_pieces, sanitized_edges, spec)
 
+<<<<<<< Updated upstream
     branch_labels = _compute_branch_labels(
         components, sanitized_edges, slot_pieces, spec,
     )
@@ -135,12 +153,18 @@ def decode_chromosome(
         slot_indices=slot_indices,
         slot_flips=slot_flips,
         slot_rotates=slot_rotates,
+=======
+    return PortGraph(
+        slot_pieces=slot_pieces,
+        slot_indices=slot_indices,
+>>>>>>> Stashed changes
         edges=sanitized_edges,
         slot_poses=slot_poses,
         closure_residuals=residuals,
         loose_ports=loose_ports,
         connected_components=components,
         dropped_edge_count=dropped,
+<<<<<<< Updated upstream
         branch_labels=branch_labels,
     )
 
@@ -200,6 +224,11 @@ def _piece_body_length(piece_spec: TrackPieceSpec) -> float:
     return 0.0
 
 
+=======
+    )
+
+
+>>>>>>> Stashed changes
 # =============================================================================
 # Step 1 — read slots
 # =============================================================================
@@ -354,6 +383,7 @@ def _anchor_pose_from_chromosome(
 
 
 def _port_local_pose(
+<<<<<<< Updated upstream
     piece_spec: TrackPieceSpec,
     port_name: str,
     flip: int = 0,
@@ -390,12 +420,23 @@ def _port_local_pose(
         dtheta = -dtheta
 
     return (dx, dy, dtheta)
+=======
+    piece_spec: TrackPieceSpec, port_name: str,
+) -> Pose:
+    """Pose of ``port_name`` in the piece-local frame (port A at origin).
+
+    Returned theta is in radians (matches V2 PortDef convention).
+    """
+    port = piece_spec.ports[port_name]
+    return (port.dx, port.dy, port.dtheta)
+>>>>>>> Stashed changes
 
 
 COMPONENT_TILING_GAP_STUDS: float = 20.0
 """Horizontal gap between tiled components (decoder layout)."""
 
 
+<<<<<<< Updated upstream
 def _auto_center_layout(
     slot_poses: Dict[int, Pose],
     *,
@@ -431,6 +472,10 @@ def _propagate_poses(
     slot_pieces: Dict[int, str],
     slot_flips: Dict[int, int],
     slot_rotates: Dict[int, int],
+=======
+def _propagate_poses(
+    slot_pieces: Dict[int, str],
+>>>>>>> Stashed changes
     edges: List[PortEdge],
     components: List[Set[int]],
     spec: TrackCatalogSpec,
@@ -463,8 +508,12 @@ def _propagate_poses(
         # the component's relative pose layout.
         bfs_anchor = anchor if i == 0 else IDENTITY
         component_poses, residuals = _bfs_component(
+<<<<<<< Updated upstream
             min(component), component, slot_pieces, slot_flips, slot_rotates,
             incidence, spec, bfs_anchor,
+=======
+            min(component), component, slot_pieces, incidence, spec, bfs_anchor,
+>>>>>>> Stashed changes
         )
         all_residuals.extend(residuals)
 
@@ -495,8 +544,11 @@ def _bfs_component(
     anchor_slot: int,
     component: Set[int],
     slot_pieces: Dict[int, str],
+<<<<<<< Updated upstream
     slot_flips: Dict[int, int],
     slot_rotates: Dict[int, int],
+=======
+>>>>>>> Stashed changes
     incidence: Dict[int, List[PortEdge]],
     spec: TrackCatalogSpec,
     anchor_pose: Pose,
@@ -512,8 +564,11 @@ def _bfs_component(
         if slot_a not in component:
             continue
         piece_a = spec.by_id[slot_pieces[slot_a]]
+<<<<<<< Updated upstream
         flip_a = slot_flips.get(slot_a, 0)
         rotate_a = slot_rotates.get(slot_a, 0)
+=======
+>>>>>>> Stashed changes
         pose_a = poses[slot_a]
 
         for edge in incidence[slot_a]:
@@ -528,6 +583,7 @@ def _bfs_component(
             # V2 mating convention: the partner piece's local +x aligns with
             # this side's outgoing port heading (no 180 deg flip — see file
             # header).
+<<<<<<< Updated upstream
             port_local = _port_local_pose(piece_a, this_port, flip_a, rotate_a)
             port_world = pose_compose(pose_a, port_local)
 
@@ -537,6 +593,13 @@ def _bfs_component(
             partner_port_local = _port_local_pose(
                 partner_piece, other_port, partner_flip, partner_rotate,
             )
+=======
+            port_local = _port_local_pose(piece_a, this_port)
+            port_world = pose_compose(pose_a, port_local)
+
+            partner_piece = spec.by_id[slot_pieces[other_slot]]
+            partner_port_local = _port_local_pose(partner_piece, other_port)
+>>>>>>> Stashed changes
             partner_pose = pose_compose(port_world, pose_inverse(partner_port_local))
 
             if other_slot in poses:
@@ -569,6 +632,7 @@ def _wrap_pi(theta: float) -> float:
 
 
 def port_graph_to_layout(graph, catalog: TrackCatalog):
+<<<<<<< Updated upstream
     """Walk every connected component in a PortGraph and produce a Layout.
 
     For each component the walk follows the same "tree-style follow any
@@ -582,11 +646,21 @@ def port_graph_to_layout(graph, catalog: TrackCatalog):
     disjoint closed loops + open chains. Walking only the largest dropped
     those extra components from the rendered PNG even though they counted
     toward the reported piece total.
+=======
+    """Walk the largest cycle in a PortGraph and produce a legacy Layout.
+
+    Used for visualization: src_v2.visualization.plot_layout consumes a
+    sequential Layout (indices + (n+1,3) states array of degree-theta poses).
+    The walk visits each slot in the largest component once, following edges
+    that progress to unvisited slots, using port A as the entry-side
+    convention so the FK chain reads naturally.
+>>>>>>> Stashed changes
     """
     import numpy as np
     from .geometry import Layout
 
     if not graph.connected_components:
+<<<<<<< Updated upstream
         return Layout(
             indices=np.array([], dtype=np.int32), states=np.zeros((1, 3)),
         )
@@ -671,6 +745,59 @@ def _walk_component(component, edge_incidence) -> List[int]:
             walk.append(slot)
             visited.add(slot)
     return walk
+=======
+        return Layout(indices=np.array([], dtype=np.int32), states=np.zeros((1, 3)))
+
+    largest = max(graph.connected_components, key=len)
+
+    incidence: Dict[int, List[PortEdge]] = {}
+    for edge in graph.edges:
+        if edge.slot_a in largest and edge.slot_b in largest:
+            incidence.setdefault(edge.slot_a, []).append(edge)
+            incidence.setdefault(edge.slot_b, []).append(edge)
+
+    start = min(largest)
+    walk: List[int] = [start]
+    visited: Set[int] = {start}
+    visited_edges: Set[int] = set()
+
+    current = start
+    while True:
+        next_slot = None
+        for edge in incidence.get(current, []):
+            if id(edge) in visited_edges:
+                continue
+            other = edge.slot_b if edge.slot_a == current else edge.slot_a
+            if other not in visited:
+                next_slot = other
+                visited_edges.add(id(edge))
+                break
+
+        if next_slot is None:
+            break
+        walk.append(next_slot)
+        visited.add(next_slot)
+        current = next_slot
+
+    indices = np.array(
+        [graph.slot_indices[s] for s in walk if s in graph.slot_indices],
+        dtype=np.int32,
+    )
+
+    states_list = []
+    for slot in walk:
+        pose = graph.slot_poses.get(slot)
+        if pose is None:
+            continue
+        states_list.append([pose[0], pose[1], math.degrees(pose[2])])
+
+    if not states_list:
+        return Layout(indices=indices, states=np.zeros((1, 3)))
+
+    states_list.append(states_list[0])  # closed-loop final state = first
+    states = np.array(states_list, dtype=np.float64)
+    return Layout(indices=indices, states=states)
+>>>>>>> Stashed changes
 
 
 def _find_loose_ports(
@@ -693,6 +820,7 @@ def _find_loose_ports(
             if (slot_idx, port_name) not in used:
                 loose.append((slot_idx, port_name))
     return loose
+<<<<<<< Updated upstream
 
 
 # =============================================================================
@@ -770,3 +898,5 @@ def _slot_route_labels(
         )
         if route is not None:
             yield slot, route
+=======
+>>>>>>> Stashed changes

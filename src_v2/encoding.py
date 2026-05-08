@@ -2,6 +2,7 @@
 
 Layout
 ------
+<<<<<<< Updated upstream
     [ piece_slots:  N_max int16 ]
     [ flip_flags:   N_max int16 ]
     [ rotate_flags: N_max int16 ]
@@ -17,6 +18,11 @@ Layout
   when the slot's piece is marked ``rotatable`` (switches: rotate=1 selects
   the OUT placement of the same physical brick — frog at throat-end instead
   of far-end). Forced to 0 by repair on non-rotatable pieces.
+=======
+    [ piece_slots: N_max int16 ]  [ port_pairs: E_max * 4 int16 ]  [ anchor: 3 int16 ]
+
+- Piece slot: piece_id index from catalog ordering, or -1 (INACTIVE).
+>>>>>>> Stashed changes
 - Port-pair row: (slot_a, port_idx_a, slot_b, port_idx_b), or all -1 (INACTIVE).
 - Anchor: (start_x, start_y, start_theta_deg) as int16.
 
@@ -43,6 +49,7 @@ from numpy.typing import NDArray
 INACTIVE: int = -1
 """Sentinel for inactive piece slots and inactive port-pair rows."""
 
+<<<<<<< Updated upstream
 ENCODING_VERSION: int = 3
 """Bumps whenever the chromosome layout, decoder semantics, or persisted
 artifact format changes incompatibly with prior versions. History:
@@ -84,6 +91,11 @@ JUNC_PARAM_B_OFFSET: int = 4
 # Junction params are int16-stored and bounded so repair / validate can clamp.
 JUNCTION_PARAM_MAX: int = 255
 
+=======
+GENES_PER_PAIR: int = 4
+"""Each port-pair row occupies (slot_a, port_a, slot_b, port_b) = 4 ints."""
+
+>>>>>>> Stashed changes
 ANCHOR_GENES: int = 3
 """Anchor occupies (x, y, theta_deg) = 3 ints."""
 
@@ -115,6 +127,7 @@ MAX_PORT_IDX: int = 3
 
 @dataclass(frozen=True)
 class PortPairDimensions:
+<<<<<<< Updated upstream
     """Chromosome region offsets and capacities.
 
     Layout (in gene index order):
@@ -143,6 +156,12 @@ class PortPairDimensions:
                 f"PortPairDimensions n_var={self.n_var} exceeds int16 max "
                 f"({int16_max}); reduce N_max/E_max/J_max."
             )
+=======
+    """Chromosome region offsets and capacities."""
+
+    N_max: int
+    E_max: int
+>>>>>>> Stashed changes
 
     @property
     def slot_start(self) -> int:
@@ -153,6 +172,7 @@ class PortPairDimensions:
         return self.N_max
 
     @property
+<<<<<<< Updated upstream
     def flip_start(self) -> int:
         return self.slot_end
 
@@ -187,6 +207,18 @@ class PortPairDimensions:
     @property
     def anchor_start(self) -> int:
         return self.junc_end
+=======
+    def pair_start(self) -> int:
+        return self.N_max
+
+    @property
+    def pair_end(self) -> int:
+        return self.N_max + GENES_PER_PAIR * self.E_max
+
+    @property
+    def anchor_start(self) -> int:
+        return self.pair_end
+>>>>>>> Stashed changes
 
     @property
     def n_var(self) -> int:
@@ -302,6 +334,7 @@ def compute_port_pair_dimensions(
 
     E_max = max(1, total_ports // 2)
 
+<<<<<<< Updated upstream
     J_max = _compute_junction_capacity(inventory or {})
 
     return PortPairDimensions(N_max=N_max, E_max=E_max, J_max=J_max)
@@ -326,6 +359,9 @@ def _compute_junction_capacity(inventory: Dict[str, int]) -> int:
         + inventory.get("DOUBLE_CROSSOVER", 0)
     )
     return (switches // 2) + crossings
+=======
+    return PortPairDimensions(N_max=N_max, E_max=E_max)
+>>>>>>> Stashed changes
 
 
 # =============================================================================
@@ -354,6 +390,7 @@ def generate_bounds(
     xl[dims.slot_start:dims.slot_end] = INACTIVE
     xu[dims.slot_start:dims.slot_end] = max_piece_id
 
+<<<<<<< Updated upstream
     # Flip flags: 0 or 1 (binary). Inactive slots ignore their flip; we still
     # bound to [0,1] so the GA never produces nonsense values.
     xl[dims.flip_start:dims.flip_end] = 0
@@ -363,6 +400,8 @@ def generate_bounds(
     xl[dims.rotate_start:dims.rotate_end] = 0
     xu[dims.rotate_start:dims.rotate_end] = 1
 
+=======
+>>>>>>> Stashed changes
     # Port-pair rows
     for k in range(dims.E_max):
         base = dims.pair_start + k * GENES_PER_PAIR
@@ -375,6 +414,7 @@ def generate_bounds(
         xl[base + PAIR_PORT_B_OFFSET] = INACTIVE
         xu[base + PAIR_PORT_B_OFFSET] = max_port_idx
 
+<<<<<<< Updated upstream
     # Junction segment (Phase 4): one descriptor per junction slot, 5 genes each.
     for j in range(dims.J_max):
         base = dims.junc_start + j * JUNCTION_GENES
@@ -397,6 +437,13 @@ def generate_bounds(
     xu[dims.anchor_start + ANCHOR_X_OFFSET] = off_x
     xl[dims.anchor_start + ANCHOR_Y_OFFSET] = -off_y
     xu[dims.anchor_start + ANCHOR_Y_OFFSET] = off_y
+=======
+    # Anchor: x and y in boundary range; theta in [0, 359]
+    xl[dims.anchor_start + ANCHOR_X_OFFSET] = int(boundary.min_x)
+    xu[dims.anchor_start + ANCHOR_X_OFFSET] = int(boundary.max_x)
+    xl[dims.anchor_start + ANCHOR_Y_OFFSET] = int(boundary.min_y)
+    xu[dims.anchor_start + ANCHOR_Y_OFFSET] = int(boundary.max_y)
+>>>>>>> Stashed changes
     xl[dims.anchor_start + ANCHOR_THETA_OFFSET] = 0
     xu[dims.anchor_start + ANCHOR_THETA_OFFSET] = 359
 
@@ -430,6 +477,7 @@ def iter_active_slots(
 
 
 # =============================================================================
+<<<<<<< Updated upstream
 # Flip-bit accessors
 # =============================================================================
 
@@ -474,6 +522,8 @@ def iter_active_rotates(
 
 
 # =============================================================================
+=======
+>>>>>>> Stashed changes
 # Port-pair accessors
 # =============================================================================
 
@@ -548,6 +598,7 @@ def set_anchor(
 
 
 # =============================================================================
+<<<<<<< Updated upstream
 # Junction accessors (Phase 4)
 # =============================================================================
 
@@ -596,10 +647,13 @@ def iter_junctions(
 
 
 # =============================================================================
+=======
+>>>>>>> Stashed changes
 # Construction helpers
 # =============================================================================
 
 def create_empty_chromosome(dims: PortPairDimensions) -> NDArray:
+<<<<<<< Updated upstream
     """Create a chromosome with all slots / pairs inactive and zero anchor.
 
     Flip and rotate bits start at 0; they are only meaningful for the
@@ -611,6 +665,10 @@ def create_empty_chromosome(dims: PortPairDimensions) -> NDArray:
     x[dims.rotate_start:dims.rotate_end] = 0
     # Junctions start fully inactive (active=0, anchor=0, kind=0, param_a=0, param_b=0).
     x[dims.junc_start:dims.junc_end] = 0
+=======
+    """Create a chromosome with all genes inactive and zero anchor."""
+    x = np.full(dims.n_var, INACTIVE, dtype=DTYPE)
+>>>>>>> Stashed changes
     x[dims.anchor_start + ANCHOR_X_OFFSET] = 0
     x[dims.anchor_start + ANCHOR_Y_OFFSET] = 0
     x[dims.anchor_start + ANCHOR_THETA_OFFSET] = 0
@@ -645,6 +703,7 @@ def validate_chromosome(
         if v < INACTIVE:
             errors.append(f"Slot[{k}]: {v} < INACTIVE")
 
+<<<<<<< Updated upstream
     for k in range(dims.N_max):
         f = int(x[dims.flip_start + k])
         if f not in (0, 1):
@@ -655,6 +714,8 @@ def validate_chromosome(
         if r not in (0, 1):
             errors.append(f"Rotate[{k}]={r} not in {{0, 1}}")
 
+=======
+>>>>>>> Stashed changes
     for k in range(dims.E_max):
         sa, pa, sb, pb = get_port_pair(x, dims, k)
         for label, slot in (("slot_a", sa), ("slot_b", sb)):
@@ -668,6 +729,7 @@ def validate_chromosome(
                     f"Pair[{k}].{label}={port} out of [0, {MAX_PORT_IDX}]"
                 )
 
+<<<<<<< Updated upstream
     # Junction descriptors: active in {0,1}; anchor in [0, N_max-1]; kind /
     # params bounded. Phase 4 carries them inert through every operator.
     for j in range(dims.J_max):
@@ -691,6 +753,8 @@ def validate_chromosome(
                 f"Junction[{j}].param_b={pb_} out of [0, {JUNCTION_PARAM_MAX}]"
             )
 
+=======
+>>>>>>> Stashed changes
     return errors
 
 

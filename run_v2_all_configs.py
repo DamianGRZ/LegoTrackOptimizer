@@ -26,6 +26,7 @@ def run_one(config_name: str, catalog: TrackCatalog) -> dict:
     config.algorithm.n_gen = N_GEN
     config.algorithm.heuristic_ratio = HEURISTIC_RATIO
 
+<<<<<<< Updated upstream
     out_dir = Path(f"outputs_v2/{config_name}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -34,6 +35,14 @@ def run_one(config_name: str, catalog: TrackCatalog) -> dict:
     res = run_optimization(config, catalog, verbose=True, output_dir=out_dir)
     elapsed = time.time() - t0
 
+=======
+    print(f"\n{'='*70}\nV2 {config_name}: pop={POP_SIZE}, gen={N_GEN}\n{'='*70}")
+    t0 = time.time()
+    res = run_optimization(config, catalog, verbose=True)
+    elapsed = time.time() - t0
+
+    out_dir = Path(f"outputs_v2/{config_name}")
+>>>>>>> Stashed changes
     save_results(res, out_dir, catalog, config)
 
     F = res.pop.get("F")

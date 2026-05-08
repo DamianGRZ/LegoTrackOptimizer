@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+<<<<<<< Updated upstream
 from typing import Optional, Tuple
+=======
+from typing import Tuple
+>>>>>>> Stashed changes
 
 import numpy as np
 from numpy.typing import NDArray
@@ -40,6 +44,7 @@ def compute_fk_chain(fk_deltas: NDArray[np.float64]) -> NDArray[np.float64]:
 
 @dataclass
 class Layout:
+<<<<<<< Updated upstream
     """Track-layout representation backing the matplotlib renderer.
 
     The trailing entry of ``states`` is the "closing duplicate" — a copy of
@@ -68,6 +73,12 @@ class Layout:
     # neighbour at the start slot), producing a 1-curve-per-corner
     # mis-render.
     flips: Optional[NDArray[np.int8]] = None
+=======
+    """Legacy single-loop layout representation (Phase 1 compatibility)."""
+
+    indices: NDArray[np.int32]
+    states: NDArray[np.float64]
+>>>>>>> Stashed changes
 
     @property
     def n_pieces(self) -> int:
@@ -75,6 +86,7 @@ class Layout:
         return len(self.indices)
 
     @property
+<<<<<<< Updated upstream
     def n_components(self) -> int:
         """Number of disjoint pieces-walks packed into this Layout."""
         if self.component_breaks is None:
@@ -82,6 +94,8 @@ class Layout:
         return len(self.component_breaks)
 
     @property
+=======
+>>>>>>> Stashed changes
     def final_state(self) -> NDArray[np.float64]:
         """Final state [x, y, theta]."""
         return self.states[-1]

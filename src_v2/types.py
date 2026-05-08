@@ -28,7 +28,13 @@ class PieceClass(Enum):
 
     SIMPLE_2PORT = "simple_2port"
     SWITCH_3PORT = "switch_3port"
+<<<<<<< Updated upstream
     CROSSING_4PORT = "crossing_4port"
+=======
+    SWITCH_4PORT = "switch_4port"
+    CROSSING_4PORT = "crossing_4port"
+    BUMPER_1PORT = "bumper_1port"
+>>>>>>> Stashed changes
 
 
 @dataclass(frozen=True)
@@ -90,12 +96,23 @@ class PieceTopology:
 
     def is_switch(self) -> bool:
         """Check if piece is a switch."""
+<<<<<<< Updated upstream
         return self.piece_class == PieceClass.SWITCH_3PORT
+=======
+        return self.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
+>>>>>>> Stashed changes
 
     def is_crossing(self) -> bool:
         """Check if piece is a crossing."""
         return self.piece_class == PieceClass.CROSSING_4PORT
 
+<<<<<<< Updated upstream
+=======
+    def is_terminator(self) -> bool:
+        """Check if piece is a bumper/terminator."""
+        return self.piece_class == PieceClass.BUMPER_1PORT
+
+>>>>>>> Stashed changes
 
 # =============================================================================
 # SWITCH PAIR AND TRAVERSAL PATH
@@ -346,6 +363,7 @@ class PortGraph:
     slot_indices: Dict[int, int] = field(default_factory=dict)
     """slot_idx -> piece_index (numeric chromosome index)."""
 
+<<<<<<< Updated upstream
     slot_flips: Dict[int, int] = field(default_factory=dict)
     """slot_idx -> flip bit (0 or 1). Always 0 for asymmetric pieces; the
     decoder enforces this regardless of what the chromosome says, so a
@@ -355,6 +373,8 @@ class PortGraph:
     """slot_idx -> 180° rotate bit (0 or 1). Always 0 for non-rotatable
     pieces; analogous to slot_flips."""
 
+=======
+>>>>>>> Stashed changes
     edges: List[PortEdge] = field(default_factory=list)
     """Sanitized connection list. Each port appears in at most one edge."""
 
@@ -374,6 +394,7 @@ class PortGraph:
     """Number of raw chromosome port-pair rows that failed validation
     (out-of-range slot, port_idx exceeding piece, double-booking, self-loop)."""
 
+<<<<<<< Updated upstream
     branch_labels: Dict[Tuple[int, str], int] = field(default_factory=dict)
     """``(slot_idx, route_name) -> cycle_id``. Cycle membership labels.
 
@@ -392,6 +413,8 @@ class PortGraph:
     (e.g. switch port B-C edge usage, physically invalid) are also absent.
     """
 
+=======
+>>>>>>> Stashed changes
     @property
     def n_slots(self) -> int:
         return len(self.slot_pieces)

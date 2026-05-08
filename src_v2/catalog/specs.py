@@ -33,7 +33,11 @@ class TrackPieceSpec(BaseModel):
     model_config = _FROZEN
 
     piece_id: str = Field(min_length=1)
+<<<<<<< Updated upstream
     kind: Literal["straight", "curve", "switch", "crossing"]
+=======
+    kind: Literal["straight", "curve", "switch", "wye", "crossing"]
+>>>>>>> Stashed changes
     manufacturer: Literal["lego", "4dbrix", "fxbricks", "bricktracks", "trixbrix"]
     part_numbers: tuple[str, ...] = ()
 
@@ -45,6 +49,7 @@ class TrackPieceSpec(BaseModel):
     body_length_studs: float | None = None
     diverging_radius_studs: float | None = None
 
+<<<<<<< Updated upstream
     # Whether the physical brick can be flipped end-for-end across its own
     # longitudinal axis (port A's heading) to yield a useful alternative
     # geometry. True for pieces that share one SKU between left/right
@@ -64,6 +69,8 @@ class TrackPieceSpec(BaseModel):
     # yield distinct useful placements), neither, or one of the two.
     rotatable: bool = False
 
+=======
+>>>>>>> Stashed changes
     # topology
     ports: Mapping[str, PortDef]
     routes: Mapping[str, tuple[str, ...]]
@@ -96,6 +103,10 @@ class TrackPieceSpec(BaseModel):
             "straight": ["length_studs"],
             "curve": ["radius_studs", "sector_angle_rad"],
             "switch": ["body_length_studs", "diverging_radius_studs"],
+<<<<<<< Updated upstream
+=======
+            "wye": [],
+>>>>>>> Stashed changes
             "crossing": [],
         }
         missing = [f for f in required.get(self.kind, [])

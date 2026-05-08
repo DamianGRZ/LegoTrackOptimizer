@@ -11,9 +11,12 @@ from .track_renderer import (
     plot_multi_path_layout,
 )
 from .pareto_plot import plot_pareto_front
+<<<<<<< Updated upstream
 from .serialize import catalog_to_json, port_graph_to_json
 from .showcase import build_showcase_layout
 from .topology_showcase import build_topology_showcase
+=======
+>>>>>>> Stashed changes
 
 __all__ = [
     "get_piece_color",
@@ -21,8 +24,11 @@ __all__ = [
     "plot_layout",
     "plot_multi_path_layout",
     "plot_pareto_front",
+<<<<<<< Updated upstream
     "catalog_to_json",
     "port_graph_to_json",
     "build_showcase_layout",
     "build_topology_showcase",
+=======
+>>>>>>> Stashed changes
 ]

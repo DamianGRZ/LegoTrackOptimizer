@@ -1,5 +1,6 @@
 /* app.jsx — V2 port-pair optimizer web frontend.
  *
+<<<<<<< Updated upstream
  * POSTs run parameters to the Python backend (server.py), streams progress
  * lines, then renders the resulting layout to a <canvas> via Render.render
  * (defined in render.js, loaded before this file). The matplotlib PNG outputs
@@ -7,6 +8,16 @@
  */
 
 const { useState, useEffect, useCallback, useRef } = React;
+=======
+ * Lightweight React app that POSTs run parameters to the Python backend
+ * (server.py) and renders the resulting best_layout.png + scorecard.
+ * No optimization runs in JS — the actual GA is the V2 Python pipeline.
+ *
+ * Tweaks panel uses the reusable controls from tweaks-panel.jsx.
+ */
+
+const { useState, useEffect, useCallback } = React;
+>>>>>>> Stashed changes
 
 const API_BASE = '';
 
@@ -15,6 +26,7 @@ const DEFAULTS = {
   pop_size: 500,
   n_gen: 200,
   heuristic_ratio: 0.30,
+<<<<<<< Updated upstream
   crossover_prob: 0.9,
   mutation_prob: 0.1,
   n_workers: 16,
@@ -28,11 +40,14 @@ const VIEW = {
   PNG: 'png',
   PNG_INFEASIBLE: 'png_infeasible',
   PARETO: 'pareto',
+=======
+>>>>>>> Stashed changes
 };
 
 function App() {
   const [tweaks, setTweak] = useTweaks(DEFAULTS);
   const [configs, setConfigs] = useState([]);
+<<<<<<< Updated upstream
   const [catalog, setCatalog] = useState(null);
   const [runState, setRunState] = useState('idle');
   const [logLines, setLogLines] = useState([]);
@@ -72,18 +87,29 @@ function App() {
       setError(`Topology showcase load failed: ${e}`);
     }
   }, []);
+=======
+  const [runState, setRunState] = useState('idle'); // idle | running | done | error
+  const [logLines, setLogLines] = useState([]);
+  const [result, setResult] = useState(null);
+  const [view, setView] = useState('feasible'); // feasible | infeasible | pareto
+  const [error, setError] = useState(null);
+  const [reloadMsg, setReloadMsg] = useState(null);
+>>>>>>> Stashed changes
 
   useEffect(() => {
     fetch(`${API_BASE}/api/configs`)
       .then((r) => r.json())
       .then((data) => setConfigs(data.configs || []))
       .catch(() => setConfigs(['default', 'with_switches', 'with_crossing', 'compact']));
+<<<<<<< Updated upstream
     fetch(`${API_BASE}/api/catalog`)
       .then((r) => r.json())
       .then((data) => {
         if (data && data.pieces) setCatalog(data);
       })
       .catch(() => {});
+=======
+>>>>>>> Stashed changes
   }, []);
 
   const reload = useCallback(async () => {
@@ -96,10 +122,13 @@ function App() {
       } else {
         setReloadMsg(`Reload failed: ${data.error}`);
       }
+<<<<<<< Updated upstream
       // Refresh catalog as well — kind/port edits show up immediately.
       fetch(`${API_BASE}/api/catalog`)
         .then((r) => r.json())
         .then((d) => { if (d && d.pieces) setCatalog(d); });
+=======
+>>>>>>> Stashed changes
     } catch (e) {
       setReloadMsg(`Reload error: ${e}`);
     }
@@ -111,7 +140,10 @@ function App() {
     setLogLines([]);
     setResult(null);
     setError(null);
+<<<<<<< Updated upstream
     setView(VIEW.CANVAS);
+=======
+>>>>>>> Stashed changes
 
     try {
       const resp = await fetch(`${API_BASE}/api/run`, {
@@ -121,9 +153,21 @@ function App() {
       });
 
       if (!resp.body) {
+<<<<<<< Updated upstream
         const data = await resp.json();
         if (data.success) { setResult(data); setRunState('done'); }
         else { setError(data.error || 'unknown error'); setRunState('error'); }
+=======
+        // Fallback: non-streaming
+        const data = await resp.json();
+        if (data.success) {
+          setResult(data);
+          setRunState('done');
+        } else {
+          setError(data.error || 'unknown error');
+          setRunState('error');
+        }
+>>>>>>> Stashed changes
         return;
       }
 
@@ -158,6 +202,7 @@ function App() {
     }
   }, [tweaks]);
 
+<<<<<<< Updated upstream
   const pngUrl = (() => {
     if (!result) return null;
     const ts = result.timestamp || Date.now();
@@ -191,6 +236,23 @@ function App() {
         ? `${Math.round(layoutToShow.boundary_mm.width)} × ${Math.round(layoutToShow.boundary_mm.height)} mm boundary · 1 grid square = 10 studs`
         : null);
 
+=======
+  const imgUrl = (() => {
+    if (!result) return null;
+    const ts = result.timestamp || Date.now();
+    if (view === 'feasible' && result.best_layout) {
+      return `${API_BASE}/${result.best_layout}?t=${ts}`;
+    }
+    if (view === 'infeasible' && result.best_infeasible) {
+      return `${API_BASE}/${result.best_infeasible}?t=${ts}`;
+    }
+    if (view === 'pareto' && result.pareto_front) {
+      return `${API_BASE}/${result.pareto_front}?t=${ts}`;
+    }
+    return null;
+  })();
+
+>>>>>>> Stashed changes
   return (
     <div className="app">
       <header className="hdr">
@@ -211,6 +273,7 @@ function App() {
           <button
             className="btn"
             disabled={runState === 'running'}
+<<<<<<< Updated upstream
             onClick={loadShowcase}
             title="Render every piece kind side-by-side (no optimization)"
           >
@@ -227,6 +290,8 @@ function App() {
           <button
             className="btn"
             disabled={runState === 'running'}
+=======
+>>>>>>> Stashed changes
             onClick={reload}
             title="Reload Python backend (picks up edits to src_v2/*.py)"
           >
@@ -245,6 +310,7 @@ function App() {
       <div className="grid">
         <div className="left">
           <div className="canvas-wrap">
+<<<<<<< Updated upstream
             {showCanvas ? (
               <LayoutCanvas
                 layout={layoutToShow}
@@ -253,6 +319,10 @@ function App() {
               />
             ) : pngUrl ? (
               <img src={pngUrl} alt={view} />
+=======
+            {imgUrl ? (
+              <img src={imgUrl} alt={view} />
+>>>>>>> Stashed changes
             ) : (
               <div className="empty">
                 {runState === 'running'
@@ -260,6 +330,7 @@ function App() {
                   : 'Click "Run optimization" to start'}
               </div>
             )}
+<<<<<<< Updated upstream
             {showCanvas && boundaryCaption && (
               <div className="canvas-caption">{boundaryCaption}</div>
             )}
@@ -321,6 +392,28 @@ function App() {
                 {showCanvas && layoutToShow && (
                   <ExportPNGButton view={view} config={tweaks.config} />
                 )}
+=======
+            <div className="canvas-footer">
+              <div className="tabs">
+                <button
+                  className={`tab ${view === 'feasible' ? 'active' : ''}`}
+                  disabled={!result?.best_layout}
+                  onClick={() => setView('feasible')}
+                >Feasible</button>
+                <button
+                  className={`tab ${view === 'infeasible' ? 'active' : ''}`}
+                  disabled={!result?.best_infeasible}
+                  onClick={() => setView('infeasible')}
+                >Infeasible</button>
+                <button
+                  className={`tab ${view === 'pareto' ? 'active' : ''}`}
+                  disabled={!result?.pareto_front}
+                  onClick={() => setView('pareto')}
+                >Pareto</button>
+              </div>
+              <div>
+                {result ? `${result.elapsed_sec.toFixed(1)}s · ${tweaks.config}` : '—'}
+>>>>>>> Stashed changes
               </div>
             </div>
           </div>
@@ -339,6 +432,7 @@ function App() {
   );
 }
 
+<<<<<<< Updated upstream
 function LayoutCanvas({ layout, catalog, runState }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
@@ -414,6 +508,8 @@ function ExportPNGButton({ view, config }) {
   );
 }
 
+=======
+>>>>>>> Stashed changes
 function ConfigCard({ tweaks, setTweak, configs, disabled }) {
   return (
     <div className="card">
@@ -451,6 +547,7 @@ function ConfigCard({ tweaks, setTweak, configs, disabled }) {
           onChange={(e) => setTweak('heuristic_ratio', Math.max(0, Math.min(1, Number(e.target.value) || 0)))}
         />
       </div>
+<<<<<<< Updated upstream
       <div className="form-row">
         <label htmlFor="cfg-cx">Crossover</label>
         <input
@@ -475,6 +572,8 @@ function ConfigCard({ tweaks, setTweak, configs, disabled }) {
           onChange={(e) => setTweak('n_workers', Math.max(1, Math.min(32, Number(e.target.value) || 1)))}
         />
       </div>
+=======
+>>>>>>> Stashed changes
     </div>
   );
 }
@@ -501,7 +600,11 @@ function ScoreCard({ result }) {
         <span className="k">Min speed</span>
         <span className="v">{fmt(s.best_min_speed, 2)} m/s</span>
         <span className="k">Pieces</span>
+<<<<<<< Updated upstream
         <span className="v">{s.n_pieces ?? 0} / {s.total_inventory ?? '—'}</span>
+=======
+        <span className="v">{s.n_pieces ?? 0}</span>
+>>>>>>> Stashed changes
         <span className="k">Components</span>
         <span className="v">{s.n_components ?? 0}</span>
         <span className="k">Cycles</span>
@@ -513,6 +616,7 @@ function ScoreCard({ result }) {
         <span className="k">Feasible</span>
         <span className="v">{s.n_feasible ?? 0} / {s.pop_size ?? 0}</span>
       </div>
+<<<<<<< Updated upstream
       {s.inventory && Object.keys(s.inventory).length > 0 && (
         <div className="pieces-used">
           {Object.entries(s.inventory).map(([pid, avail]) => {
@@ -525,6 +629,15 @@ function ScoreCard({ result }) {
               </span>
             );
           })}
+=======
+      {s.piece_counts && Object.keys(s.piece_counts).length > 0 && (
+        <div className="pieces-used">
+          {Object.entries(s.piece_counts).map(([pid, n]) => (
+            <span key={pid} className="pill">
+              <span className="pill-n">{n}</span> {pid}
+            </span>
+          ))}
+>>>>>>> Stashed changes
         </div>
       )}
     </div>

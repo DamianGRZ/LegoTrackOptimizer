@@ -54,16 +54,24 @@ source_modules =
     src_v2.visualization
 forbidden_modules =
     pymoo
+<<<<<<< Updated upstream
     src_v2.operators
     src_v2.sampling
     src_v2.repair
     src_v2.runner
     src_v2.structural_mutations
+=======
+    src.operators
+    src.sampling
+    src.repair
+    src.algorithm
+>>>>>>> Stashed changes
 
 [importlinter:contract:catalog-foundation]
 name = Catalog is a leaf domain package — no upward imports
 type = forbidden
 source_modules =
+<<<<<<< Updated upstream
     src_v2.catalog
 forbidden_modules =
     src_v2.geometry
@@ -78,3 +86,19 @@ forbidden_modules =
     src_v2.visualization
     src_v2.runner
     src_v2.structural_mutations
+=======
+    src.catalog
+forbidden_modules =
+    src.geometry
+    src.train
+    src.decoder
+    src.encoding
+    src.problem
+    src.operators
+    src.sampling
+    src.repair
+    src.templates
+    src.intersection
+    src.visualization
+    src.algorithm
+>>>>>>> Stashed changes

@@ -23,6 +23,7 @@
       "Bash(.venv/Scripts/python.exe -m pytest tests/ -q)",
       "Bash(lint-imports)",
       "Bash(.venv/Scripts/python.exe *)",
+<<<<<<< Updated upstream
       "Bash(grep -A 20 \"piece_id: R40_LEFT$\\\\|piece_id: STRAIGHT_16$\\\\|piece_id: CROSS_90$\" data/track_pieces_v2.yaml)",
       "WebFetch(domain:www.4dbrix.com)",
       "WebFetch(domain:trixbrix.eu)",
@@ -58,6 +59,9 @@
       "Bash(tasklist)",
       "Bash(tee outputs_v2/with_switches_review_run.log)",
       "Bash(tee outputs_v2/_tier1_sanity_50gen.log)"
+=======
+      "Bash(grep -A 20 \"piece_id: R40_LEFT$\\\\|piece_id: STRAIGHT_16$\\\\|piece_id: CROSS_90$\" data/track_pieces_v2.yaml)"
+>>>>>>> Stashed changes
     ]
   },
   "enabledPlugins": {

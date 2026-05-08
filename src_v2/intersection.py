@@ -137,6 +137,7 @@ def _port_idx(catalog, piece_id: str, port_name: str) -> Optional[int]:
         return None
     names = list(piece_spec.ports)
     return names.index(port_name) if port_name in names else None
+<<<<<<< Updated upstream
 
 
 # =============================================================================
@@ -197,3 +198,5 @@ def count_uncovered_intersections(graph: PortGraph, catalog) -> int:
         for slot_j in slots[i + 1:]
         if _segments_intersect(*segments[slot_i], *segments[slot_j])
     )
+=======
+>>>>>>> Stashed changes
