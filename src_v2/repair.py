@@ -28,12 +28,17 @@ What this pipeline DOES NOT do (deferred):
 
 from __future__ import annotations
 
+<<<<<<< Updated upstream
 from typing import Dict, Iterable, Optional, Set, Tuple
+=======
+from typing import Dict, Set, Tuple
+>>>>>>> Stashed changes
 
 from numpy.typing import NDArray
 from pymoo.core.repair import Repair
 
 from .catalog import TrackCatalog
+<<<<<<< Updated upstream
 from .decoder import DecoderConfig, _iter_cycles, decode_chromosome
 from .encoding import (
     INACTIVE,
@@ -61,6 +66,18 @@ from .types import PortEdge
 
 # R40-only closed cycle: 16 pieces × 22.5° = 360° exactly.
 _R40_PIECES_PER_CLOSED_CYCLE: int = 16
+=======
+from .decoder import DecoderConfig
+from .encoding import (
+    INACTIVE,
+    PortPairDimensions,
+    clear_port_pair,
+    get_port_pair,
+    iter_active_slots,
+    set_piece_slot,
+)
+from .structural_mutations import introduce_crossing
+>>>>>>> Stashed changes
 
 
 class PortPairRepairPipeline(Repair):
@@ -87,11 +104,14 @@ class PortPairRepairPipeline(Repair):
         self.max_iterations = max_iterations
         self.crossing_injection_max = crossing_injection_max
         self.decoder_config = decoder_config or DecoderConfig()
+<<<<<<< Updated upstream
         # Toggled by FinalizationGatingCallback at termination.perc > 0.9.
         # When True, _enforce_route_completeness attempts branch growth on
         # incomplete switches (Phase 3 ships the branch_grow.find_branch_path
         # implementation; meanwhile the attempt stub returns False = revert).
         self.finalization_active: bool = False
+=======
+>>>>>>> Stashed changes
 
     def _do(self, problem, X, **kwargs) -> NDArray:
         for i in range(len(X)):
@@ -99,6 +119,7 @@ class PortPairRepairPipeline(Repair):
         return X
 
     def _repair_one(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         # Orientation-bit normalization: zero flip / rotate on every slot
         # whose piece doesn't support them, or is inactive. Cheap and
         # idempotent; runs once per individual since later steps don't
@@ -124,6 +145,13 @@ class PortPairRepairPipeline(Repair):
         # x stays in the pool so NSGA-II selection/crossover preserve
         # genotypic diversity). The repaired graph is exposed via
         # out["pheno"]; F/G derive from it.
+=======
+        for _ in range(self.max_iterations):
+            changed_edges = self._sanitize_edges(x)
+            changed_inv = self._enforce_inventory(x)
+            if not (changed_edges or changed_inv):
+                break
+>>>>>>> Stashed changes
         # After structural repair settles, opportunistically convert
         # near-perpendicular self-intersections to real CROSS_90 pieces.
         # This mirrors V1's CROSS_90 repair injection but with proper
@@ -141,6 +169,7 @@ class PortPairRepairPipeline(Repair):
             self._enforce_inventory(x)
 
     # ------------------------------------------------------------------
+<<<<<<< Updated upstream
     # Orientation-bit normalization (flip + rotate)
     # ------------------------------------------------------------------
 
@@ -196,6 +225,8 @@ class PortPairRepairPipeline(Repair):
                 set_slot_rotate(x, self.dims, slot_idx, 0)
 
     # ------------------------------------------------------------------
+=======
+>>>>>>> Stashed changes
     # Edge sanitization
     # ------------------------------------------------------------------
 
@@ -283,7 +314,11 @@ class PortPairRepairPipeline(Repair):
         for slot_idx in range(self.dims.N_max - 1, -1, -1):
             if not violations:
                 break
+<<<<<<< Updated upstream
             piece_index = int(x[self.dims.slot_start + slot_idx])
+=======
+            piece_index = int(x[slot_idx])
+>>>>>>> Stashed changes
             if piece_index == INACTIVE:
                 continue
             if piece_index in violations:
@@ -293,6 +328,7 @@ class PortPairRepairPipeline(Repair):
                     del violations[piece_index]
 
         return True
+<<<<<<< Updated upstream
 
     # ------------------------------------------------------------------
     # Route completeness (Phase 2)
@@ -723,3 +759,5 @@ def _slots_in_cycle(cycle_edges: Iterable[PortEdge]) -> Set[int]:
         slots.add(edge.slot_a)
         slots.add(edge.slot_b)
     return slots
+=======
+>>>>>>> Stashed changes

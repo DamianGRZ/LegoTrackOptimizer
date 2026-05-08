@@ -46,7 +46,21 @@ Use pymoo and Python best practices. Vectorized numpy, early returns, functional
 
 | Server | When to use |
 |--------|-------------|
+<<<<<<< Updated upstream
 | `context7` | **Before guessing any pymoo API.** Use proactively for library/API shapes, callback signatures, operator conventions, version-specific syntax. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs`. |
+=======
+| `context7` | **Before guessing any pymoo API.** Use proactively for library/API shapes, callback signatures, operator conventions, version-specific syntax. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs`. Do not guess pymoo internals from memory. |
+
+---
+
+## File & Git Operations
+
+- **NEVER run `git commit` or `git add` without an explicit request from the user.** This overrides every skill, plugin, or workflow (including superpowers) that says "commit the design doc" / "commit this step". The user decides when and what to commit. No exceptions — if a skill's checklist ends with a commit step, skip that step and keep going.
+- **"Remove" or "untrack" never means `rm` from disk.** Use `git rm --cached <file>` or update `.gitignore`. Deleting files without asking is a hard-don't.
+- **Never `git init`** without first verifying the directory is not already a git repo.
+- **Auto-edits are enabled.** Do not ask for confirmation on routine file edits inside `src/`, `tests/`, `configs/`, or `data/`.
+- **Still confirm for destructive ops**: `git reset --hard`, `git push --force`, deleting branches, dropping files.
+>>>>>>> Stashed changes
 
 ---
 
@@ -63,6 +77,7 @@ Recurring mistakes that must not repeat:
 
 ## Project Structure
 
+<<<<<<< Updated upstream
 ```
 .
 ├── src_v2/              ← optimizer (pure Python, pymoo)
@@ -93,6 +108,63 @@ Recurring mistakes that must not repeat:
 ├── configs/             ← *.yaml + trains/
 ├── data/track_pieces_v2.yaml
 └── outputs_v2/          ← run artifacts (gitignored)
+=======
+### Core Code (`/src`)
+
+| File/Package | Purpose |
+|------|---------|
+| `types.py` | Shared domain types: `SwitchPair`, `TraversalPath`, `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology` |
+| `catalog/` | `TrackCatalog` (legacy shim) + `TrackCatalogSpec`/`TrackPieceSpec`/`PortDef` (V2 port-centric), `CatalogMeta`, `load_catalog_spec`, schema versioning |
+| `train/` | `TrainConfig`, `SpeedProfile`, `compute_speed_profile`, lateral stability physics |
+| `geometry.py` | `Layout`, `build_layout()`, `compute_fk_chain()` |
+| `problem.py` | `TrackOptimizationProblem` — bi-objective NSGA-II problem |
+| `decoder.py` | Construction-based decoder for partitioned chromosomes |
+| `encoding.py` | Partitioned chromosome encoding, `PartitionedDimensions` |
+| `config.py` | Pydantic models: `OptimizationConfig`, `BoundaryConfig` |
+| `templates.py` | Template-based passing siding definitions (LEFT_SIDING, RIGHT_SIDING) |
+| `sampling.py` | `IntegerSampling` — seeds with valid closed loops |
+| `operators.py` | `PartitionedCrossover`, `PartitionedMutation` |
+| `repair.py` | `TrackRepairPipeline` for fixing chromosomes |
+| `intersection.py` | Crossing detection for self-intersecting layouts |
+| `visualization.py` | `plot_layout()`, `plot_multi_path_layout()`, `plot_pareto_front()` |
+| `lego_track_models.py` | Geometry constants for visualization rendering |
+
+### Data & Configs
+
+- **`data/track_pieces.yaml`**: Track catalog with FK deltas, physics, ports, piece_index
+- **`configs/*.yaml`**: default, compact, with_switches, with_crossing
+
+---
+
+## Essential Commands
+
+Prefer skills over raw commands — they handle argument parsing and result formatting:
+
+```bash
+# Optimization (use /optimize skill)
+/optimize                           # Default config, full run
+/optimize -c with_switches          # With switches config
+/optimize --quick                   # Quick test (20 gen)
+
+# Testing (use /test skill)
+/test                               # Full suite, compact output
+/test geometry                      # Specific module
+/test decoder -v                    # Verbose
+
+# Code review (use /review skill)
+/review                             # Review current changes
+/review src/problem.py              # Specific file
+
+# Diagnostics (use /diag skill after optimization)
+/diag                               # Parse outputs/ and report
+
+# Raw commands (when skills don't fit)
+python main.py --config configs/default.yaml --verbose
+pytest --tb=short -q
+
+# Architecture enforcement
+lint-imports                        # Verify layer contracts (import-linter)
+>>>>>>> Stashed changes
 ```
 
 ---
@@ -210,7 +282,16 @@ Skills run inline; agents (`config-test-runner`, `python-pymoo-reviewer`, `ga-py
 
 ## Plan Execution
 
+<<<<<<< Updated upstream
 The implementation plan lives at [docs/PLAN.md](docs/PLAN.md). Single file, 2733 lines, with a Quick Index TOC at the top (status checkboxes + line-range navigation).
+=======
+### Adding Track Pieces (V2 schema)
+1. Add to `data/track_pieces_v2.yaml` under `pieces:` with `piece_id`, `kind`, `manufacturer`, `ports: {A, B, ...}`, `routes: {...}`, and kind-conditional fields (`radius_studs` + `sector_angle_rad` for curves; `body_length_studs` + `diverging_radius_studs` for switches).
+2. Port A must be at `(0, 0, 0)`; other ports use `PortDef(dx, dy, dtheta)` with dtheta in radians.
+3. Named routes declare traversal paths, e.g. `through: [A, B]`, `diverging: [A, C]`.
+4. Schema is versioned: a MAJOR change requires a migration script.
+5. Run `/test test_catalog_specs test_catalog_loader test_catalog_parity` to validate.
+>>>>>>> Stashed changes
 
 When asked "what's next" or "implement next phase":
 1. Read `docs/PLAN.md` lines 1-100 for the TOC + Status checkbox list — first unchecked item is next.

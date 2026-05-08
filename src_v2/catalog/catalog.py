@@ -16,6 +16,7 @@ from .pieces import FKDeltas, Port, TrackPiece
 from .specs import TrackCatalogSpec, TrackPieceSpec
 
 
+<<<<<<< Updated upstream
 # Canonical piece_id -> chromosome index mapping.
 # Two collapse migrations applied:
 #   1. R40_LEFT/R40_RIGHT → R40_CURVE (one physical SKU, flip bit selects
@@ -32,6 +33,22 @@ _LEGACY_PIECE_INDEX: Dict[str, int] = {
     "R40_SWITCH_LEFT": 4,
     "R40_SWITCH_RIGHT": 5,
     "DOUBLE_CROSSOVER": 6,
+=======
+# Canonical piece_id -> chromosome index mapping (legacy v1 encoding).
+# V2 YAML is order-agnostic; this map preserves the chromosome-index contract
+# so existing GA code (sampling, operators, repair) keeps working unchanged.
+_LEGACY_PIECE_INDEX: Dict[str, int] = {
+    "STRAIGHT_16": 0,
+    "STRAIGHT_24": 1,
+    "R40_LEFT": 2,
+    "R40_RIGHT": 3,
+    "CROSS_90": 4,
+    "R40_SWITCH_LEFT_IN": 5,
+    "R40_SWITCH_LEFT_OUT": 6,
+    "R40_SWITCH_RIGHT_IN": 7,
+    "R40_SWITCH_RIGHT_OUT": 8,
+    "DOUBLE_CROSSOVER": 9,
+>>>>>>> Stashed changes
 }
 
 # V2 kind -> legacy piece_type string used by PIECE_TYPE_TO_CLASS.
@@ -40,6 +57,10 @@ _V2_KIND_TO_LEGACY_TYPE: Dict[str, str] = {
     "curve": "curve",
     "crossing": "crossing",
     "switch": "switch",
+<<<<<<< Updated upstream
+=======
+    "wye": "switch",
+>>>>>>> Stashed changes
 }
 
 # Per-piece (v1) radius_mm / speed_limit for multi-route pieces on their
@@ -54,14 +75,26 @@ _V2_KIND_TO_LEGACY_TYPE: Dict[str, str] = {
 # Curves keep their 0.97 / 320mm from v1.
 _V2_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
     # piece_id -> (radius_mm, speed_limit_ms) on the default route
+<<<<<<< Updated upstream
     "R40_CURVE": (320.0, 0.97),
+=======
+    "R40_LEFT": (320.0, 0.97),
+    "R40_RIGHT": (320.0, 0.97),
+>>>>>>> Stashed changes
 }
 
 # Per-route physics overrides for multi-route pieces, used to reconstruct the
 # legacy routes_data list in v1-parity form.
 _V2_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
+<<<<<<< Updated upstream
     "R40_SWITCH_LEFT":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
     "R40_SWITCH_RIGHT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+=======
+    "R40_SWITCH_LEFT_IN":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+    "R40_SWITCH_LEFT_OUT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+    "R40_SWITCH_RIGHT_IN": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+    "R40_SWITCH_RIGHT_OUT":{"through": (None, 1.57), "diverging": (320.0, 0.97)},
+>>>>>>> Stashed changes
     "CROSS_90": {
         "horizontal": (None, 1.57),
         "vertical":   (None, 1.57),
@@ -83,6 +116,10 @@ class TrackCatalog:
         "curves": "curve",
         "crossings": "crossing",
         "r40_switch_components": "switch",
+<<<<<<< Updated upstream
+=======
+        "bumpers": "bumper",
+>>>>>>> Stashed changes
     }
 
     PIECE_TYPE_TO_CLASS = {
@@ -90,6 +127,10 @@ class TrackCatalog:
         "curve": PieceClass.SIMPLE_2PORT,
         "crossing": PieceClass.CROSSING_4PORT,
         "switch": PieceClass.SWITCH_3PORT,
+<<<<<<< Updated upstream
+=======
+        "bumper": PieceClass.BUMPER_1PORT,
+>>>>>>> Stashed changes
     }
 
     DEFAULT_SPEED = 1.57  # Motor top speed
@@ -196,6 +237,10 @@ class TrackCatalog:
                 direction=ps.hand,
                 radius_mm=radius_mm,
                 speed_limit_ms=speed_limit,
+<<<<<<< Updated upstream
+=======
+                is_terminator=False,
+>>>>>>> Stashed changes
                 routes_data=_build_legacy_routes(ps),
             )
 
@@ -280,6 +325,10 @@ class TrackCatalog:
             direction=data.get("direction"),
             radius_mm=radius_mm,
             speed_limit_ms=speed_limit if speed_limit else self.DEFAULT_SPEED,
+<<<<<<< Updated upstream
+=======
+            is_terminator=(piece_type == "bumper"),
+>>>>>>> Stashed changes
             routes_data=data.get("routes"),
         )
 
@@ -409,6 +458,7 @@ class TrackCatalog:
         """Get topology metadata for piece index."""
         return self._topologies.get(piece_idx)
 
+<<<<<<< Updated upstream
     def get_speed_for_route(
         self, piece_idx: int, route_name: str,
     ) -> float:
@@ -460,6 +510,8 @@ class TrackCatalog:
             radius_mm, _speed = _V2_DEFAULT_PHYSICS.get(piece.id, (None, 0.0))
         return radius_mm / 1000.0 if radius_mm else None
 
+=======
+>>>>>>> Stashed changes
     def get_fk_route(self, piece_idx: int, route_idx: int = 0) -> NDArray[np.float64]:
         """Get FK for specific route."""
         if piece_idx in self._route_fk_tables:
@@ -500,7 +552,11 @@ class TrackCatalog:
         """Get switch piece indices (3-4 ports)."""
         return [
             idx for idx, t in self._topologies.items()
+<<<<<<< Updated upstream
             if t.piece_class == PieceClass.SWITCH_3PORT
+=======
+            if t.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
+>>>>>>> Stashed changes
         ]
 
     @property

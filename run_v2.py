@@ -37,6 +37,7 @@ def main() -> None:
     config.algorithm.n_gen = args.gen
     config.algorithm.heuristic_ratio = args.heuristic
 
+<<<<<<< Updated upstream
     out_dir = Path(f"outputs_v2/{args.config}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +45,13 @@ def main() -> None:
     res = run_optimization(config, catalog, verbose=True, output_dir=out_dir)
     elapsed = time.time() - t0
 
+=======
+    t0 = time.time()
+    res = run_optimization(config, catalog, verbose=True)
+    elapsed = time.time() - t0
+
+    out_dir = Path(f"outputs_v2/{args.config}")
+>>>>>>> Stashed changes
     save_results(res, out_dir, catalog, config)
     print(f"\nDone in {elapsed:.1f}s -> {out_dir}/")
 

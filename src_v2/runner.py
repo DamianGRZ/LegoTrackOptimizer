@@ -18,6 +18,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+<<<<<<< Updated upstream
 from multiprocessing import Pool
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
@@ -47,6 +48,21 @@ from .problem import PortPairProblem
 from .repair import PortPairRepairPipeline
 from .snapshot_callback import SnapshotCallback
 from .types import PieceClass
+=======
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
+from pymoo.core.callback import Callback
+from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+
+from .catalog import TrackCatalog
+from .config import OptimizationConfig
+from .decoder import decode_chromosome, port_graph_to_layout
+from .operators import PortPairCrossover, PortPairMutation, PortPairSampling
+from .problem import PortPairProblem
+from .repair import PortPairRepairPipeline
+>>>>>>> Stashed changes
 from .visualization import plot_layout
 
 
@@ -97,10 +113,14 @@ class ProgressCallback(Callback):
 
 
 class FeasibleEliteCallback(Callback):
+<<<<<<< Updated upstream
     """[DEPRECATED — replaced by EpsilonArchiveCallback in Phase 5; the
     archive's well-spread Pareto set obviates the single best-util elite.]
 
     Preserve the best-utilization feasible individual across generations."""
+=======
+    """Preserve the best-utilization feasible individual across generations."""
+>>>>>>> Stashed changes
 
     def __init__(self) -> None:
         super().__init__()
@@ -212,11 +232,15 @@ def run_optimization(
     catalog: TrackCatalog,
     verbose: bool = False,
     output_dir: Optional[Path] = None,
+<<<<<<< Updated upstream
     seed: Optional[int] = None,
+=======
+>>>>>>> Stashed changes
 ) -> object:
     """Run NSGA-II port-pair optimization with adaptive epsilon constraint handling."""
     logger = logging.getLogger(__name__)
 
+<<<<<<< Updated upstream
     train_config = config.load_train_config()
     logger.info(
         f"Train physics: v_motor_max={train_config.v_motor_max:.2f} m/s, "
@@ -236,11 +260,15 @@ def run_optimization(
     else:
         pool = None
         problem = PortPairProblem(catalog, config, train_config=train_config)
+=======
+    problem = PortPairProblem(catalog, config)
+>>>>>>> Stashed changes
     dims = problem.dims
 
     sampler = PortPairSampling(
         dims, catalog, config,
         heuristic_ratio=config.algorithm.heuristic_ratio,
+<<<<<<< Updated upstream
         seed=getattr(config.algorithm, "seed", None),
     )
     # Phase 4 (Coupling A): port-pair crossover and junction crossover are
@@ -269,6 +297,13 @@ def run_optimization(
     else:
         eliminate_duplicates = False
 
+=======
+    )
+    crossover = PortPairCrossover(dims, prob=config.algorithm.crossover_prob)
+    mutation = PortPairMutation(dims, catalog, config, prob=config.algorithm.mutation_prob)
+    repair = PortPairRepairPipeline(dims, catalog, config.inventory)
+
+>>>>>>> Stashed changes
     base_algorithm = NSGA2(
         pop_size=config.algorithm.pop_size,
         sampling=sampler,
@@ -276,6 +311,7 @@ def run_optimization(
         mutation=mutation,
         repair=repair,
         survival=ConstrRankAndCrowding(),
+<<<<<<< Updated upstream
         eliminate_duplicates=eliminate_duplicates,
     )
 
@@ -351,6 +387,22 @@ def run_optimization(
     ]
     if verbose:
         chain.append(ProgressCallback(every_n_gen=5, total_inventory=config.total_inventory))
+=======
+        eliminate_duplicates=config.algorithm.eliminate_duplicates,
+    )
+
+    algorithm = LegoAdaptiveEpsilon(
+        base_algorithm,
+        hold_until=0.2,
+        perc_eps_until=0.9,
+    )
+
+    termination = get_termination("n_gen", config.algorithm.n_gen)
+
+    chain = [FeasibleEliteCallback()]
+    if verbose:
+        chain.append(ProgressCallback(every_n_gen=10, total_inventory=config.total_inventory))
+>>>>>>> Stashed changes
     callback = CallbackChain(*chain)
 
     logger.info("Starting NSGA-II port-pair track optimization...")
@@ -363,6 +415,7 @@ def run_optimization(
     logger.info(f"Total inventory: {config.total_inventory} pieces")
     logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
 
+<<<<<<< Updated upstream
     try:
         minimize_kwargs = dict(
             verbose=False, save_history=False, callback=callback,
@@ -380,6 +433,11 @@ def run_optimization(
     logger.info(
         f"Epsilon archive: {len(epsilon_archive.archive)} feasible "
         f"non-dominated entries written to {eps_archive_path.name}",
+=======
+    res = minimize(
+        problem, algorithm, termination,
+        verbose=False, save_history=False, callback=callback,
+>>>>>>> Stashed changes
     )
 
     logger.info("Optimization complete!")
@@ -413,6 +471,7 @@ def save_results(
     F = res.pop.get("F")
     G = res.pop.get("G")
 
+<<<<<<< Updated upstream
     # Stamp the encoding version on every artifact bundle (Rule 13).
     import json as _json
     from .encoding import ENCODING_VERSION
@@ -422,6 +481,8 @@ def save_results(
         "n_pop": int(F.shape[0]) if F is not None else 0,
     }, indent=2), encoding="utf-8")
 
+=======
+>>>>>>> Stashed changes
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d")
     np.savetxt(
         output_dir / "fitness.csv", F, delimiter=",",
@@ -432,8 +493,12 @@ def save_results(
         constraint_header = (
             "closure_x,closure_y,closure_theta,boundary,collisions,"
             + ",".join(f"inv_{i}" for i in range(catalog.n_pieces))
+<<<<<<< Updated upstream
             + ",incomplete_switch_ratio,incomplete_crossing_ratio,cycle_count,"
             + "branch_cycle_deficit,multi_component,loose_port_ratio"
+=======
+            + ",loose_ports,cycle_count"
+>>>>>>> Stashed changes
         )
         np.savetxt(
             output_dir / "constraints.csv", G, delimiter=",",

@@ -19,6 +19,7 @@ To be created:
     algorithm/     — NSGA-II runner
 """
 
+<<<<<<< Updated upstream
 # Force the non-interactive Agg matplotlib backend BEFORE any submodule
 # imports pyplot. Tk-based backends crash under multiprocessing.Pool on
 # Windows ("Tcl_AsyncDelete: async handler deleted by the wrong thread")
@@ -28,6 +29,8 @@ import matplotlib as _matplotlib
 
 _matplotlib.use("Agg")
 
+=======
+>>>>>>> Stashed changes
 from .config import OptimizationConfig
 from .catalog import TrackCatalog
 

@@ -23,6 +23,7 @@ from pymoo.core.mutation import Mutation
 from pymoo.core.sampling import Sampling
 
 from .catalog import TrackCatalog
+<<<<<<< Updated upstream
 from .config import BoundaryConfig, OptimizationConfig
 from .decoder import DecoderConfig
 from .encoding import (
@@ -48,11 +49,24 @@ from .encoding import (
     get_port_pair,
     get_slot_flip,
     get_slot_rotate,
+=======
+from .config import OptimizationConfig
+from .decoder import DecoderConfig
+from .encoding import (
+    DTYPE,
+    GENES_PER_PAIR,
+    INACTIVE,
+    PortPairDimensions,
+    clear_port_pair,
+    create_empty_chromosome,
+    get_port_pair,
+>>>>>>> Stashed changes
     iter_active_pairs,
     iter_active_slots,
     set_anchor,
     set_piece_slot,
     set_port_pair,
+<<<<<<< Updated upstream
     set_slot_flip,
     set_slot_rotate,
 )
@@ -98,12 +112,22 @@ def _is_rotatable_piece(catalog: TrackCatalog, piece_id: str) -> bool:
         return False
     ps = spec.by_id.get(piece_id)
     return bool(ps and ps.rotatable)
+=======
+)
+from .structural_mutations import introduce_crossing
+
+
+Pattern = Tuple[List[Tuple[int, str]], List[Tuple[int, str, int, str]]]
+"""(slot_assignments, edge_list) — slot_assignments are (slot_idx, piece_id);
+edges are (slot_a, port_a_name, slot_b, port_b_name)."""
+>>>>>>> Stashed changes
 
 
 # =============================================================================
 # Heuristic emitters
 # =============================================================================
 
+<<<<<<< Updated upstream
 # Stadium boundary-fit constants (ported from V1 sampling.py:48-54).
 _OVAL_END_CAP_STUDS: float = 80.0   # ~2*R40 diameter; half-circle end-cap axial extent
 _OVAL_BOUNDARY_MARGIN_STUDS: float = 20.0
@@ -126,10 +150,13 @@ def _fit_oval_straights_per_section(
     m_fit = max(0, int((boundary.width - 2 * margin - end_cap - extra_axial) // piece_len))
     return min(m_fit, n_str_avail // 2)
 
+=======
+>>>>>>> Stashed changes
 
 def _emit_simple_loop(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """16 same-handed R40_CURVE pieces in a closed circle.
 
     Two variants emitted: flip=0 (left-turn circle) and flip=1 (right-turn).
@@ -145,12 +172,22 @@ def _emit_simple_loop(
         flips = {k: flip for k in range(16)}
         rotates: Dict[int, int] = {}
         out.append((slots, edges, flips, rotates))
+=======
+    """16 same-direction R40 in a closed cycle."""
+    out: List[Pattern] = []
+    for piece_id in ("R40_LEFT", "R40_RIGHT"):
+        if inventory.get(piece_id, 0) >= 16 and dims.N_max >= 16:
+            slots = [(k, piece_id) for k in range(16)]
+            edges = [(k, "B", (k + 1) % 16, "A") for k in range(16)]
+            out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_oval(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """8 R40_CURVE + N straights, repeated for the second half of the oval.
 
     Both flip variants emitted (left- and right-turning ovals).
@@ -160,30 +197,49 @@ def _emit_oval(
         return out
     n_straights = inventory.get("STRAIGHT_16", 0)
     for flip in (0, 1):
+=======
+    """8 R40 + N straights, repeated for the second half of the oval."""
+    out: List[Pattern] = []
+    n_straights = inventory.get("STRAIGHT_16", 0)
+    for curve_id in ("R40_LEFT", "R40_RIGHT"):
+        if inventory.get(curve_id, 0) < 16:
+            continue
+>>>>>>> Stashed changes
         for n_str_section in (n_straights // 2, n_straights // 4, n_straights // 6):
             n_str_section = max(1, n_str_section)
             total = 16 + 2 * n_str_section
             if total > dims.N_max or 2 * n_str_section > n_straights:
                 continue
             slots: List[Tuple[int, str]] = []
+<<<<<<< Updated upstream
             flips: Dict[int, int] = {}
             slot_idx = 0
             for _ in range(8):
                 slots.append((slot_idx, "R40_CURVE"))
                 flips[slot_idx] = flip
+=======
+            slot_idx = 0
+            for _ in range(8):
+                slots.append((slot_idx, curve_id))
+>>>>>>> Stashed changes
                 slot_idx += 1
             for _ in range(n_str_section):
                 slots.append((slot_idx, "STRAIGHT_16"))
                 slot_idx += 1
             for _ in range(8):
+<<<<<<< Updated upstream
                 slots.append((slot_idx, "R40_CURVE"))
                 flips[slot_idx] = flip
+=======
+                slots.append((slot_idx, curve_id))
+>>>>>>> Stashed changes
                 slot_idx += 1
             for _ in range(n_str_section):
                 slots.append((slot_idx, "STRAIGHT_16"))
                 slot_idx += 1
             n = len(slots)
             edges = [(k, "B", (k + 1) % n, "A") for k in range(n)]
+<<<<<<< Updated upstream
             out.append((slots, edges, flips, {}))
     return out
 
@@ -242,18 +298,30 @@ def _emit_sequential_ring_stadium(
                 slot_idx += 1
             edges = [(k, "B", (k + 1) % n, "A") for k in range(n)]
             out.append((slots, edges, flips, {}))
+=======
+            out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_racetrack(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """Four 90 deg corners (4 R40_CURVE each) + straights between them."""
     out: List[Pattern] = []
     if inventory.get("R40_CURVE", 0) < 16:
         return out
     n_straights = inventory.get("STRAIGHT_16", 0)
     for flip in (0, 1):
+=======
+    """Four 90 deg corners (4 R40 each) + straights between them."""
+    out: List[Pattern] = []
+    n_straights = inventory.get("STRAIGHT_16", 0)
+    for curve_id in ("R40_LEFT", "R40_RIGHT"):
+        if inventory.get(curve_id, 0) < 16:
+            continue
+>>>>>>> Stashed changes
         for L, S in [(n_straights // 4, n_straights // 8),
                      (n_straights // 6, n_straights // 6)]:
             L = max(1, L)
@@ -262,25 +330,37 @@ def _emit_racetrack(
             if total > dims.N_max or 2 * (L + S) > n_straights:
                 continue
             slots: List[Tuple[int, str]] = []
+<<<<<<< Updated upstream
             flips: Dict[int, int] = {}
             slot_idx = 0
             for run_len in (L, S, L, S):
                 for _ in range(4):
                     slots.append((slot_idx, "R40_CURVE"))
                     flips[slot_idx] = flip
+=======
+            slot_idx = 0
+            for run_len in (L, S, L, S):
+                for _ in range(4):
+                    slots.append((slot_idx, curve_id))
+>>>>>>> Stashed changes
                     slot_idx += 1
                 for _ in range(run_len):
                     slots.append((slot_idx, "STRAIGHT_16"))
                     slot_idx += 1
             n = len(slots)
             edges = [(k, "B", (k + 1) % n, "A") for k in range(n)]
+<<<<<<< Updated upstream
             out.append((slots, edges, flips, {}))
+=======
+            out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_simple_oval_with_siding(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """Oval main loop with a passing siding (real LEGO topology).
 
     A *left-side siding* (branch on +y of mainline) needs:
@@ -571,12 +651,58 @@ def _emit_figure8_stadium(
                     lobe_n_straights, flip,
                 )
                 out.append((slots, edges, flips, {}, [junction]))
+=======
+    """Oval main loop with a switch-driven siding branching off port C of each switch."""
+    out: List[Pattern] = []
+    n_str = inventory.get("STRAIGHT_16", 0)
+    if (inventory.get("R40_SWITCH_LEFT_IN", 0) < 1
+            or inventory.get("R40_SWITCH_LEFT_OUT", 0) < 1
+            or inventory.get("R40_LEFT", 0) < 14):
+        return out
+
+    n_section = max(1, min(4, n_str // 4))
+    n_branch = max(1, min(2, n_str // 4))
+
+    main_n = 14 + 2 * n_section + 2  # 14 R40 + 2*N straights + 2 switches
+    total = main_n + n_branch
+    if total > dims.N_max:
+        return out
+
+    slots: List[Tuple[int, str]] = []
+    slot_idx = 0
+    for _ in range(7):
+        slots.append((slot_idx, "R40_LEFT")); slot_idx += 1
+    in_switch = slot_idx
+    slots.append((slot_idx, "R40_SWITCH_LEFT_IN")); slot_idx += 1
+    for _ in range(n_section):
+        slots.append((slot_idx, "STRAIGHT_16")); slot_idx += 1
+    out_switch = slot_idx
+    slots.append((slot_idx, "R40_SWITCH_LEFT_OUT")); slot_idx += 1
+    for _ in range(7):
+        slots.append((slot_idx, "R40_LEFT")); slot_idx += 1
+    for _ in range(n_section):
+        slots.append((slot_idx, "STRAIGHT_16")); slot_idx += 1
+    branch_start = slot_idx
+    for _ in range(n_branch):
+        slots.append((slot_idx, "STRAIGHT_16")); slot_idx += 1
+
+    edges: List[Tuple[int, str, int, str]] = []
+    for k in range(main_n):
+        edges.append((k, "B", (k + 1) % main_n, "A"))
+    edges.append((in_switch, "C", branch_start, "A"))
+    for k in range(n_branch - 1):
+        edges.append((branch_start + k, "B", branch_start + k + 1, "A"))
+    edges.append((branch_start + n_branch - 1, "B", out_switch, "C"))
+
+    out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_figure_8(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """Two cycles sharing a CROSS_90 — figure-8 (diagonal-quadrant lobes).
 
     Pre-fix versions of this emitter wired the lobes perpendicularly
@@ -675,12 +801,52 @@ def _emit_figure_8(
         edges.append((b_chain[-1], "B", 0, b_end_port))
 
         out.append((slots, edges, flips, {}))
+=======
+    """Two cycles sharing a CROSS_90 — figure-8 (V2 capability not in V1)."""
+    out: List[Pattern] = []
+    if inventory.get("CROSS_90", 0) < 1:
+        return out
+    n_left = inventory.get("R40_LEFT", 0)
+    n_right = inventory.get("R40_RIGHT", 0)
+    if 33 > dims.N_max:
+        return out
+
+    # Try same-direction (16+16 of one kind), then mixed (16 each)
+    plans = []
+    if n_left >= 32:
+        plans.append(("R40_LEFT", "R40_LEFT"))
+    if n_right >= 32:
+        plans.append(("R40_RIGHT", "R40_RIGHT"))
+    if n_left >= 16 and n_right >= 16:
+        plans.append(("R40_LEFT", "R40_RIGHT"))
+        plans.append(("R40_RIGHT", "R40_LEFT"))
+
+    for lobe_a, lobe_b in plans:
+        slots: List[Tuple[int, str]] = [(0, "CROSS_90")]
+        for k in range(1, 17):
+            slots.append((k, lobe_a))
+        for k in range(17, 33):
+            slots.append((k, lobe_b))
+
+        edges: List[Tuple[int, str, int, str]] = []
+        edges.append((0, "A", 1, "A"))
+        for k in range(1, 16):
+            edges.append((k, "B", k + 1, "A"))
+        edges.append((16, "B", 0, "B"))
+        edges.append((0, "C", 17, "A"))
+        for k in range(17, 32):
+            edges.append((k, "B", k + 1, "A"))
+        edges.append((32, "B", 0, "D"))
+
+        out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_dense_crossing_grid(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """Multiple cycles joined through several CROSS_90 pieces."""
     out: List[Pattern] = []
     if inventory.get("CROSS_90", 0) < 2:
@@ -688,6 +854,26 @@ def _emit_dense_crossing_grid(
     if inventory.get("R40_CURVE", 0) < 32:
         return out
 
+=======
+    """Multiple cycles joined through several CROSS_90 pieces.
+
+    Pattern: build a chain of cycles, each sharing a CROSS_90 with its
+    neighbour(s). This emitter is what unlocks the 'with_crossing' config
+    where the optimal layout uses many CROSS_90 pieces.
+    """
+    out: List[Pattern] = []
+    n_cross = inventory.get("CROSS_90", 0)
+    if n_cross < 2:
+        return out
+    n_left = inventory.get("R40_LEFT", 0)
+    n_right = inventory.get("R40_RIGHT", 0)
+    if n_left < 16 or n_right < 16:
+        return out
+
+    # Two CROSS_90s, two "lobes" + a connecting span using both crossings
+    # Layout: cycle_1 (16 R40_LEFT) <-> CROSS_90_a <-> CROSS_90_b <-> cycle_2 (16 R40_RIGHT)
+    # Each CROSS_90 wires both routes so the train can traverse perpendicular paths.
+>>>>>>> Stashed changes
     total = 2 + 16 + 16
     if total > dims.N_max:
         return out
@@ -696,6 +882,7 @@ def _emit_dense_crossing_grid(
         (0, "CROSS_90"),
         (1, "CROSS_90"),
     ]
+<<<<<<< Updated upstream
     flips: Dict[int, int] = {}
     for k in range(2, 18):
         slots.append((k, "R40_CURVE"))
@@ -705,24 +892,47 @@ def _emit_dense_crossing_grid(
         flips[k] = 1   # right lobe
 
     edges: List[Tuple[int, str, int, str]] = []
+=======
+    for k in range(2, 18):
+        slots.append((k, "R40_LEFT"))
+    for k in range(18, 34):
+        slots.append((k, "R40_RIGHT"))
+
+    edges: List[Tuple[int, str, int, str]] = []
+    # Cycle 1 wraps through CROSS_0 horizontal route + 16 R40_LEFT
+>>>>>>> Stashed changes
     edges.append((0, "A", 2, "A"))
     for k in range(2, 17):
         edges.append((k, "B", k + 1, "A"))
     edges.append((17, "B", 0, "B"))
+<<<<<<< Updated upstream
+=======
+    # Cycle 2 wraps through CROSS_1 horizontal route + 16 R40_RIGHT
+>>>>>>> Stashed changes
     edges.append((1, "A", 18, "A"))
     for k in range(18, 33):
         edges.append((k, "B", k + 1, "A"))
     edges.append((33, "B", 1, "B"))
+<<<<<<< Updated upstream
     edges.append((0, "C", 1, "C"))
     edges.append((0, "D", 1, "D"))
 
     out.append((slots, edges, flips, {}))
+=======
+    # Vertical routes of the two CROSS_90s connect to each other (degenerate
+    # but the GA can mutate this into something non-trivial)
+    edges.append((0, "C", 1, "C"))
+    edges.append((0, "D", 1, "D"))
+
+    out.append((slots, edges))
+>>>>>>> Stashed changes
     return out
 
 
 def _emit_multi_loop(
     catalog: TrackCatalog, inventory: Dict[str, int], dims: PortPairDimensions,
 ) -> List[Pattern]:
+<<<<<<< Updated upstream
     """Two completely disconnected R40_CURVE cycles (one left, one right)."""
     out: List[Pattern] = []
     if inventory.get("R40_CURVE", 0) < 32:
@@ -730,11 +940,21 @@ def _emit_multi_loop(
     if 32 > dims.N_max:
         return out
     slots = [(k, "R40_CURVE") for k in range(32)]
+=======
+    """Two completely disconnected R40 LEFT cycles."""
+    out: List[Pattern] = []
+    if inventory.get("R40_LEFT", 0) < 32:
+        return out
+    if 32 > dims.N_max:
+        return out
+    slots = [(k, "R40_LEFT") for k in range(32)]
+>>>>>>> Stashed changes
     edges: List[Tuple[int, str, int, str]] = []
     for k in range(16):
         edges.append((k, "B", (k + 1) % 16, "A"))
     for k in range(16):
         edges.append((16 + k, "B", 16 + ((k + 1) % 16), "A"))
+<<<<<<< Updated upstream
     flips = {k: (0 if k < 16 else 1) for k in range(32)}
     out.append((slots, edges, flips, {}))
     return out
@@ -1017,12 +1237,29 @@ _BOUNDARY_AWARE_EMITTERS = frozenset({
     _emit_parallel_tracks_with_dc,
 })
 
+=======
+    out.append((slots, edges))
+    return out
+
+
+_HEURISTIC_EMITTERS = (
+    _emit_simple_loop,
+    _emit_oval,
+    _emit_racetrack,
+    _emit_simple_oval_with_siding,
+    _emit_figure_8,
+    _emit_multi_loop,
+    _emit_dense_crossing_grid,
+)
+
+>>>>>>> Stashed changes
 
 # =============================================================================
 # Sampling
 # =============================================================================
 
 
+<<<<<<< Updated upstream
 SWITCH_SEED_RATIO: float = 0.05
 """Fraction of the initial population seeded with a switch-pair structural
 mutation already applied. Real LEGO sidings can't form via random sampling
@@ -1034,6 +1271,10 @@ the diversity bonus has feasible diverse layouts to choose from."""
 
 class PortPairSampling(Sampling):
     """Initial population: heuristic emitters + random chromosomes + switch-pair seeds."""
+=======
+class PortPairSampling(Sampling):
+    """Initial population: heuristic emitters + random chromosomes."""
+>>>>>>> Stashed changes
 
     def __init__(
         self,
@@ -1041,7 +1282,10 @@ class PortPairSampling(Sampling):
         catalog: TrackCatalog,
         config: OptimizationConfig,
         heuristic_ratio: float = 0.30,
+<<<<<<< Updated upstream
         switch_seed_ratio: float = SWITCH_SEED_RATIO,
+=======
+>>>>>>> Stashed changes
         seed: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -1049,7 +1293,10 @@ class PortPairSampling(Sampling):
         self.catalog = catalog
         self.config = config
         self.heuristic_ratio = heuristic_ratio
+<<<<<<< Updated upstream
         self.switch_seed_ratio = switch_seed_ratio
+=======
+>>>>>>> Stashed changes
         self.rng = np.random.default_rng(seed)
         self.id_to_index = catalog.id_to_index
         self.index_to_id = catalog.index_to_id
@@ -1058,6 +1305,7 @@ class PortPairSampling(Sampling):
     def _build_patterns(self) -> List[Pattern]:
         patterns: List[Pattern] = []
         for emitter in _HEURISTIC_EMITTERS:
+<<<<<<< Updated upstream
             if emitter in _BOUNDARY_AWARE_EMITTERS:
                 patterns.extend(emitter(
                     self.catalog, self.config.inventory, self.dims,
@@ -1065,6 +1313,9 @@ class PortPairSampling(Sampling):
                 ))
             else:
                 patterns.extend(emitter(self.catalog, self.config.inventory, self.dims))
+=======
+            patterns.extend(emitter(self.catalog, self.config.inventory, self.dims))
+>>>>>>> Stashed changes
         return patterns
 
     def _do(self, problem, n_samples, **kwargs) -> NDArray:
@@ -1072,6 +1323,7 @@ class PortPairSampling(Sampling):
         n_heuristic = (
             max(1, int(n_samples * self.heuristic_ratio)) if self.patterns else 0
         )
+<<<<<<< Updated upstream
         # Switch-seeded samples: applied AFTER heuristic patterns and only when
         # the inventory actually contains both LEFT and RIGHT switches; the
         # introduce_switch_pair primitive needs at least one of each.
@@ -1083,10 +1335,13 @@ class PortPairSampling(Sampling):
 
         import random as _r
         seed_rng = _r.Random(int(self.rng.integers(0, 2**31)))
+=======
+>>>>>>> Stashed changes
 
         for i in range(n_samples):
             x = create_empty_chromosome(self.dims)
             if i < n_heuristic and self.patterns:
+<<<<<<< Updated upstream
                 # Heuristic seeds: pre-validated closed-loop patterns.
                 pattern = self.patterns[i % len(self.patterns)]
                 self._populate_from_pattern(x, pattern)
@@ -1098,6 +1353,10 @@ class PortPairSampling(Sampling):
                 introduce_switch_pair(
                     x, self.dims, self.catalog, self.config.inventory, rng=seed_rng,
                 )
+=======
+                pattern = self.patterns[i % len(self.patterns)]
+                self._populate_from_pattern(x, pattern)
+>>>>>>> Stashed changes
             else:
                 self._populate_random(x)
             self._apply_random_anchor(x)
@@ -1106,11 +1365,15 @@ class PortPairSampling(Sampling):
         return X
 
     def _populate_from_pattern(self, x: NDArray, pattern: Pattern) -> None:
+<<<<<<< Updated upstream
         # Pattern is a 4-tuple (slots, edges, flips, rotates) for emitters
         # that don't seed junction descriptors, or a 5-tuple with a junction
         # list appended (Phase 5b+: ``_emit_asymmetric_oval_with_siding``).
         slots, edges, flips, rotates, *rest = pattern
         junctions: List[Tuple[int, int, int, int, int]] = rest[0] if rest else []
+=======
+        slots, edges = pattern
+>>>>>>> Stashed changes
         slot_to_piece = {s: p for s, p in slots}
 
         for slot_idx, piece_id in slots:
@@ -1120,12 +1383,15 @@ class PortPairSampling(Sampling):
             if piece_index is None:
                 continue
             set_piece_slot(x, self.dims, slot_idx, piece_index)
+<<<<<<< Updated upstream
             # Apply flip / rotate only when the piece is the matching kind;
             # for others repair would zero them anyway.
             flip = flips.get(slot_idx, 0) if _is_symmetric_piece(self.catalog, piece_id) else 0
             set_slot_flip(x, self.dims, slot_idx, flip)
             rot = rotates.get(slot_idx, 0) if _is_rotatable_piece(self.catalog, piece_id) else 0
             set_slot_rotate(x, self.dims, slot_idx, rot)
+=======
+>>>>>>> Stashed changes
 
         for k, (sa, port_a_name, sb, port_b_name) in enumerate(edges):
             if k >= self.dims.E_max:
@@ -1136,6 +1402,7 @@ class PortPairSampling(Sampling):
                 continue
             set_port_pair(x, self.dims, k, sa, port_a_idx, sb, port_b_idx)
 
+<<<<<<< Updated upstream
         # Phase 5b: write junction descriptors from the pattern (if any). Only
         # the first ``J_max`` junctions fit; excess are silently dropped.
         for j_idx, (active, anchor, kind, param_a, param_b) in enumerate(junctions):
@@ -1147,6 +1414,8 @@ class PortPairSampling(Sampling):
                 param_a=param_a, param_b=param_b,
             )
 
+=======
+>>>>>>> Stashed changes
     def _port_idx_for_slot(
         self, slot_to_piece: Dict[int, str], slot_idx: int, port_name: str,
     ) -> Optional[int]:
@@ -1180,6 +1449,7 @@ class PortPairSampling(Sampling):
             piece_id = candidates[int(self.rng.integers(len(candidates)))]
             piece_index = self.id_to_index[piece_id]
             set_piece_slot(x, self.dims, k, piece_index)
+<<<<<<< Updated upstream
             # Random flip for symmetric pieces, 0 for others.
             if _is_symmetric_piece(self.catalog, piece_id):
                 set_slot_flip(x, self.dims, k, int(self.rng.integers(0, 2)))
@@ -1190,6 +1460,8 @@ class PortPairSampling(Sampling):
                 set_slot_rotate(x, self.dims, k, int(self.rng.integers(0, 2)))
             else:
                 set_slot_rotate(x, self.dims, k, 0)
+=======
+>>>>>>> Stashed changes
             inv_remaining[piece_id] -= 1
             active_count += 1
 
@@ -1218,6 +1490,7 @@ class PortPairSampling(Sampling):
             set_port_pair(x, self.dims, k, sa, port_a, sb, port_b)
 
     def _apply_random_anchor(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         # Phase 3+: anchor xy is a small +/-ANCHOR_OFFSET_FRACTION offset from
         # the auto-centered layout, not an absolute world position.
         b = self.config.boundary
@@ -1225,6 +1498,13 @@ class PortPairSampling(Sampling):
         off_y = max(1, int(b.height * ANCHOR_OFFSET_FRACTION))
         ax = int(self.rng.integers(-off_x, off_x + 1))
         ay = int(self.rng.integers(-off_y, off_y + 1))
+=======
+        b = self.config.boundary
+        margin_x = max(1, int((b.max_x - b.min_x) * 0.1))
+        margin_y = max(1, int((b.max_y - b.min_y) * 0.1))
+        ax = int(self.rng.integers(int(b.min_x) + margin_x, int(b.max_x) - margin_x + 1))
+        ay = int(self.rng.integers(int(b.min_y) + margin_y, int(b.max_y) - margin_y + 1))
+>>>>>>> Stashed changes
         atheta = int(self.rng.integers(0, 360))
         set_anchor(x, self.dims, ax, ay, atheta)
 
@@ -1235,6 +1515,7 @@ class PortPairSampling(Sampling):
 
 
 class PortPairCrossover(Crossover):
+<<<<<<< Updated upstream
     """One-point crossover per region (slots, pair-rows, anchor uniform).
 
     Phase 4 (Coupling A): does NOT touch the junction segment. Junction
@@ -1242,13 +1523,19 @@ class PortPairCrossover(Crossover):
     so the two ablation knobs (``crossover_prob``, ``junction_crossover_prob``)
     are decoupled per Rule 26 revised.
     """
+=======
+    """One-point crossover per region (slots, pair-rows, anchor uniform)."""
+>>>>>>> Stashed changes
 
     def __init__(self, dims: PortPairDimensions, prob: float = 0.9) -> None:
         super().__init__(n_parents=2, n_offsprings=2, prob=prob)
         self.dims = dims
+<<<<<<< Updated upstream
         # pymoo wraps ``prob`` as a ``Real`` variable; cache the raw float so
         # downstream composites can apply gating without unwrapping.
         self._prob_value: float = float(prob)
+=======
+>>>>>>> Stashed changes
 
     def _do(self, problem, X, **kwargs) -> NDArray:
         _, n_matings, n_var = X.shape
@@ -1264,6 +1551,7 @@ class PortPairCrossover(Crossover):
             # Slot region: one-point crossover
             if dims.N_max > 1:
                 cut = np.random.randint(1, dims.N_max)
+<<<<<<< Updated upstream
                 c1[dims.slot_start + cut:dims.slot_end] = p2[dims.slot_start + cut:dims.slot_end]
                 c2[dims.slot_start + cut:dims.slot_end] = p1[dims.slot_start + cut:dims.slot_end]
 
@@ -1279,6 +1567,10 @@ class PortPairCrossover(Crossover):
                 cut_r = np.random.randint(1, dims.N_max)
                 c1[dims.rotate_start + cut_r:dims.rotate_end] = p2[dims.rotate_start + cut_r:dims.rotate_end]
                 c2[dims.rotate_start + cut_r:dims.rotate_end] = p1[dims.rotate_start + cut_r:dims.rotate_end]
+=======
+                c1[cut:dims.N_max] = p2[cut:dims.N_max]
+                c2[cut:dims.N_max] = p1[cut:dims.N_max]
+>>>>>>> Stashed changes
 
             # Pair region: one-point crossover at row boundary
             if dims.E_max > 1:
@@ -1298,6 +1590,7 @@ class PortPairCrossover(Crossover):
         return Y
 
 
+<<<<<<< Updated upstream
 class JunctionCrossover(Crossover):
     """Phase 4 junction-segment crossover with semantic guard (Rule 4).
 
@@ -1429,12 +1722,15 @@ class PortPairAndJunctionCrossover(Crossover):
         return Y
 
 
+=======
+>>>>>>> Stashed changes
 # =============================================================================
 # Mutation
 # =============================================================================
 
 
 class PortPairMutation(Mutation):
+<<<<<<< Updated upstream
     """Weighted sub-operators dispatched via cached CDF + ``searchsorted``.
 
     Sub-operator order (must match ``OP_WEIGHTS`` keys / ``_ops_tuple``):
@@ -1477,6 +1773,15 @@ class PortPairMutation(Mutation):
         # truth for cycle-angle repair. _build_cdf renormalizes the
         # remaining weights, so the dispatch distribution stays valid.
     }
+=======
+    """Weighted sub-operators: piece-type, activate, deactivate, add edge,
+    remove edge, rewire edge, perturb anchor, introduce_crossing."""
+
+    OP_WEIGHTS = np.array([0.20, 0.15, 0.10, 0.20, 0.10, 0.15, 0.10])
+    # introduce_crossing was promoted from a mutation sub-op to the repair
+    # pipeline (PortPairRepairPipeline), where it runs on every individual
+    # rather than probabilistically — mirrors V1's repair-injection design.
+>>>>>>> Stashed changes
 
     def __init__(
         self,
@@ -1484,7 +1789,10 @@ class PortPairMutation(Mutation):
         catalog: TrackCatalog,
         config: OptimizationConfig,
         prob: float = 0.3,
+<<<<<<< Updated upstream
         seed: Optional[int] = None,
+=======
+>>>>>>> Stashed changes
     ) -> None:
         super().__init__(prob=prob)
         self.dims = dims
@@ -1498,6 +1806,7 @@ class PortPairMutation(Mutation):
             boundary_min_y=config.boundary.min_y,
             boundary_max_y=config.boundary.max_y,
         )
+<<<<<<< Updated upstream
         self.rng = np.random.default_rng(seed)
         self._build_cdf()
 
@@ -1515,6 +1824,11 @@ class PortPairMutation(Mutation):
     def _ops_tuple(self) -> tuple:
         """Return the dispatch table aligned with ``self._op_names``."""
         return (
+=======
+
+    def _do(self, problem, X, **kwargs) -> NDArray:
+        ops = (
+>>>>>>> Stashed changes
             self._mutate_piece_type,
             self._activate_slot,
             self._deactivate_slot,
@@ -1522,6 +1836,7 @@ class PortPairMutation(Mutation):
             self._remove_edge,
             self._rewire_edge,
             self._perturb_anchor,
+<<<<<<< Updated upstream
             self._toggle_flip,
             self._toggle_rotate,
             self._introduce_switch_pair,
@@ -1549,6 +1864,12 @@ class PortPairMutation(Mutation):
         # ALNS reads this each generation to credit operators with the
         # offspring CV they produced (Phase 5).
         self._last_op_indices = tuple(picks)
+=======
+        )
+        for i in range(len(X)):
+            op_idx = int(np.random.choice(len(ops), p=self.OP_WEIGHTS))
+            ops[op_idx](X[i])
+>>>>>>> Stashed changes
         return X
 
     # ------------------------------------------------------------------
@@ -1556,11 +1877,15 @@ class PortPairMutation(Mutation):
     # ------------------------------------------------------------------
 
     def _mutate_piece_type(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         switch_slots = self._switch_slot_indices(x)
         active = [
             (s, p) for s, p in iter_active_slots(x, self.dims)
             if s not in switch_slots
         ]
+=======
+        active = list(iter_active_slots(x, self.dims))
+>>>>>>> Stashed changes
         if not active:
             return
         slot_idx, _ = active[np.random.randint(len(active))]
@@ -1572,7 +1897,10 @@ class PortPairMutation(Mutation):
             return
         new_type = available[np.random.randint(len(available))]
         set_piece_slot(x, self.dims, slot_idx, new_type)
+<<<<<<< Updated upstream
         self._reset_flip_for_piece(x, slot_idx, new_type)
+=======
+>>>>>>> Stashed changes
 
     def _activate_slot(self, x: NDArray) -> None:
         inactive = [
@@ -1588,6 +1916,7 @@ class PortPairMutation(Mutation):
         ]
         if not available:
             return
+<<<<<<< Updated upstream
         new_type = available[np.random.randint(len(available))]
         set_piece_slot(x, self.dims, slot_idx, new_type)
         self._reset_flip_for_piece(x, slot_idx, new_type)
@@ -1718,6 +2047,12 @@ class PortPairMutation(Mutation):
             (s, p) for s, p in iter_active_slots(x, self.dims)
             if s not in switch_slots
         ]
+=======
+        set_piece_slot(x, self.dims, slot_idx, available[np.random.randint(len(available))])
+
+    def _deactivate_slot(self, x: NDArray) -> None:
+        active = list(iter_active_slots(x, self.dims))
+>>>>>>> Stashed changes
         if len(active) <= 4:  # keep min for closure
             return
         slot_idx, _ = active[np.random.randint(len(active))]
@@ -1750,17 +2085,22 @@ class PortPairMutation(Mutation):
         set_port_pair(x, self.dims, row, slot_a, port_a, slot_b, port_b)
 
     def _remove_edge(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         switch_slots = self._switch_slot_indices(x)
         active_rows = [
             k for k, sa, _pa, sb, _pb in iter_active_pairs(x, self.dims)
             if sa not in switch_slots and sb not in switch_slots
         ]
+=======
+        active_rows = [k for k, *_ in iter_active_pairs(x, self.dims)]
+>>>>>>> Stashed changes
         if not active_rows:
             return
         row = active_rows[np.random.randint(len(active_rows))]
         clear_port_pair(x, self.dims, row)
 
     def _rewire_edge(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         switch_slots = self._switch_slot_indices(x)
         active_rows = [
             (k, sa, pa, sb, pb)
@@ -1771,6 +2111,14 @@ class PortPairMutation(Mutation):
             return
         row, sa, pa, sb, pb = active_rows[np.random.randint(len(active_rows))]
         loose = [(s, p) for s, p in self._find_loose_ports(x) if s not in switch_slots]
+=======
+        active_rows = [(k, sa, pa, sb, pb) for k, sa, pa, sb, pb
+                       in iter_active_pairs(x, self.dims)]
+        if not active_rows:
+            return
+        row, sa, pa, sb, pb = active_rows[np.random.randint(len(active_rows))]
+        loose = self._find_loose_ports(x)
+>>>>>>> Stashed changes
         if not loose:
             return
         new_endpoint = loose[np.random.randint(len(loose))]
@@ -1781,6 +2129,7 @@ class PortPairMutation(Mutation):
             set_port_pair(x, self.dims, row, sa, pa, new_endpoint[0], new_endpoint[1])
 
     def _perturb_anchor(self, x: NDArray) -> None:
+<<<<<<< Updated upstream
         # Phase 3+: clip to the +/-ANCHOR_OFFSET_FRACTION offset window, NOT
         # the full boundary -- xy is now an offset from the auto-centered layout.
         b = self.config.boundary
@@ -1791,10 +2140,19 @@ class PortPairMutation(Mutation):
         delta_theta = np.random.choice([-22, -11, 11, 22])  # degrees
         ax = int(np.clip(x[self.dims.anchor_start] + delta_x, -off_x, off_x))
         ay = int(np.clip(x[self.dims.anchor_start + 1] + delta_y, -off_y, off_y))
+=======
+        b = self.config.boundary
+        delta_x = np.random.randint(-5, 6)
+        delta_y = np.random.randint(-5, 6)
+        delta_theta = np.random.choice([-22, -11, 11, 22])  # degrees
+        ax = int(np.clip(x[self.dims.anchor_start] + delta_x, b.min_x, b.max_x))
+        ay = int(np.clip(x[self.dims.anchor_start + 1] + delta_y, b.min_y, b.max_y))
+>>>>>>> Stashed changes
         atheta = int((x[self.dims.anchor_start + 2] + delta_theta) % 360)
         set_anchor(x, self.dims, ax, ay, atheta)
 
     # ------------------------------------------------------------------
+<<<<<<< Updated upstream
     # Phase 5c: junction sub-operators
     # ------------------------------------------------------------------
     #
@@ -1891,6 +2249,11 @@ class PortPairMutation(Mutation):
             if piece_idx == left_idx or piece_idx == right_idx
         }
 
+=======
+    # Helpers
+    # ------------------------------------------------------------------
+
+>>>>>>> Stashed changes
     def _find_loose_ports(self, x: NDArray) -> List[Tuple[int, int]]:
         """Return list of (slot_idx, port_idx) tuples that are unused by edges."""
         used: set = set()

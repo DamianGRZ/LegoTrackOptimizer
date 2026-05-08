@@ -1,0 +1,12 @@
+meta:
+  schema_version: "1.0.0"
+pieces:
+  - piece_id: bad_route
+    kind: straight
+    manufacturer: lego
+    length_studs: 16.0
+    ports:
+      A: {dx: 0.0, dy: 0.0, dtheta: 0.0}
+      B: {dx: 16.0, dy: 0.0, dtheta: 0.0}
+    routes:
+      main: [A, Z]

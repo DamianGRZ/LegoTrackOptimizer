@@ -53,7 +53,10 @@ class AlgorithmConfig(BaseModel):
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
     heuristic_ratio: float = Field(default=0.20, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")
     crossover_prob: float = Field(default=0.9, ge=0, le=1, description="Crossover probability")
+<<<<<<< Updated upstream
     junction_crossover_prob: float = Field(default=0.0, ge=0, le=1, description="Junction-segment crossover probability (Phase 4+; Coupling A)")
+=======
+>>>>>>> Stashed changes
     mutation_prob: float = Field(default=0.1, ge=0, le=1, description="Mutation probability")
     eliminate_duplicates: bool = Field(default=True, description="Remove duplicate solutions")
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
@@ -65,12 +68,24 @@ class OptimizationConfig(BaseModel):
 
     inventory: Dict[str, int] = Field(default_factory=dict, description="Available pieces {piece_id: count}")
     boundary: BoundaryConfig = Field(default_factory=BoundaryConfig)
+<<<<<<< Updated upstream
+<<<<<<<< Updated upstream:src_v2/config.py
     closure_tolerance: float = Field(default=4.0, ge=0.1, description="Main-loop closure position tolerance in studs")
     branch_closure_tolerance: float = Field(default=8.0, ge=0.1, description="Branch (siding) closure position tolerance in studs; LEGO 9V siding geometry has ~6-stud y-residual absorbed by track flex")
     angle_tolerance: float = Field(default=5.0, ge=0.5, description="Angle closure tolerance in degrees")
     boundary_tolerance: float = Field(default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs")
     min_branch_count: int = Field(default=0, ge=0, description="Minimum branch (siding) cycles required; 0 = no pressure on G[8+T]")
     cv_admission_threshold: float = Field(default=1.0, ge=0.0, description="Phase 8: near-feasible CV upper bound for topology-aware archive admission")
+========
+    closure_tolerance: float = Field(default=4.0, ge=0.1, description="Position closure tolerance in studs")
+    angle_tolerance: float = Field(default=5.0, ge=0.5, description="Angle closure tolerance in degrees")
+    boundary_tolerance: float = Field(default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs")
+>>>>>>>> Stashed changes:src/config.py
+=======
+    closure_tolerance: float = Field(default=4.0, ge=0.1, description="Position closure tolerance in studs")
+    angle_tolerance: float = Field(default=5.0, ge=0.5, description="Angle closure tolerance in degrees")
+    boundary_tolerance: float = Field(default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs")
+>>>>>>> Stashed changes
     algorithm: AlgorithmConfig = Field(default_factory=AlgorithmConfig)
     train_config_path: Optional[str] = Field(
         default=None,

@@ -29,6 +29,7 @@ from ..lego_track_models import (
     offset_path,
 )
 
+<<<<<<< Updated upstream
 # Color palette for piece types (index-based).
 # Indices match catalog._LEGACY_PIECE_INDEX after the switch-collapse migration:
 #   0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE,
@@ -45,6 +46,23 @@ PIECE_COLORS = {
     4: "#e74c3c",  # SWITCH_LEFT - Red
     5: "#e67e22",  # SWITCH_RIGHT - Orange
     6: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
+=======
+# Color palette for piece types (index-based)
+# Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_LEFT, 3=R40_RIGHT,
+#          4=CROSS_90, 5=SW_LEFT_IN, 6=SW_LEFT_OUT, 7=SW_RIGHT_IN, 8=SW_RIGHT_OUT,
+#          9=DOUBLE_CROSSOVER
+PIECE_COLORS = {
+    0: "#3498db",  # STRAIGHT_16 - Blue
+    1: "#2980b9",  # STRAIGHT_24 - Darker Blue
+    2: "#27ae60",  # R40_LEFT - Green
+    3: "#16a085",  # R40_RIGHT - Teal
+    4: "#9b59b6",  # CROSS_90 - Purple
+    5: "#e74c3c",  # SW_LEFT_IN - Red
+    6: "#c0392b",  # SW_LEFT_OUT - Dark Red
+    7: "#e67e22",  # SW_RIGHT_IN - Orange
+    8: "#d35400",  # SW_RIGHT_OUT - Dark Orange
+    9: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
+>>>>>>> Stashed changes
 }
 
 # Fallback colors for unknown pieces
@@ -53,14 +71,21 @@ FALLBACK_COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
+<<<<<<< Updated upstream
 # Switch piece indices (post-renumber)
 SWITCH_INDICES = {4, 5}
 CROSSING_INDICES = {3, 6}
+=======
+# Switch piece indices
+SWITCH_INDICES = {5, 6, 7, 8}
+CROSSING_INDICES = {4, 9}
+>>>>>>> Stashed changes
 
 # Shortened names for legend
 PIECE_SHORT_NAMES = {
     0: "STRAIGHT_16",
     1: "STRAIGHT_24",
+<<<<<<< Updated upstream
     2: "R40_CURVE",
     3: "CROSS_90",
     4: "SWITCH_LEFT",
@@ -77,6 +102,30 @@ PIECE_IDX_CROSS_90 = 3
 PIECE_IDX_SWITCH_LEFT = 4
 PIECE_IDX_SWITCH_RIGHT = 5
 PIECE_IDX_DBL_CROSSOVER = 6
+=======
+    2: "R40_LEFT",
+    3: "R40_RIGHT",
+    4: "CROSS_90",
+    5: "SW_LEFT_IN",
+    6: "SW_LEFT_OUT",
+    7: "SW_RIGHT_IN",
+    8: "SW_RIGHT_OUT",
+    9: "DBL_CROSSOVER",
+}
+
+
+# Piece type constants for rendering
+PIECE_IDX_STRAIGHT_16 = 0
+PIECE_IDX_STRAIGHT_24 = 1
+PIECE_IDX_R40_LEFT = 2
+PIECE_IDX_R40_RIGHT = 3
+PIECE_IDX_CROSS_90 = 4
+PIECE_IDX_SW_LEFT_IN = 5
+PIECE_IDX_SW_LEFT_OUT = 6
+PIECE_IDX_SW_RIGHT_IN = 7
+PIECE_IDX_SW_RIGHT_OUT = 8
+PIECE_IDX_DBL_CROSSOVER = 9
+>>>>>>> Stashed changes
 
 # Piece lengths for straight pieces
 STRAIGHT_LENGTHS = {
@@ -338,11 +387,16 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
         _draw_rails(ax, x_cross2, y_cross2)
 
 
+<<<<<<< Updated upstream
 def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, **kwargs):
+=======
+def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True):
+>>>>>>> Stashed changes
     """Draw a single piece with proper geometry based on piece type.
 
     Args:
         ax: Matplotlib axes.
+<<<<<<< Updated upstream
         piece_idx: Piece index.
         x0, y0: Start position (studs).
         theta0: Entry heading (degrees).
@@ -353,6 +407,12 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, **kwargs):
             Used by R40_CURVE rendering to pick left vs right arc direction
             since the catalog now exposes a single curve SKU. Optional;
             without it the curve defaults to left.
+=======
+        piece_idx: Piece index (0-9).
+        x0, y0: Start position (studs).
+        theta0: Entry heading (degrees).
+        draw_rails_flag: Whether to draw rails.
+>>>>>>> Stashed changes
     """
     color = get_piece_color(piece_idx)
 
@@ -360,6 +420,7 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, **kwargs):
         _draw_straight_piece(ax, x0, y0, theta0, 16.0, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_STRAIGHT_24:
         _draw_straight_piece(ax, x0, y0, theta0, 24.0, color, draw_rails_flag)
+<<<<<<< Updated upstream
     elif piece_idx == PIECE_IDX_R40_CURVE:
         # Direction comes from the slot's flip bit, not the heading delta.
         # The DFS walk that produces the layout sometimes traverses curves
@@ -374,6 +435,16 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, **kwargs):
         color_branch = PIECE_COLORS.get(piece_idx, color)
         _draw_switch_piece(ax, x0, y0, theta0, 'left', color, color_branch, draw_rails_flag)
     elif piece_idx == PIECE_IDX_SWITCH_RIGHT:
+=======
+    elif piece_idx == PIECE_IDX_R40_LEFT:
+        _draw_curve_piece(ax, x0, y0, theta0, R40, CURVE_ANGLE, color, draw_rails_flag)
+    elif piece_idx == PIECE_IDX_R40_RIGHT:
+        _draw_curve_piece(ax, x0, y0, theta0, R40, -CURVE_ANGLE, color, draw_rails_flag)
+    elif piece_idx in (PIECE_IDX_SW_LEFT_IN, PIECE_IDX_SW_LEFT_OUT):
+        color_branch = PIECE_COLORS.get(piece_idx, color)
+        _draw_switch_piece(ax, x0, y0, theta0, 'left', color, color_branch, draw_rails_flag)
+    elif piece_idx in (PIECE_IDX_SW_RIGHT_IN, PIECE_IDX_SW_RIGHT_OUT):
+>>>>>>> Stashed changes
         color_branch = PIECE_COLORS.get(piece_idx, color)
         _draw_switch_piece(ax, x0, y0, theta0, 'right', color, color_branch, draw_rails_flag)
     elif piece_idx == PIECE_IDX_CROSS_90:
@@ -390,6 +461,7 @@ def get_piece_short_name(piece_idx: int) -> str:
     return PIECE_SHORT_NAMES.get(piece_idx, f"PIECE_{piece_idx}")
 
 
+<<<<<<< Updated upstream
 def _piece_state_map(layout: Layout) -> list:
     """Map each piece-index ``i`` → ``(state_idx, next_state_idx)``.
 
@@ -424,6 +496,8 @@ def _piece_state_map(layout: Layout) -> list:
     return out
 
 
+=======
+>>>>>>> Stashed changes
 def plot_layout(
     layout: Layout,
     catalog: TrackCatalog,
@@ -454,15 +528,20 @@ def plot_layout(
         ax.set_title(title)
         return fig
 
+<<<<<<< Updated upstream
     # Map each piece to its (state_index, next_state_index) accounting for
     # per-component closing duplicates. For a single-component layout this
     # collapses to (i, i + 1); multi-component layouts get per-component
     # closure so curve directions don't bleed across component gaps.
     piece_state_map = _piece_state_map(layout)
+=======
+    # Extract coordinates
+>>>>>>> Stashed changes
     x = layout.states[:, 0]
     y = layout.states[:, 1]
     theta = layout.states[:, 2]
 
+<<<<<<< Updated upstream
     piece_indices_seen = set()
     switch_positions: list = []
     crossing_positions: list = []
@@ -471,11 +550,24 @@ def plot_layout(
         piece_idx = int(layout.indices[i])
         s, s_next = piece_state_map[i]
 
+=======
+    # Track piece types for legend (by index for consistent ordering)
+    piece_indices_seen = set()
+    switch_positions = []
+    crossing_positions = []
+
+    # Plot each piece with proper geometry
+    for i in range(layout.n_pieces):
+        piece_idx = int(layout.indices[i])
+
+        # Track special positions
+>>>>>>> Stashed changes
         if piece_idx in SWITCH_INDICES:
             switch_positions.append(i)
         elif piece_idx in CROSSING_INDICES:
             crossing_positions.append(i)
 
+<<<<<<< Updated upstream
         next_theta = float(theta[s_next])
         flip = int(layout.flips[i]) if layout.flips is not None else 0
         _draw_piece(ax, piece_idx, x[s], y[s], theta[s],
@@ -505,6 +597,34 @@ def plot_layout(
     s_last, _ = piece_state_map[layout.n_pieces - 1]
     ax.plot(x[s_first], y[s_first], "gs", markersize=12, label="Start", zorder=10)
     ax.plot(x[s_last], y[s_last], "ro", markersize=12, label="End", zorder=10)
+=======
+        # Draw piece with proper geometry (arcs for curves, etc.)
+        _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
+
+        piece_indices_seen.add(piece_idx)
+
+    # Mark switch positions with diamond markers
+    for i in switch_positions:
+        piece_idx = int(layout.indices[i])
+        color = get_piece_color(piece_idx)
+        mid_x = (x[i] + x[i + 1]) / 2
+        mid_y = (y[i] + y[i + 1]) / 2
+        ax.plot(mid_x, mid_y, "D", color=color, markersize=8, markeredgecolor="black",
+                markeredgewidth=1, zorder=6)
+
+    # Mark crossing positions with square markers
+    for i in crossing_positions:
+        piece_idx = int(layout.indices[i])
+        color = get_piece_color(piece_idx)
+        mid_x = (x[i] + x[i + 1]) / 2
+        mid_y = (y[i] + y[i + 1]) / 2
+        ax.plot(mid_x, mid_y, "s", color=color, markersize=8, markeredgecolor="black",
+                markeredgewidth=1, zorder=6)
+
+    # Mark start as green square and end as red circle
+    ax.plot(x[0], y[0], "gs", markersize=12, label="Start", zorder=10)
+    ax.plot(x[-1], y[-1], "ro", markersize=12, label="End", zorder=10)
+>>>>>>> Stashed changes
 
     # Draw boundary if provided
     if boundary is not None:
@@ -554,6 +674,7 @@ def plot_layout(
     # Add metrics text
     n_switches = len([i for i in layout.indices if int(i) in SWITCH_INDICES])
     n_crossings = len([i for i in layout.indices if int(i) in CROSSING_INDICES])
+<<<<<<< Updated upstream
     metrics_lines = [
         f"Pieces: {layout.n_pieces}",
         f"Components: {layout.n_components}",
@@ -569,6 +690,16 @@ def plot_layout(
         metrics_lines.append(f"Angle Error: {layout.angle_error:.2f}°")
     metrics_lines.append(f"Area: {layout.area:.0f} studs²")
     metrics_text = "\n".join(metrics_lines)
+=======
+    metrics_text = (
+        f"Pieces: {layout.n_pieces}\n"
+        f"Switches: {n_switches}\n"
+        f"Crossings: {n_crossings}\n"
+        f"Closure Error: {layout.closure_error:.2f} studs\n"
+        f"Angle Error: {layout.angle_error:.2f}°\n"
+        f"Area: {layout.area:.0f} studs²"
+    )
+>>>>>>> Stashed changes
     ax.text(
         0.02,
         0.98,

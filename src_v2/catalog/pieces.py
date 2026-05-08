@@ -39,7 +39,11 @@ class TrackPiece:
 
     id: str
     name: str
+<<<<<<< Updated upstream
     piece_type: str  # 'straight', 'curve', 'crossing', 'switch'
+=======
+    piece_type: str  # 'straight', 'curve', 'crossing', 'switch', 'bumper'
+>>>>>>> Stashed changes
     fk: FKDeltas
     ports: Tuple[Port, ...]
     index: int
@@ -49,6 +53,10 @@ class TrackPiece:
     direction: Optional[str] = None  # 'left' or 'right'
     radius_mm: Optional[float] = None
     speed_limit_ms: float = 1.57  # Motor top speed default
+<<<<<<< Updated upstream
+=======
+    is_terminator: bool = False
+>>>>>>> Stashed changes
     routes_data: Optional[List[Dict[str, Any]]] = None
 
     @property

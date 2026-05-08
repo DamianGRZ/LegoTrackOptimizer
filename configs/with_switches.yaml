@@ -1,7 +1,11 @@
 # LEGO Track Optimizer - Configuration with Switches
 # Includes R40 switch tracks for layouts with turnout points
 
+<<<<<<< Updated upstream
 train_config_path: trains/measured_consist.yaml
+=======
+train_config_path: trains/default.yaml
+>>>>>>> Stashed changes
 
 inventory:
   # Straights
@@ -43,6 +47,7 @@ algorithm:
     n_max_gen: 1000
     period: 100  # Early stop if no improvement for 100 generations
 
+<<<<<<< Updated upstream
 # Main loop tolerance back to 4.0 (tight) — the 7.0 workaround is no
 # longer needed now that branch cycles are detected via branch_labels and
 # given their own loosened tolerance below.
@@ -62,3 +67,9 @@ min_branch_count: 1
 # serial bottlenecks (dup-elim, mating, survival) cap practical speedup at
 # ~1.3x even with all cores. Going beyond 16 gives diminishing returns.
 n_workers: 16
+=======
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 32  # Enable parallel evaluation
+>>>>>>> Stashed changes
