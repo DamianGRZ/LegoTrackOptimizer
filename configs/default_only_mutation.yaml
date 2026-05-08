@@ -1,0 +1,43 @@
+# LEGO Track Optimizer - default, mutation-only variant (§9.7 sanity / Rule 25 revised)
+#
+# Variant of default.yaml with crossover disabled and mutation maxed, per
+# Rule 25 revised in docs/PLAN.md:
+#   - Holland 1975 schema theorem + White 2018: cx_prob ≈ 0.9 destroys
+#     port-pair feasibility schemata at ≈ 90% per crossover application.
+#   - Barrero, Camacho, D'Angelo 2014 (PMC4137700): mutation-only EAs win
+#     94.16% of trials across TSP/CVRP/N-Queens/Bin-Packing.
+#
+# The canonical default.yaml stays at cx=0.9/mut=0.1 and is overridden via
+# the web UI tweaks panel for live experimentation. This variant is the
+# baked-in scenario for the §9.7 sanity gate and Phase 1+ baseline runs.
+
+train_config_path: trains/measured_consist.yaml
+
+inventory:
+  # Straights
+  STRAIGHT_24: 8
+  STRAIGHT_16: 16
+  # R40 curves: single SKU (4DBrix 2.04.069). Left vs right turn is selected
+  # per-placement via the chromosome's flip bit. 40 = 20 ex-left + 20 ex-right.
+  R40_CURVE: 40
+
+boundary:
+  min_x: -150.0
+  max_x: 150.0
+  min_y: -150.0
+  max_y: 150.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 1000
+  n_gen: 200
+  heuristic_ratio: 0.20
+  crossover_prob: 0.0    # was 0.9 — Rule 25 revised (Holland 1975 + Barrero 2014)
+  mutation_prob: 1.0     # was 0.1 — compensate for absent crossover diversity
+  eliminate_duplicates: true
+  seed: null
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 16            # was 1 — bumped for sanity-run wall-clock

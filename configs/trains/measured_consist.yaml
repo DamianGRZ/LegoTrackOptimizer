@@ -1,0 +1,64 @@
+# configs/trains/measured_consist.yaml
+# Measured: 2026-05-06
+# Equipment: AFM SL+Cargo Train M0015TW (Militarybase house brand,
+#            OEM China KAZI/WUEJIN class). 841 bricks total.
+# Power:     5xAAA alkaline fresh @ 1.5 V/cell measured = 7.5 V OCV
+#            (AFM @ 7.5V ~ LEGO Powered Up Hub electrically; NOT LEGO
+#             Power Functions @ 9V).
+# Consist:   loco -> short car (1, 94 g, 0.106 m) -> long car (2, 233 g, 0.220 m)
+# Track:     LEGO L-gauge 37.5 mm (verified - AFM track is mechanically compatible)
+# v_motor_max method: 60-fps phone video, full consist, steady-state from
+#            1-s window of 47f52d36-...mp4
+# Measured by: Damian GRZ
+# Raw video archive: b990558a-...mp4 (bare loco, 3 trials),
+#                    47f52d36-...mp4 (full consist, 3 trials)
+
+# --- Friction (V2 conservative defaults; pull-test deferred) ---
+mu_design: 0.25
+mu_nominal: 0.30
+
+# --- Environment ---
+g: 9.81
+
+# --- Motor (measured) ---
+v_motor_max: 1.26                # full consist steady-state on 1.26 m / 1.00 s window.
+                                 # Bare loco gives ~1.30 m/s but with 23% trial variance;
+                                 # consist drag delta ~0.04 m/s (~3%).
+                                 # NOTE: at AFM 5xAAA = 7.5V, this exceeds research
+                                 # extrapolation of 0.91 m/s (PUP-class @ 7.5V).
+                                 # Possible explanations:
+                                 #   (a) AFM motor is over-spec for the platform,
+                                 #   (b) gear ratio is lower (more speed, less torque),
+                                 #   (c) Mabuchi RE-260-class instead of FA-130-class.
+                                 # Recommendation: open loco at end of thesis, read motor
+                                 # part number, document for reviewer.
+
+# --- Bogie / wheel geometry (LEGO L-gauge confirmed) ---
+gauge_b: 0.0375
+cog_height_h: 0.030              # default - tilt-test optional, deferred to appendix
+flange_angle_deg: 50.0
+
+# --- Speed-profile dynamics ---
+brake_decel: 2.45                # default (passive coasting unmeasured)
+max_accel: 0.68                  # MEASURED: 1.35 m / 2.0 s starting from 0
+                                 # (uniform-accel-then-coast model with v_max = 1.26 cap).
+                                 # 95% CI [0.61, 0.77] m/s^2 for +/-5cm position,
+                                 # +/-0.1s time uncertainty.
+                                 # Train is motor-torque-limited, NOT friction-limited at
+                                 # this consist+voltage: friction-theoretical (mu=0.25)
+                                 # would be 1.47 m/s^2, never reached.
+                                 # This value is a "kinematic mean equivalent" - real DC
+                                 # motor dynamics are exponential, not linear. Adequate
+                                 # for Pass 1 (F[1]=min_speed) which doesn't use max_accel
+                                 # anyway (Golden Rule 22). Becomes binding for any future
+                                 # Phase 9 lap_time objective.
+                                 # Rolling resistance ~0.03-0.10 m/s^2 not deducted (would
+                                 # raise raw motor a by 4-15% if Phase 9 needs it).
+                                 # Pre-thesis: redo with Tracker software for tighter bounds.
+
+# --- Consist (measured) ---
+mass_loco: 0.493                 # 493 g WITH 5xAAA inside (~378 g loco + ~115 g batteries)
+mass_trailing: 0.327             # 94 g (short, first) + 233 g (long, second)
+coupler_offset: 0.106            # short car length (first wagon)
+                                 # rationale: smaller phi on R40 = lower lateral demand
+                                 # on loco grip envelope = better dynamics

@@ -1,13 +1,14 @@
 # LEGO Track Optimizer - Configuration with 90-Degree Crossing
 # Includes one CROSS_90 for figure-8 and self-intersecting layouts
 
+train_config_path: trains/measured_consist.yaml
+
 inventory:
   # Straights
   # STRAIGHT_24: 8
   STRAIGHT_16: 40
-  # R40 curves
-  R40_LEFT: 20
-  R40_RIGHT: 20
+  # R40 curves: single SKU; flip bit selects L/R per placement.
+  R40_CURVE: 40
   # 90-degree crossing (allows track to cross itself)
   CROSS_90: 20
 
@@ -27,7 +28,7 @@ algorithm:
   name: NSGA2
   pop_size: 1000
   n_gen: 500
-  heuristic_ratio: 0.08
+  heuristic_ratio: 0.20
   crossover_prob: 0.9
   mutation_prob: 0.1
   eliminate_duplicates: true
@@ -36,15 +37,7 @@ algorithm:
     n_max_gen: 1000
     period: 100  # Early stop if no improvement for 100 generations
 
-physics:
-  safety_factor: 0.8
-  friction_coeff: 0.30
-  gravity: 9.81
-  motor_top_speed: 1.57
-  max_accel: 3.92
-  brake_decel: 2.45
-  stud_mm: 8.0
-
-closure_tolerance: 0.5
+closure_tolerance: 4.0
 angle_tolerance: 5.0
+boundary_tolerance: 2.0
 n_workers: 1
