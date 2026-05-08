@@ -1,26 +1,20 @@
 # LEGO Track Optimizer - Configuration with Switches
 # Includes R40 switch tracks for layouts with turnout points
 
-<<<<<<< Updated upstream
-train_config_path: trains/measured_consist.yaml
-=======
 train_config_path: trains/default.yaml
->>>>>>> Stashed changes
 
 inventory:
   # Straights
   #STRAIGHT_24: 8
   STRAIGHT_16: 80
-  # R40 curves: single SKU; flip bit selects L/R per placement.
-  R40_CURVE: 80
-  # R40 Switches: two SKUs (left-handed, right-handed). The chromosome's
-  # rotate bit selects IN-style vs OUT-style placement of the same brick.
-  # A passing siding uses ONE LEFT + ONE RIGHT (the IN/OUT switches of a
-  # real LEGO siding are opposite handedness — the rotated handed switch
-  # puts the diverging port back on the same side of the mainline as the
-  # branch). Stock both so the GA can build either-side sidings.
-  R40_SWITCH_LEFT: 4
-  R40_SWITCH_RIGHT: 4
+  # R40 curves
+  R40_LEFT: 40
+  R40_RIGHT: 40
+  # R40 Switches (straight-through mode in optimizer)
+  R40_SWITCH_LEFT_IN: 2
+  R40_SWITCH_LEFT_OUT: 2
+#  R40_SWITCH_RIGHT_IN: 4
+#  R40_SWITCH_RIGHT_OUT: 4
 
 boundary:
   min_x: -250.0
@@ -39,37 +33,15 @@ algorithm:
   pop_size: 1000
   n_gen: 500
   heuristic_ratio: 0.20
-  crossover_prob: 0.9
-  mutation_prob: 0.1
+  crossover_prob: 0.01
+  mutation_prob: 0.8
   eliminate_duplicates: true
   seed: null
   termination:
     n_max_gen: 1000
     period: 100  # Early stop if no improvement for 100 generations
 
-<<<<<<< Updated upstream
-# Main loop tolerance back to 4.0 (tight) — the 7.0 workaround is no
-# longer needed now that branch cycles are detected via branch_labels and
-# given their own loosened tolerance below.
-closure_tolerance: 4.0
-# Branch (siding) cycles get a separate looser tolerance: R40 + STRAIGHT_16
-# passing sidings have an inherent ~6-stud y-residual that physical LEGO
-# track absorbs via flex. 8.0 clears that residual while still rejecting
-# genuinely broken branches (tens-of-studs residuals).
-branch_closure_tolerance: 8.0
-angle_tolerance: 5.0
-boundary_tolerance: 2.0
-# Force at least one branch (passing-siding) cycle in feasible layouts.
-# Without this, F[1]=-min_speed makes plain ovals dominate switch-using
-# layouts in the bi-objective Pareto sort and the GA collapses to 0 switches.
-min_branch_count: 1
-# Sweet spot for i7-14700F (20 physical cores). ProcessPool overhead +
-# serial bottlenecks (dup-elim, mating, survival) cap practical speedup at
-# ~1.3x even with all cores. Going beyond 16 gives diminishing returns.
-n_workers: 16
-=======
 closure_tolerance: 4.0
 angle_tolerance: 5.0
 boundary_tolerance: 2.0
 n_workers: 32  # Enable parallel evaluation
->>>>>>> Stashed changes
