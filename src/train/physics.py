@@ -39,6 +39,8 @@ class TrainConfig:
     # --- Speed-profile dynamics ---
     max_accel: float = 3.92          # maximum acceleration (m/s^2)
     brake_decel: float = 2.45        # braking deceleration (m/s^2)
+    # --- Rolling resistance ---
+    mu_roll: float = 0.05            # rolling-friction coefficient (literature default; tunable)
 
     # --- Consist mass and coupler geometry ---
     mass_loco: float = 0.370         # locomotive mass (kg)

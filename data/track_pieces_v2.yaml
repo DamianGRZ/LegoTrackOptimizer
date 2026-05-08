@@ -20,10 +20,6 @@ pieces:
     manufacturer: 4dbrix
     part_numbers: ["2.04.065"]
     length_studs: 16.0
-<<<<<<< Updated upstream
-    symmetric: true                              # flip is geometric no-op; allow for chromosome-symmetry handling
-=======
->>>>>>> Stashed changes
     ports:
       A: {dx: 0.0,  dy: 0.0, dtheta: 0.0}
       B: {dx: 16.0, dy: 0.0, dtheta: 0.0}
@@ -35,10 +31,6 @@ pieces:
     manufacturer: 4dbrix
     part_numbers: ["2.04.066"]
     length_studs: 24.0
-<<<<<<< Updated upstream
-    symmetric: true
-=======
->>>>>>> Stashed changes
     ports:
       A: {dx: 0.0,  dy: 0.0, dtheta: 0.0}
       B: {dx: 24.0, dy: 0.0, dtheta: 0.0}
@@ -49,64 +41,21 @@ pieces:
   # CURVES (R40, 22.5°)
   # FK: dx = R*sin(θ), dy = R*(1-cos(θ)), dtheta = θ
   # θ = 22.5° = π/8 rad
-<<<<<<< Updated upstream
-  #
-  # Single SKU (4DBrix 2.04.069 / LEGO 2867 / 53400 / 85976) — physically
-  # achiral. Left vs right turn is selected per-placement via the
-  # chromosome's flip bit; no separate L/R catalog entries.
-  # =========================================================================
-
-  - piece_id: R40_CURVE
-=======
   # =========================================================================
 
   - piece_id: R40_LEFT
->>>>>>> Stashed changes
     kind: curve
     manufacturer: 4dbrix
     part_numbers: ["2.04.069"]
     radius_studs: 40.0
     sector_angle_rad: 0.39269908                # π/8
-<<<<<<< Updated upstream
-    symmetric: true                             # flip bit selects L vs R turn
-=======
     hand: left
->>>>>>> Stashed changes
     ports:
       A: {dx: 0.0,     dy: 0.0,    dtheta: 0.0}
       B: {dx: 15.307,  dy: 3.045,  dtheta: 0.39269908}
     routes:
       main: [A, B]
 
-<<<<<<< Updated upstream
-  # =========================================================================
-  # SWITCHES (R40, 22.5°)
-  #
-  # Two SKUs total — left-handed and right-handed. The "IN" vs "OUT" form is
-  # a *placement orientation* (the same brick rotated 180° in plane), not a
-  # different physical part. The chromosome's per-slot rotate bit selects
-  # between the canonical (IN, frog at far end) and rotated (OUT, frog at
-  # throat-end) placements. See research notes 2026-04 (curves + switches).
-  #
-  # Canonical pose: throat at port A (origin), straight-through exit at port
-  # B (far end), diverging exit at port C (near far end, off-axis on the
-  # hand side). 4DBrix part numbers cover both inside-throw and outside-throw
-  # lever variants — the rail geometry is identical, so we list both.
-  # =========================================================================
-
-  - piece_id: R40_SWITCH_LEFT
-    kind: switch
-    manufacturer: 4dbrix
-    part_numbers: ["2.04.021", "2.04.022"]              # inside / outside throw
-    body_length_studs: 32.0
-    diverging_radius_studs: 40.0
-    hand: left
-    rotatable: true                                     # rotate=1 → OUT placement
-    ports:
-      A: {dx: 0.0,    dy: 0.0,    dtheta: 0.0}          # throat
-      B: {dx: 32.0,   dy: 0.0,    dtheta: 0.0}          # straight through
-      C: {dx: 31.0,   dy: 6.2,    dtheta: 0.39269908}   # diverging (left)
-=======
   - piece_id: R40_RIGHT
     kind: curve
     manufacturer: 4dbrix
@@ -137,21 +86,10 @@ pieces:
       A: {dx: 0.0,    dy: 0.0,    dtheta: 0.0}        # throat
       B: {dx: 32.0,   dy: 0.0,    dtheta: 0.0}        # straight through
       C: {dx: 31.0,   dy: 6.2,    dtheta: 0.39269908} # diverging (left)
->>>>>>> Stashed changes
     routes:
       through:   [A, B]
       diverging: [A, C]
 
-<<<<<<< Updated upstream
-  - piece_id: R40_SWITCH_RIGHT
-    kind: switch
-    manufacturer: 4dbrix
-    part_numbers: ["2.04.018", "2.04.019"]              # inside / outside throw
-    body_length_studs: 32.0
-    diverging_radius_studs: 40.0
-    hand: right
-    rotatable: true
-=======
   - piece_id: R40_SWITCH_LEFT_OUT
     kind: switch
     manufacturer: 4dbrix
@@ -174,7 +112,6 @@ pieces:
     body_length_studs: 32.0
     diverging_radius_studs: 40.0
     hand: right
->>>>>>> Stashed changes
     ports:
       A: {dx: 0.0,    dy:  0.0,    dtheta:  0.0}
       B: {dx: 32.0,   dy:  0.0,    dtheta:  0.0}
@@ -183,8 +120,6 @@ pieces:
       through:   [A, B]
       diverging: [A, C]
 
-<<<<<<< Updated upstream
-=======
   - piece_id: R40_SWITCH_RIGHT_OUT
     kind: switch
     manufacturer: 4dbrix
@@ -200,7 +135,6 @@ pieces:
       through:   [A, B]
       diverging: [A, C]
 
->>>>>>> Stashed changes
   # =========================================================================
   # CROSSINGS
   # =========================================================================

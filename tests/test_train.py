@@ -26,6 +26,12 @@ class TestTrainConfigFields:
     def test_legacy_mu_field_removed(self):
         assert not hasattr(TrainConfig(), "mu")
 
+    def test_default_mu_roll(self):
+        assert TrainConfig().mu_roll == pytest.approx(0.05)
+
+    def test_mu_roll_can_be_overridden(self):
+        assert TrainConfig(mu_roll=0.10).mu_roll == pytest.approx(0.10)
+
 
 class TestSpeedCapsUseMuDesign:
     """Scalar and vectorised speed caps read mu_design, not mu_nominal."""

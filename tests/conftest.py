@@ -1,5 +1,7 @@
 """Shared pytest fixtures for LEGO Track Optimizer tests."""
 
+from pathlib import Path
+
 import pytest
 
 from src.config import BoundaryConfig, OptimizationConfig
@@ -17,6 +19,14 @@ def catalog() -> TrackCatalog:
 def train_config() -> TrainConfig:
     """Default train physics configuration."""
     return TrainConfig()
+
+
+@pytest.fixture
+def measured_train_config() -> TrainConfig:
+    """Train physics from measured AFM SL+Cargo M0015TW consist (2026-05-06)."""
+    return TrainConfig.from_yaml(
+        Path(__file__).parent.parent / "configs/trains/measured_consist.yaml"
+    )
 
 
 @pytest.fixture

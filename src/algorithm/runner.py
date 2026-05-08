@@ -490,7 +490,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d")
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header="neg_utilization,neg_min_speed", comments="")
+               header="neg_utilization,neg_avg_speed", comments="")
     if G is not None:
         # Stage B G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
