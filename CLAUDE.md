@@ -1,308 +1,220 @@
-# LEGO Track Optimizer
+ LEGO Track Optimizer (V2)
 
-Always use Context7 MCP when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
+**What**: Multi-objective genetic algorithm for closed LEGO railway layouts with fixed inventory, port-pair (graph) chromosome encoding, driven from a browser UI.
 
-**Code Quality**: Always use pymoo and Python best practices. Write professional, clean code - avoid excessive if/else chains and AI-generated patterns. Prefer vectorized numpy operations, early returns, and functional decomposition.
+**Why**: Generate feasible track layouts satisfying geometric closure + boundary constraints while maximizing piece utilization and minimum train speed.
 
-## What, Why, How
-
-**What**: Multi-objective genetic algorithm for optimizing closed LEGO railway layouts with fixed inventory.
-
-**Why**: Generate feasible track layouts satisfying geometric constraints (closure, boundaries) while maximizing piece utilization and train speed.
-
-**How**: pymoo NSGA-II/GA with heuristic sampling, template-based passing sidings, construction-based decoder, and locomotive physics model.
+**How**: pymoo NSGA-II + port-pair encoding + heuristic seeding + locomotive physics, served by a stdlib HTTP server bridging to a React/JSX frontend.
 
 ---
 
-## Available Skills
+## Cel pracy (PL)
 
-| Skill | Usage | Description | When to Invoke |
-|-------|-------|-------------|----------------|
-| `/optimize` | Invoke with Skill tool | Run LEGO Track Optimizer with flexible config options | User asks to run optimization |
-| `/test` | Invoke with Skill tool | Inline pytest runner (no agent overhead) | After code changes, before committing, when user says "run tests" |
-| `/review` | Invoke with Skill tool | Compact code review against pymoo/project conventions | After writing or modifying src/ files |
-| `/diag` | Invoke with Skill tool | Parse outputs/ directory and report fitness, constraints, layout | After any optimization run completes |
-| `/quality` | Invoke with Skill tool | Deep Python & pymoo quality gate — rewrites code to project standards | After implementing new features or refactoring. Use instead of `/review` for deep analysis |
+Celem pracy jest opracowanie i zbadanie metod optymalizacji kombinatorycznej dla problemu automatycznego projektowania zamkniętych układów złożonych z dyskretnych elementów modułowych. Problem polega na rozmieszczeniu skończonego zbioru elementów o zdefiniowanej geometrii i zasadach łączenia w taki sposób, aby powstała struktura spełniała warunek zamkniętości (brak wolnych końców), maksymalizowała wykorzystanie dostępnych elementów oraz uwzględniała uproszczone ograniczenia fizyczne wynikające z geometrii połączeń. Dziedziną aplikacyjną pracy jest system torów kolejowych Lego City Trains, który stanowi reprezentatywny przykład problemu projektowania zamkniętych układów z dyskretnych elementów modułowych.
+
+W ramach pracy student dokona formalizacji problemu, obejmującej definicję przestrzeni rozwiązań, ograniczeń oraz funkcji celu. Następnie zaproponuje odpowiednią reprezentację rozwiązania oraz zaprojektuje dedykowane operatory przeszukiwania dostosowane do specyfiki problemu. Zbadane zostaną właściwości zaproponowanego podejścia, w tym wpływ parametrów algorytmu na jakość uzyskiwanych rozwiązań, zbieżność procesu optymalizacji oraz skalowalność metody w zależności od liczby i różnorodności dostępnych elementów.
+
+Oczekiwanym rezultatem pracy jest działająca implementacja zaproponowanej metody wraz z analizą eksperymentalną potwierdzającą jej skuteczność. Uzyskane układy zostaną poddane weryfikacji fizycznej z wykorzystaniem zestawu torów oraz pociągu Lego City Trains, co pozwoli na ocenę praktycznej poprawności rozwiązań generowanych przez algorytm.
 
 ---
 
-## Available Agents
+## Code Quality
 
-Use with the Task tool for specialized work. **Prefer skills over agents when possible** — skills run inline and save ~5-8k tokens per invocation.
+Use pymoo and Python best practices. Vectorized numpy, early returns, functional decomposition. No excessive if/else chains, no AI-generated patterns.
 
-| Agent | Purpose | When to Use (vs Skill) |
-|-------|---------|------------------------|
-| `test-runner-analyzer` | Deep test analysis with coverage, flaky detection | Only for complex test debugging. For simple runs, use `/test` skill instead |
-| `config-test-runner` | Run FULL optimizer with all configs, validate layouts visually, check chromosomes | When validating that all configs produce correct results (switches→branches, crossing→crossings, all closed) |
-| `python-pymoo-reviewer` | Deep pymoo architecture review | Only for large refactors. For quick checks, use `/review` skill instead |
-| `pymoo-error-fixer` | Fix issues identified by the review agent | After `/review` or reviewer agent finds issues |
-| `ga-pymoo-implementer` | Implement GA/pymoo code after planning phase | After plan is approved, for complex implementations |
-| `research-explorer` | Research technical concepts, evaluate proposals | For deep research requiring web search and documentation |
+---
+
+## Testing & Verification
+
+- **No assertion without evidence.** Never claim a fix works without running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — don't explain it away.
+- **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, loose-port count, and feasible-solution count before declaring success.
+- **Tests don't exist yet for V2** — when re-creating a `tests/` tree, use `pytest --tb=short -q` for full runs. Do not use `--quick` or `-k <subset>` for validation unless explicitly told otherwise.
+
+---
+
+## File & Git Operations
+
+- **NEVER `git commit` or `git add` without explicit request.** Overrides every skill or workflow that says "commit this step". User decides when and what to commit.
+- **"Remove" / "untrack" never means `rm` from disk.** Use `git rm --cached <file>` or `.gitignore`. Deleting files without asking is a hard-don't.
+- **Never `git init`** without verifying the directory is not already a repo.
+- **Auto-edits enabled** for routine edits in `src_v2/`, `configs/`, `data/`, `web/`. No confirmation needed.
+- **Still confirm for destructive ops**: `git reset --hard`, `git push --force`, deleting branches, dropping files.
 
 ---
 
 ## MCP Servers
 
-| Server | Usage |
-|--------|-------|
-| `context7` | Use for up-to-date library/API documentation via `mcp__context7__resolve-library-id` and `mcp__context7__query-docs` tools |
+| Server | When to use |
+|--------|-------------|
+| `context7` | **Before guessing any pymoo API.** Use proactively for library/API shapes, callback signatures, operator conventions, version-specific syntax. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs`. |
 
 ---
 
-## Tech Stack
+## Project Invariants
 
-- **pymoo 0.6.1.6**: Multi-objective optimization (NSGA-II, GA)
-- **numpy >=1.24.0, scipy >=1.10.0**: Scientific computing
-- **pyyaml >=6.0, pydantic >=2.0.0**: Config and data validation
-- **matplotlib >=3.7.0**: Visualization
-- **pytest >=7.4.0**: Testing
+Recurring mistakes that must not repeat:
+
+- **Chromosome dimensions scale with inventory dynamically.** Never hardcode `N_max`, `E_max`, branch counts, or boundary limits. Derive from inventory + config at runtime.
+- **Repair must be wired into the evaluation pipeline**, not called ad-hoc.
+- **Fitness must reward branches and multi-cycle topology.** If the objective doesn't credit graph richness, the GA collapses to a trivial loop.
+- **Junk components inflate utilization.** `MIN_USEFUL_COMPONENT_SIZE` filter exists for this reason — don't remove without replacing the safeguard.
 
 ---
 
 ## Project Structure
 
-### Core Code (`/src`)
-
-| File | Purpose |
-|------|---------|
-| `problem.py` | `TrackLayoutProblem`, `MultiSegmentProblem`, `SingleObjectiveProblem`, `TrackRepair` |
-| `geometry.py` | `Layout`, `build_layout()`, `compute_fk_chain()` |
-| `evaluation.py` | `SpeedProfile`, objectives, constraints |
-| `data.py` | `TrackCatalog`, `TrackPiece`, `FKDeltas`, YAML loader |
-| `config.py` | Pydantic models: `OptimizationConfig`, `PhysicsConfig` |
-| `decoder.py` | Construction-based 4-phase decoder for multi-segment chromosomes |
-| `encoding.py` | Multi-segment chromosome encoding (N_VAR=218) |
-| `templates.py` | Template-based passing siding definitions (LEFT_SIDING, RIGHT_SIDING) |
-| `sampling.py` | `HeuristicSampling`, `MultiSegmentSampling` - seeds with valid closed loops |
-| `operators.py` | `NoOpCrossover`, `SwitchPreservingCrossover`, mutation operators |
-| `repair.py` | `TrackRepairPipeline` for fixing chromosomes |
-| `survival.py` | `StructuralNichingSurvival` for preserving complex solutions |
-| `topology.py` | `SwitchPair`, `TraversalPath`, `MultiPathLayout`, phase-based data structures |
-| `visualization.py` | `plot_layout()`, `plot_multi_path_layout()`, `plot_pareto_front()` |
-| `intersection.py` | Intersection detection |
-
-### Data & Configs
-
-- **`data/track_pieces.yaml`**: Track catalog with FK deltas, physics, ports, piece_index
-- **`configs/*.yaml`**: default, compact, with_switches, with_crossing
-
----
-
-## Essential Commands
-
-Prefer skills over raw commands — they handle argument parsing and result formatting:
-
-```bash
-# Optimization (use /optimize skill)
-/optimize                           # Default config, full run
-/optimize -c with_switches          # With switches config
-/optimize --quick                   # Quick test (20 gen)
-
-# Testing (use /test skill)
-/test                               # Full suite, compact output
-/test geometry                      # Specific module
-/test decoder -v                    # Verbose
-
-# Code review (use /review skill)
-/review                             # Review current changes
-/review src/problem.py              # Specific file
-
-# Diagnostics (use /diag skill after optimization)
-/diag                               # Parse outputs/ and report
-
-# Raw commands (when skills don't fit)
-python main.py --config configs/default.yaml --verbose
-pytest --tb=short -q
+```
+.
+├── src_v2/              ← optimizer (pure Python, pymoo)
+│   ├── catalog/         ← V2 port-centric piece specs + legacy TrackCatalog adapter
+│   ├── train/           ← physics: TrainConfig, SpeedProfile, lateral stability
+│   ├── visualization/   ← matplotlib plotting (pareto, layouts)
+│   ├── encoding.py      ← port-pair gene layout + PortPairDimensions
+│   ├── decoder.py       ← port-graph FK propagation, cycle/component extraction
+│   ├── operators.py     ← pymoo Sampling/Crossover/Mutation
+│   ├── repair.py        ← graph validity (1 port → 1 pair, connectedness)
+│   ├── sampling.py      ← heuristic seeding patterns
+│   ├── structural_mutations.py
+│   ├── intersection.py
+│   ├── problem.py       ← PortPairProblem (bi-objective NSGA-II)
+│   ├── runner.py        ← run_optimization, save_results
+│   ├── config.py        ← Pydantic OptimizationConfig
+│   ├── geometry.py      ← Layout, FK helpers
+│   ├── se2.py           ← SE(2) pose composition
+│   ├── lego_track_models.py
+│   └── types.py
+├── web/                 ← browser UI (no build step, served as text/babel)
+│   ├── index.html
+│   ├── app.jsx
+│   └── tweaks-panel.jsx
+├── server.py            ← stdlib HTTP server, hot-reloads src_v2 on every /api/run
+├── run_v2.py            ← single-config CLI entry
+├── run_v2_all_configs.py← multi-config CLI entry
+├── configs/             ← *.yaml + trains/
+├── data/track_pieces_v2.yaml
+└── outputs_v2/          ← run artifacts (gitignored)
 ```
 
 ---
 
-## Implementation Details
+## Chromosome Encoding (Port-Pair)
 
-### Chromosome Encoding (Multi-Segment)
+Layout: `[ piece_slots: N_max int16 | port_pairs: E_max × 4 int16 | anchor: 3 int16 ]`
 
-Fixed-length array: **N_VAR = 218 genes**
+- **Piece slot**: catalog piece index, or `-1` (INACTIVE).
+- **Port-pair row**: `(slot_a, port_a, slot_b, port_b)` or all `-1`.
+- **Anchor**: `(start_x, start_y, start_theta_deg)` int16.
 
-| Segment | Range | Length | Purpose |
-|---------|-------|--------|---------|
-| Main Loop | [0, 100) | 100 | Piece indices (-1 = inactive, 0-9 = piece index) |
-| Switch Mask | [100, 200) | 100 | Switch type at each position (-1 = no switch) |
-| Branch Slots | [200, 216) | 16 | 4 slots × 4 genes (IN_pos, handedness, n_straights, active) |
-| Start Position | [216, 218) | 2 | start_x, start_y coordinates |
+Slot indices are stable positional references (no compaction). Port indices follow `tuple(spec.ports)` order: A=0, B=1, C=2, D=3. `INACTIVE = -1` for both inactive slots and inactive pair rows.
 
-### Legacy Chromosome Encoding
-
-- Integer array of length `total_inventory` (sum of all piece counts)
-- Values: `-1` = empty slot, `0..N-1` = piece index from `piece_index` mapping
-- Last 2 values: start_x, start_y
-
-### Forward Kinematics
-```python
-# geometry.py - compute_fk_chain()
-theta_rad = np.radians(states[i, 2])
-x_new = x + dx * cos(theta_rad) - dy * sin(theta_rad)
-y_new = y + dx * sin(theta_rad) + dy * cos(theta_rad)
-theta_new = theta + dtheta
-```
-
-### Problem Classes (problem.py)
-
-| Class | Objectives | Constraints | Use Case |
-|-------|------------|-------------|----------|
-| `TrackLayoutProblem` | 2 (utilization, speed) | 5 | Legacy bi-objective NSGA-II |
-| `MultiSegmentProblem` | 1 (pieces × 1000 - penalties) | 4 | Single-objective with multi-path |
-| `SingleObjectiveProblem` | 1 (pieces × 1000) | 5 | Single-objective piece maximization |
-
-### Objectives (2, all minimized - legacy mode)
-```python
-F[0] = -utilization  # Maximize piece usage
-F[1] = -avg_speed    # Maximize speed
-```
-
-### Constraints (5, g <= 0 feasible)
-```python
-G[0] = (closure_error - tolerance) / tolerance
-G[1] = (angle_error - tolerance) / tolerance
-G[2] = boundary_violation / diagonal
-G[3] = inventory_excess
-G[4] = loose_port_count  # Switches with unconnected port 2 (decoder-computed)
-```
-
-### Physics Model (from Locomotive_dynamics.md)
-```python
-# evaluation.py - compute_speed_limit()
-v = SF * sqrt(mu * g * R)   # SF=0.8, mu=0.30
-# Forward-backward pass for time-optimal speed profile
-```
+`N_max`/`E_max` come from `compute_port_pair_dimensions(inventory, config)` — never hardcoded.
 
 ---
 
-## Template-Based Passing Sidings
+## Objectives & Constraints
 
-Standard LEGO passing siding pattern:
+`PortPairProblem` (`src_v2/problem.py`) — bi-objective:
+
 ```
-[IN_switch] -> [approach_curve] -> [straights×N] -> [return_curve] -> [OUT_switch]
+F[0] = -utilization      # fraction of inventory in useful components (>= MIN_USEFUL_COMPONENT_SIZE)
+F[1] = -min_speed        # slowest piece in any useful component
 ```
 
-| Template | IN Switch | OUT Switch | Approach Curve | Return Curve |
-|----------|-----------|------------|----------------|--------------|
-| LEFT_SIDING | R40_SWITCH_LEFT_IN (5) | R40_SWITCH_LEFT_OUT (6) | R40_RIGHT | R40_LEFT |
-| RIGHT_SIDING | R40_SWITCH_RIGHT_IN (7) | R40_SWITCH_RIGHT_OUT (8) | R40_LEFT | R40_RIGHT |
+Constraints (`g <= 0` feasible, `T = catalog.n_pieces`):
 
-The decoder automatically:
-1. Detects IN/OUT switch pairs in the main loop
-2. Computes branch geometry using templates
-3. Enumerates all 2^N traversal paths (N = number of switch pairs)
-4. Tracks loose ports (unconnected switch port 2)
+```
+G[0..2]      per-axis closure residual / tolerance - 1
+G[3]         boundary violation / diagonal
+G[4]         collisions placeholder (0 in v0)
+G[5..4+T]    per-type inventory excess (normalized)
+G[5+T]       loose-port count / total active ports
+G[6+T]       1 - n_cycles  (requires at least one closed cycle)
+```
 
 ---
 
 ## Data Flow
 
 ```
-track_pieces.yaml -> TrackCatalog (FK tables, speed limits, routes)
-configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
-main.py -> GA/NSGA2 + MultiSegmentSampling -> Problem._evaluate()
-chromosome -> decode_chromosome() -> MultiPathLayout
-MultiPathLayout -> compute_speed_profile() -> F[], G[]
-results -> visualization -> outputs/
+data/track_pieces_v2.yaml ─► TrackCatalog (port-centric specs)
+configs/*.yaml            ─► OptimizationConfig
+                              │
+browser ── POST /api/run ──► server.py
+                              │ reload src_v2.* from disk
+                              ▼
+                          runner.run_optimization
+                              │
+                          NSGA2 + sampling/operators/repair
+                              │
+                          PortPairProblem._evaluate
+                              │ chromosome ─► decode_chromosome ─► PortGraph
+                              │ PortGraph ─► F[], G[]
+                              ▼
+                          outputs_v2/<config>/  (PNG + result JSON)
+                              │
+                          server streams logs + result back
+                              ▼
+                          web/app.jsx renders
 ```
 
 ---
 
-## Key Classes
+## Workflows
 
-### TrackCatalog (data.py)
-- `_fk_table`: (n, 3) array of [dx, dy, dtheta]
-- `_speed_table`, `_radius_table`, `_arc_length_table`
-- `get_fk(indices)`, `get_fk_route(piece_idx, route_idx)`
-- `get_radii(indices)`, `get_speed_limits(indices)`
+**Live development (preferred)**: keep `python server.py` running, edit any file under `src_v2/`, click *Run* in the browser. Server hot-reloads `src_v2.*` from disk on every request.
 
-### Layout (geometry.py)
-- `indices`: piece indices used
-- `states`: (n+1, 3) cumulative [x, y, theta]
-- `closure_error`, `angle_error`, `bounding_box`, `is_closed()`
+**CLI**:
+```bash
+python run_v2.py default                                # single config
+python run_v2.py with_switches --gen 500
+python run_v2_all_configs.py                            # all configs
+```
 
-### MultiPathLayout (topology.py)
-- `main_loop_pieces`: base piece sequence
-- `switch_pairs`: list of matched SwitchPair objects
-- `paths`: list of TraversalPath (2^N paths for N switch pairs)
-- `loose_port_count`: switches with unconnected port 2
-
-### SpeedProfile (evaluation.py)
-- `speeds`: speed at each segment
-- `avg_speed`, `lap_time`, `total_distance`
+**Architecture lint** (after `.importlinter` is rewired for `src_v2`):
+```bash
+lint-imports
+```
 
 ---
 
-## HeuristicSampling
+## Available Skills
 
-Seeds 15% of population with inventory-valid closed loop patterns:
-- Simple circles (16 R40 curves)
-- Symmetric ovals (R40 curves + straights)
-- Racetracks (4 corners + straights)
-- Ovals with passing sidings (LEFT or RIGHT switches)
+| Skill | When to invoke |
+|-------|----------------|
+| `/test` | After code changes (once `tests/` is recreated) |
+| `/review` | After modifying `src_v2/` files |
+| `/diag` | After an optimizer run completes |
+| `/quality` | Deep gate after new features or refactors |
+| `/verify-fix` | After every bug fix — enforces no-assertion-without-evidence |
+| `/optimize` | Run optimizer with config options |
 
-Validates patterns against inventory before use.
-
----
-
-## Track Piece Index Mapping
-
-| Index | Piece ID | Description |
-|-------|----------|-------------|
-| 0 | STRAIGHT_16 | 16-stud straight |
-| 1 | STRAIGHT_24 | 24-stud straight |
-| 2 | R40_LEFT | 22.5 deg left curve |
-| 3 | R40_RIGHT | 22.5 deg right curve |
-| 4 | CROSS_90 | 90 deg crossing |
-| 5 | R40_SWITCH_LEFT_IN | Left switch IN (diverges left) |
-| 6 | R40_SWITCH_LEFT_OUT | Left switch OUT (merges from left) |
-| 7 | R40_SWITCH_RIGHT_IN | Right switch IN (diverges right) |
-| 8 | R40_SWITCH_RIGHT_OUT | Right switch OUT (merges from right) |
-| 9 | DOUBLE_CROSSOVER | 4 independent switches, 48x24 studs |
+Skills run inline; agents (`config-test-runner`, `python-pymoo-reviewer`, `ga-pymoo-implementer`, etc.) only when their depth is needed.
 
 ---
 
-## Quick Reference
+## Tech Stack
 
-| Piece | Angle | Pieces/Circle | Speed Limit |
-|-------|-------|---------------|-------------|
-| R40 | 22.5 deg | 16 | 0.97 m/s |
-| Straights | 0 deg | N/A | 1.57 m/s |
-| CROSS_90 | 90 deg | N/A | 1.57 m/s |
-| Switches (straight) | 0 deg | N/A | 1.57 m/s |
-| Switches (diverge) | 22.5 deg | N/A | 0.97 m/s |
-
----
-
-## Development Workflows
-
-### Adding Track Pieces
-1. Add to `data/track_pieces.yaml` with `fk`, `physics`, `ports`, `routes` (for multi-port pieces)
-2. Add to `piece_index` mapping with next available index
-3. Update `INDEX_TO_ID` in `src/sampling.py`
-4. If switch: add template to `src/templates.py`
-5. Run `/test data` and `/test templates` to validate
-
-### Adding Objectives/Constraints
-1. Implement in `src/evaluation.py`
-2. Update `n_obj` or `n_ieq_constr` in `src/problem.py`
-3. Update `compute_objectives()` or `compute_constraints()`
-4. Run `/review src/evaluation.py` then `/test evaluation`
-
-### After Any Code Change
-1. `/test` — verify nothing broke
-2. `/review` — quick check for interface/convention issues
-3. `/quality src/<file>.py` — deep quality gate for new or refactored code (rewrites to project standards)
-
-### After Optimization Run
-1. `/diag` — parse outputs and get diagnostic report
-
-### Full Config Validation
-Use the `config-test-runner` agent — runs ALL configs with full optimization, visually inspects layouts, validates chromosomes, checks that switches→branches, crossings→crossings, all layouts closed and connected.
+- pymoo 0.6.1.6 (NSGA-II)
+- numpy ≥ 1.24, scipy ≥ 1.10
+- pyyaml ≥ 6.0, pydantic ≥ 2.0, ruamel.yaml ≥ 0.18
+- matplotlib ≥ 3.7
+- pytest ≥ 7.4, pytest-cov ≥ 4.1
+- import-linter ≥ 2.0 (dev)
+- React + Babel CDN (no Node toolchain) for `web/`
 
 ---
 
-**Status**: Implementation complete, optimization functional
-**Python**: 3.x | **pymoo**: 0.6.1.6
+**Status**: V1 removed. V2 port-pair backend + browser UI in place. Tests need re-creation.
+
+---
+
+## Plan Execution
+
+The implementation plan lives at [docs/PLAN.md](docs/PLAN.md). Single file, 2733 lines, with a Quick Index TOC at the top (status checkboxes + line-range navigation).
+
+When asked "what's next" or "implement next phase":
+1. Read `docs/PLAN.md` lines 1-100 for the TOC + Status checkbox list — first unchecked item is next.
+2. Use the "How to find a section" table (line ~25) for line-range reads of the relevant phase, **never load the whole file**.
+3. Cross-reference Golden Rules via `Grep "^\*\*Rule [0-9]+" docs/PLAN.md`. Rules 24-35 are research-backed (Part 9); earlier Rules 1-23 in Part 7.
+4. Cross-reference five hidden cross-phase couplings in Part 10 §10.3 before any phase that touches them.
+5. After completing a phase, flip its checkbox in `docs/PLAN.md`. The user does not run git commits in this workflow — do not propose them.
