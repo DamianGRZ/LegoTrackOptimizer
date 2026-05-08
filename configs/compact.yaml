@@ -1,11 +1,13 @@
 # LEGO Track Optimizer - Compact Configuration
 # Tight boundaries for space-constrained layouts
 
+train_config_path: trains/measured_consist.yaml
+
 inventory:
   # Shorter straights preferred
   STRAIGHT_16: 8
-  # R40 curves for tight turns
-  R40_LEFT: 16
+  # R40 curves for tight turns (single SKU; flip bit selects L/R)
+  R40_CURVE: 16
 
 boundary:
   # Tight space constraints
@@ -18,21 +20,13 @@ algorithm:
   name: NSGA2
   pop_size: 1000
   n_gen: 300
-  heuristic_ratio: 0.08
+  heuristic_ratio: 0.20
   crossover_prob: 0.9
   mutation_prob: 0.1
   eliminate_duplicates: true
   seed: null
 
-physics:
-  safety_factor: 0.8
-  friction_coeff: 0.30
-  gravity: 9.81
-  motor_top_speed: 1.57
-  max_accel: 3.92
-  brake_decel: 2.45
-  stud_mm: 8.0
-
-closure_tolerance: 0.5
+closure_tolerance: 4.0
 angle_tolerance: 5.0
+boundary_tolerance: 2.0
 n_workers: 1

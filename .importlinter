@@ -1,55 +1,80 @@
 [importlinter]
 root_packages =
-    src
+    src_v2
 include_external_packages = True
 
 [importlinter:contract:layers]
-name = Three-tier architecture (domain → EA → infrastructure)
+name = Three-tier architecture (algorithm → EA → domain)
 type = layers
 layers =
-    src.algorithm
-    (src.problem) : (src.operators) : (src.decoder) : (src.encoding) : (src.repair) : (src.sampling) : (src.intersection)
-    (src.train) : (src.geometry) : (src.catalog) : (src.types) : (src.templates) : (src.lego_track_models) : (src.config)
+    src_v2.runner
+    (src_v2.problem) : (src_v2.operators) : (src_v2.decoder) : (src_v2.encoding) : (src_v2.repair) : (src_v2.sampling) : (src_v2.structural_mutations) : (src_v2.intersection)
+    (src_v2.train) : (src_v2.geometry) : (src_v2.catalog) : (src_v2.types) : (src_v2.se2) : (src_v2.lego_track_models) : (src_v2.config)
 exhaustive = false
 
 [importlinter:contract:train-isolation]
 name = train/ must not import EA or infrastructure code
 type = forbidden
 source_modules =
-    src.train
+    src_v2.train
 forbidden_modules =
     pymoo
-    src.decoder
-    src.operators
-    src.problem
-    src.algorithm
-    src.visualization
-    src.sampling
-    src.repair
-    src.encoding
+    src_v2.decoder
+    src_v2.operators
+    src_v2.problem
+    src_v2.runner
+    src_v2.visualization
+    src_v2.sampling
+    src_v2.repair
+    src_v2.encoding
+    src_v2.structural_mutations
 
 [importlinter:contract:catalog-isolation]
-name = catalog/ must not import framework code
+name = catalog/ must not import framework or EA code
 type = forbidden
 source_modules =
-    src.catalog
+    src_v2.catalog
 forbidden_modules =
     pymoo
     matplotlib
-    src.decoder
-    src.operators
-    src.problem
-    src.algorithm
-    src.visualization
+    src_v2.decoder
+    src_v2.operators
+    src_v2.problem
+    src_v2.runner
+    src_v2.visualization
+    src_v2.sampling
+    src_v2.repair
+    src_v2.encoding
+    src_v2.structural_mutations
 
 [importlinter:contract:visualization-isolation]
 name = visualization/ is a consumer of domain types, not of EA internals
 type = forbidden
 source_modules =
-    src.visualization
+    src_v2.visualization
 forbidden_modules =
     pymoo
-    src.operators
-    src.sampling
-    src.repair
-    src.algorithm
+    src_v2.operators
+    src_v2.sampling
+    src_v2.repair
+    src_v2.runner
+    src_v2.structural_mutations
+
+[importlinter:contract:catalog-foundation]
+name = Catalog is a leaf domain package — no upward imports
+type = forbidden
+source_modules =
+    src_v2.catalog
+forbidden_modules =
+    src_v2.geometry
+    src_v2.train
+    src_v2.decoder
+    src_v2.encoding
+    src_v2.problem
+    src_v2.operators
+    src_v2.sampling
+    src_v2.repair
+    src_v2.intersection
+    src_v2.visualization
+    src_v2.runner
+    src_v2.structural_mutations

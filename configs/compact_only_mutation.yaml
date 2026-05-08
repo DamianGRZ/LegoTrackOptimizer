@@ -1,0 +1,34 @@
+# LEGO Track Optimizer - compact, mutation-only variant (§9.7 sanity / Rule 25 revised)
+#
+# Variant of compact.yaml with crossover disabled and mutation maxed.
+# See default_only_mutation.yaml for the rule rationale.
+
+train_config_path: trains/measured_consist.yaml
+
+inventory:
+  # Shorter straights preferred
+  STRAIGHT_16: 8
+  # R40 curves for tight turns (single SKU; flip bit selects L/R)
+  R40_CURVE: 16
+
+boundary:
+  # Tight space constraints
+  min_x: -100.0
+  max_x: 60.0
+  min_y: -100.0
+  max_y: 60.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 1000
+  n_gen: 300
+  heuristic_ratio: 0.20
+  crossover_prob: 0.0    # was 0.9 — Rule 25 revised (Holland 1975 + Barrero 2014)
+  mutation_prob: 1.0     # was 0.1 — compensate for absent crossover diversity
+  eliminate_duplicates: true
+  seed: null
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 16            # was 1 — bumped for sanity-run wall-clock

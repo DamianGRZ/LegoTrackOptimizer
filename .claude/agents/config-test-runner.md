@@ -12,7 +12,7 @@ You are a configuration testing and validation specialist for the LEGO Track Opt
 | Config | Command | Key Inventory | Expected Features |
 |--------|---------|--------------|-------------------|
 | `default` | `python main.py --config configs/default.yaml --verbose` | R40 curves + straights | Simple closed loop (circle/oval), no switches, no crossings |
-| `compact` | `python main.py --config configs/compact.yaml --verbose` | R40_LEFT only + straights | Tight left-only loop within small boundary, no switches |
+| `compact` | `python main.py --config configs/compact.yaml --verbose` | R40_CURVE only + straights | Tight loop within small boundary, no switches |
 | `with_switches` | `python main.py --config configs/with_switches.yaml --verbose` | R40 curves + straights + 4×LEFT switches + 4×RIGHT switches | Must have switch pairs, visible branch sidings, multi-path layout |
 | `with_crossing` | `python main.py --config configs/with_crossing.yaml --verbose` | R40 curves + straights + CROSS_90 ×2 | Must use crossing pieces, figure-8 or self-intersecting pattern |
 
@@ -155,15 +155,14 @@ After visual + numeric inspection, make a PASS/FAIL judgment:
 
 ## Piece Index Reference
 
-| Index | Piece ID | Type |
-|-------|----------|------|
-| 0 | STRAIGHT_16 | Straight |
-| 1 | STRAIGHT_24 | Straight |
-| 2 | R40_LEFT | Curve |
-| 3 | R40_RIGHT | Curve |
-| 4 | CROSS_90 | Crossing |
-| 5 | R40_SWITCH_LEFT_IN | Switch |
-| 6 | R40_SWITCH_LEFT_OUT | Switch |
-| 7 | R40_SWITCH_RIGHT_IN | Switch |
-| 8 | R40_SWITCH_RIGHT_OUT | Switch |
-| 9 | DOUBLE_CROSSOVER | Switch |
+| Index | Piece ID | Type | Notes |
+|-------|----------|------|-------|
+| 0 | STRAIGHT_16 | Straight | symmetric (flip is no-op) |
+| 1 | STRAIGHT_24 | Straight | symmetric (flip is no-op) |
+| 2 | R40_CURVE | Curve | symmetric — flip bit selects left vs right turn |
+| 3 | CROSS_90 | Crossing | |
+| 4 | R40_SWITCH_LEFT_IN | Switch | chiral |
+| 5 | R40_SWITCH_LEFT_OUT | Switch | chiral |
+| 6 | R40_SWITCH_RIGHT_IN | Switch | chiral |
+| 7 | R40_SWITCH_RIGHT_OUT | Switch | chiral |
+| 8 | DOUBLE_CROSSOVER | Crossing | |

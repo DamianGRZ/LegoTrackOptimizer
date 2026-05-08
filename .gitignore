@@ -40,8 +40,10 @@ htmlcov/
 
 # Project specific
 outputs/
+outputs_v2/
 docs/PDF/
 *.log
+*.zip
 
 # OS
 .DS_Store
