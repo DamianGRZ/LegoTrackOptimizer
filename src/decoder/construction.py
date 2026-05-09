@@ -528,6 +528,7 @@ def _compute_single_path(
 
     piece_sequence: List[int] = []
     route_indices: List[int] = []
+    divergent_ranges: Dict[int, Tuple[int, int]] = {}
     current_pos = 0
 
     for i, pair in enumerate(switch_pairs):
@@ -537,6 +538,8 @@ def _compute_single_path(
         for pos in range(current_pos, pair.in_position):
             piece_sequence.append(main_pieces[pos])
             route_indices.append(0)
+
+        in_seq_idx = len(piece_sequence)
 
         if choice == 0:
             # Straight-through: default route for both switches
@@ -555,6 +558,7 @@ def _compute_single_path(
             route_indices.extend([0] * len(pair.branch_pieces))
             piece_sequence.append(pair.out_switch_idx)
             route_indices.append(1)  # Merge route
+            divergent_ranges[i] = (in_seq_idx, len(piece_sequence) - 1)
 
         current_pos = pair.out_position + 1
 
@@ -574,6 +578,7 @@ def _compute_single_path(
         states=states,
         closure_error=closure_error,
         angle_error=angle_error,
+        divergent_ranges=divergent_ranges,
     )
 
 

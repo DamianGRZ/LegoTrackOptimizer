@@ -637,30 +637,25 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
                 ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
                        markeredgecolor="black", markeredgewidth=1.5, zorder=8)
 
-    # Draw only the DIVERGENT section of branch paths (not the entire loop)
-    for path_idx, path in enumerate(layout.paths[1:], 1):
-        if len(path.states) <= 1 or path.path_id >= 100:
+    # Draw the DIVERGENT section of each branched switch pair, deduplicated.
+    # Source-of-truth for the slice is path.divergent_ranges, populated by the
+    # decoder while building each path. Slicing piece_sequence/states by the
+    # comparator-inferred range was incorrect because branch and main paths
+    # have different lengths past the first IN switch and never realign.
+    for seg_idx, (pieces, states) in enumerate(layout.get_branch_segments()):
+        if len(states) <= 1:
             continue
 
-        # Find where branch path differs from main path
-        main_seq = layout.paths[0].piece_sequence
-        branch_seq = path.piece_sequence
-        min_len = min(len(main_seq), len(branch_seq))
+        for k, piece_idx in enumerate(pieces):
+            sx, sy, stheta = states[k]
+            _draw_piece(ax, piece_idx, sx, sy, stheta, draw_rails_flag=True)
 
-        # Find divergence start/end
-        div_start = None
-        div_end = None
-        for k in range(min_len):
-            if main_seq[k] != branch_seq[k]:
-                if div_start is None:
-                    div_start = max(0, k - 1)  # Include the switch before
-                div_end = min(k + 2, len(path.states))  # Include the switch after
-
-        if div_start is not None and div_end is not None:
-            bx = path.states[div_start:div_end, 0]
-            by = path.states[div_start:div_end, 1]
-            ax.plot(bx, by, color='#e74c3c', linewidth=4, linestyle='-',
-                    alpha=0.8, zorder=5, label='Branch' if path_idx == 1 else None)
+        ax.plot(
+            states[:, 0], states[:, 1],
+            color='#e74c3c', linewidth=2.5, linestyle='-',
+            alpha=0.6, zorder=5,
+            label='Branch' if seg_idx == 0 else None,
+        )
 
     # Draw boundary
     if boundary is not None:

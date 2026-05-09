@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -149,6 +149,11 @@ class TraversalPath:
     states: NDArray[np.float64] = field(default_factory=lambda: np.zeros((1, 3)))
     closure_error: float = 0.0
     angle_error: float = 0.0
+    # Map sorted-pair index (matching route_choices indexing) -> (start, end_inclusive)
+    # piece_sequence/states slice covering that pair's branch section (IN switch
+    # through OUT switch, inclusive on both ends). Populated only for pair indices
+    # where route_choices[i] == 1.
+    divergent_ranges: Dict[int, Tuple[int, int]] = field(default_factory=dict)
 
     @property
     def n_pieces(self) -> int:
@@ -228,6 +233,25 @@ class MultiPathLayout:
     def get_main_path(self) -> Optional[TraversalPath]:
         choices = tuple(0 for _ in self.switch_pairs)
         return self.get_path_by_choices(choices)
+
+    def get_branch_segments(self) -> List[Tuple[List[int], NDArray[np.float64]]]:
+        """Return one (piece_sequence_slice, states_slice) per branched switch pair.
+
+        Iterates paths to find the first occurrence of each branched pair and
+        extracts the branch geometry from that path's piece_sequence and states.
+        Each pair appears at most once (deduplicated across the 2^N enumeration).
+        """
+        seen: set = set()
+        segments: List[Tuple[List[int], NDArray[np.float64]]] = []
+        for path in self.paths:
+            for pair_idx, (start, end) in path.divergent_ranges.items():
+                if pair_idx in seen:
+                    continue
+                seen.add(pair_idx)
+                pieces = path.piece_sequence[start : end + 1]
+                states = path.states[start : end + 2]  # +2 to include exit state
+                segments.append((pieces, states))
+        return segments
 
     # Backward compatibility with Layout interface
     @property
