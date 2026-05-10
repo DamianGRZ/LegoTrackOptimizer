@@ -34,6 +34,7 @@ from src.templates import (
     compute_required_main_distance,
     get_siding_inventory_requirements,
     is_valid_siding,
+    switch_indices_for,
 )
 from src.types import MultiPathLayout, SwitchPair, TraversalPath
 
@@ -243,8 +244,17 @@ def _inject_switches(
             _release_junction_inventory(junc, tracker)
             continue
 
-        # Compute FK states at IN and OUT to validate siding geometry
+        # IN-state is the train state when entering the IN switch — same
+        # before/after injection (computed from positions 0..in_pos-1).
         in_state = _compute_state_at_position(augmented, in_pos, catalog)
+
+        # OUT-state must reflect post-injection geometry: the IN switch's
+        # body length differs from whatever piece it replaces, shifting
+        # everything downstream. Tentatively inject IN, then compute, then
+        # revert if the alignment check fails.
+        entry_switch_idx, exit_switch_idx = switch_indices_for(template)
+        orig_in = augmented[in_pos]
+        augmented[in_pos] = entry_switch_idx
         out_state = _compute_state_at_position(augmented, out_pos, catalog)
 
         if not is_valid_siding(
@@ -252,18 +262,15 @@ def _inject_switches(
             position_tolerance=config.siding_position_tolerance,
             angle_tolerance=config.siding_angle_tolerance,
         ):
+            augmented[in_pos] = orig_in  # revert tentative IN injection
             _release_junction_inventory(junc, tracker)
             continue
 
-        # Release the original pieces back to inventory (they are being replaced)
-        orig_in = augmented[in_pos]
+        # Release the replaced pieces and complete the OUT injection.
         orig_out = augmented[out_pos]
         tracker.release(orig_in)
         tracker.release(orig_out)
-
-        # Inject switches
-        augmented[in_pos] = template.in_switch_idx
-        augmented[out_pos] = template.out_switch_idx
+        augmented[out_pos] = exit_switch_idx
 
         used_positions.add(in_pos)
         used_positions.add(out_pos)
@@ -276,9 +283,9 @@ def _inject_switches(
             pair_id=pair_id,
             in_position=in_pos,
             out_position=out_pos,
-            in_switch_idx=template.in_switch_idx,
-            out_switch_idx=template.out_switch_idx,
+            handedness=template.handedness,
             branch_pieces=junc.branch_pieces,
+            merge_fk=template.merge_fk,
         ))
         pair_id += 1
 
@@ -291,15 +298,18 @@ def _find_out_position(
     required_dist: float,
     catalog: TrackCatalog,
 ) -> Optional[int]:
-    """Walk main loop FK from IN position to find OUT position.
+    """Find the main-loop position to place the OUT switch.
 
-    Accumulates X-distance along the main loop direction and returns
-    the position whose cumulative distance best matches required_dist.
+    `required_dist` is the X contribution of main pieces strictly between IN
+    and OUT (not counting the switch bodies). We walk forward from in_pos+1
+    and find the position pos where cumulative X distance from IN body END
+    to pos's BODY START best matches `required_dist`. The OUT switch then
+    replaces whatever piece was at pos.
 
     Args:
         pieces: Current main loop piece list.
         in_pos: IN switch position.
-        required_dist: Target X-distance for the siding span.
+        required_dist: Target X distance of main pieces between switches.
         catalog: Track catalog for FK lookup.
 
     Returns:
@@ -309,43 +319,39 @@ def _find_out_position(
     if in_pos + 2 >= n:
         return None
 
-    # Compute FK state at IN position to get the heading
     in_state = _compute_state_at_position(pieces, in_pos, catalog)
     base_theta = in_state[2]
 
-    cumulative_x = 0.0
+    cumulative_x = 0.0  # distance from IN body end to start of current pos
     best_pos = None
     best_error = float('inf')
 
     for pos in range(in_pos + 1, n):
+        # Check error at pos's START (before adding pos's own dx contribution)
+        error = abs(cumulative_x - required_dist)
+        if error < best_error:
+            best_error = error
+            best_pos = pos
+
         idx = pieces[pos]
         if idx < 0 or idx >= len(catalog._fk_table):
             continue
 
         fk = catalog._fk_table[idx]
         dx, dy, dtheta = fk[0], fk[1], fk[2]
-
-        # Project displacement onto the heading at IN position
         theta_rad = np.radians(base_theta)
         cos_t = np.cos(theta_rad)
         sin_t = np.sin(theta_rad)
-        # X-component in the IN-switch local frame
         local_x = dx * cos_t - dy * sin_t
         cumulative_x += abs(local_x)
-
         base_theta += dtheta
 
-        error = abs(cumulative_x - required_dist)
-        if error < best_error:
-            best_error = error
-            best_pos = pos
-
-        # Stop searching if we've passed the target by a large margin
-        if cumulative_x > required_dist * 1.5:
+        # Stop searching once we've well past the target
+        if cumulative_x > required_dist + 32.0:
             break
 
-    # Accept if within 20% of required distance
-    if best_pos is not None and best_error <= required_dist * 0.2 + 2.0:
+    # Accept if within 20% + 2 stud tolerance
+    if best_pos is not None and best_error <= max(required_dist * 0.2, 0.0) + 2.0:
         return best_pos
 
     return None
@@ -526,9 +532,18 @@ def _compute_single_path(
             angle_error=360.0,
         )
 
+    # Catalog route indices for switch pieces (per YAML route order):
+    #   0 = through    (A->B, straight main traversal)
+    #   1 = diverging  (A->C, used at the entry switch on a branch path)
+    # The exit switch on a branch path needs C->A in the train's entry-local
+    # frame for a REVERSED installation — not expressible by catalog routes.
+    # We register pair.merge_fk in `fk_overrides` for that one piece index.
+    THROUGH, DIVERGING = 0, 1
+
     piece_sequence: List[int] = []
     route_indices: List[int] = []
     divergent_ranges: Dict[int, Tuple[int, int]] = {}
+    fk_overrides: Dict[int, Tuple[float, float, float]] = {}
     current_pos = 0
 
     for i, pair in enumerate(switch_pairs):
@@ -537,38 +552,44 @@ def _compute_single_path(
         # Add main loop pieces before this switch pair
         for pos in range(current_pos, pair.in_position):
             piece_sequence.append(main_pieces[pos])
-            route_indices.append(0)
+            route_indices.append(THROUGH)
 
         in_seq_idx = len(piece_sequence)
+        # Switch piece indices were placed in main_pieces by _inject_switches.
+        entry_switch = main_pieces[pair.in_position]
+        exit_switch = main_pieces[pair.out_position]
 
         if choice == 0:
-            # Straight-through: default route for both switches
-            piece_sequence.append(pair.in_switch_idx)
-            route_indices.append(0)
+            # Straight-through both switches; main loop pieces between them.
+            piece_sequence.append(entry_switch)
+            route_indices.append(THROUGH)
             for pos in range(pair.in_position + 1, pair.out_position):
                 piece_sequence.append(main_pieces[pos])
-                route_indices.append(0)
-            piece_sequence.append(pair.out_switch_idx)
-            route_indices.append(0)
+                route_indices.append(THROUGH)
+            piece_sequence.append(exit_switch)
+            route_indices.append(THROUGH)
         else:
-            # Branch: diverge route for IN, branch pieces, merge route for OUT
-            piece_sequence.append(pair.in_switch_idx)
-            route_indices.append(1)  # Diverge route
+            # Branch: entry diverges (A->C), branch template pieces, then
+            # exit merges via reversed-install C->A (pair.merge_fk override).
+            piece_sequence.append(entry_switch)
+            route_indices.append(DIVERGING)
             piece_sequence.extend(pair.branch_pieces)
-            route_indices.extend([0] * len(pair.branch_pieces))
-            piece_sequence.append(pair.out_switch_idx)
-            route_indices.append(1)  # Merge route
-            divergent_ranges[i] = (in_seq_idx, len(piece_sequence) - 1)
+            route_indices.extend([THROUGH] * len(pair.branch_pieces))
+            piece_sequence.append(exit_switch)
+            exit_seq_idx = len(piece_sequence) - 1
+            route_indices.append(THROUGH)  # placeholder; override takes precedence
+            fk_overrides[exit_seq_idx] = pair.merge_fk
+            divergent_ranges[i] = (in_seq_idx, exit_seq_idx)
 
         current_pos = pair.out_position + 1
 
     # Remaining main loop pieces after last switch pair
     for pos in range(current_pos, len(main_pieces)):
         piece_sequence.append(main_pieces[pos])
-        route_indices.append(0)
+        route_indices.append(THROUGH)
 
     # Compute FK
-    states = _compute_path_fk(piece_sequence, route_indices, catalog)
+    states = _compute_path_fk(piece_sequence, route_indices, catalog, fk_overrides)
     closure_error, angle_error = compute_closure_metrics(states)
 
     return TraversalPath(
@@ -586,13 +607,18 @@ def _compute_path_fk(
     piece_sequence: List[int],
     route_indices: List[int],
     catalog: TrackCatalog,
+    fk_overrides: Optional[Dict[int, Tuple[float, float, float]]] = None,
 ) -> NDArray[np.float64]:
     """Compute FK states for a piece sequence with route selection.
 
     Args:
         piece_sequence: Ordered piece indices.
-        route_indices: Route index per piece (0=default, 1=alternate).
+        route_indices: Route index per piece (used unless overridden).
         catalog: Track catalog.
+        fk_overrides: Map of sequence index -> (dx, dy, dtheta). When present
+                      for an index, takes precedence over the catalog route.
+                      Used for OUT-position branch traversal where the catalog
+                      can't express reversed-installation FK (see SwitchPair).
 
     Returns:
         (n+1, 3) state array [x, y, theta].
@@ -604,8 +630,11 @@ def _compute_path_fk(
     states = np.zeros((n + 1, 3), dtype=np.float64)
 
     for i in range(n):
-        fk = catalog.get_fk_route(piece_sequence[i], route_indices[i])
-        dx, dy, dtheta = fk[0], fk[1], fk[2]
+        if fk_overrides is not None and i in fk_overrides:
+            dx, dy, dtheta = fk_overrides[i]
+        else:
+            fk = catalog.get_fk_route(piece_sequence[i], route_indices[i])
+            dx, dy, dtheta = fk[0], fk[1], fk[2]
 
         theta_rad = np.radians(states[i, 2])
         cos_t = np.cos(theta_rad)

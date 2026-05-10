@@ -28,27 +28,36 @@ class PassingSidingTemplate:
     """Defines geometry of a standard passing siding.
 
     A passing siding diverges from the main line, runs parallel for some
-    distance, then merges back. The template specifies:
-    - Which switch types (LEFT or RIGHT)
-    - Which curves to use for alignment
-    - The geometric parameters for closure computation
+    distance, then merges back. Standard configuration uses one LEFT and one
+    RIGHT switch (opposite-handed pair, confirmed by LEGO 9V track-planning
+    references). For a siding diverging to side `handedness`:
+      - The entry switch matches `handedness` (LEFT siding -> LEFT switch).
+      - The exit switch is opposite handedness, installed REVERSED on main
+        (rotated 180° around its body) so that its port C — naturally on
+        the opposite side — ends up on the same side as the siding.
+
+    Switch piece indices aren't stored here; they're constants in encoding.py
+    (SWITCH_LEFT, SWITCH_RIGHT) and derived from `handedness` at decode time.
 
     Attributes:
         name: Human-readable name for the template.
-        handedness: "LEFT" or "RIGHT" indicating diverge direction.
-        in_switch_idx: Piece index for IN switch (diverges from main).
-        out_switch_idx: Piece index for OUT switch (merges back to main).
-        approach_curve_idx: Curve after diverge to become parallel.
-        return_curve_idx: Curve before merge to approach main line angle.
-        straight_idx: Straight piece for parallel section.
-        diverge_fk: (dx, dy, dtheta) for IN switch diverge route.
-        merge_fk: (dx, dy, dtheta) for OUT switch merge route.
+        handedness: "LEFT" or "RIGHT" — which side the siding diverges to.
+        approach_curve_idx: Curve after the entry switch's diverge to bring
+                            heading back to parallel (0° on parallel section).
+        return_curve_idx: Curve before the exit switch to bend train back
+                          toward main (same handedness as approach so it
+                          bends DOWN to merge, not further away).
+        straight_idx: Straight piece for the parallel section.
+        diverge_fk: (dx, dy, dtheta) catalog A->C displacement for the
+                    entry switch on a branch path.
+        merge_fk: (dx, dy, dtheta) train-frame displacement for the exit
+                  switch's C-from-siding to A-to-main traversal with the
+                  switch installed reversed. Precomputed because reversed
+                  installation can't be expressed by natural catalog routes.
     """
 
     name: str
     handedness: str
-    in_switch_idx: int
-    out_switch_idx: int
     approach_curve_idx: int
     return_curve_idx: int
     straight_idx: int
@@ -57,51 +66,100 @@ class PassingSidingTemplate:
 
 
 # =============================================================================
-# STANDARD TEMPLATES (from track_pieces.yaml FK values)
+# STANDARD TEMPLATES
 # =============================================================================
 
-# Piece indices from track_pieces.yaml piece_index mapping
+# Piece indices from track_pieces.yaml piece_index mapping (post-refactor)
 STRAIGHT_16 = 0
 R40_LEFT = 2
 R40_RIGHT = 3
-R40_SWITCH_LEFT_IN = 5
-R40_SWITCH_LEFT_OUT = 6
-R40_SWITCH_RIGHT_IN = 7
-R40_SWITCH_RIGHT_OUT = 8
+R40_SWITCH_LEFT = 5
+R40_SWITCH_RIGHT = 6
 
-# FK values from track_pieces.yaml (32-stud switches)
-# LEFT_IN diverge: (31.0, 6.2, 22.5)  - turns left 22.5°
-# LEFT_OUT merge:  (31.0, -6.2, -22.5) - turns right 22.5° to rejoin
-# RIGHT_IN diverge: (31.0, -6.2, -22.5) - turns right 22.5°
-# RIGHT_OUT merge:  (31.0, 6.2, 22.5)  - turns left 22.5° to rejoin
 
+def _compute_reversed_out_merge_fk(
+    port_c_dx: float, port_c_dy: float, port_c_dtheta_deg: float,
+) -> Tuple[float, float, float]:
+    """Derive C->A traversal FK for an OUT switch installed REVERSED on main.
+
+    Geometry: the OUT switch is rotated 180° around its body center in the
+    main loop. Its natural port A (at switch-local (0,0)) ends up at the
+    forward end of the switch in main frame; port C (naturally at port_c_dx,
+    port_c_dy) ends up on the side facing the siding. The train arrives at
+    port C from the siding and exits at port A onto main.
+
+    In MAIN frame, the displacement from port C to port A equals
+    (port_c_dx, port_c_dy) — both positive in this representation because
+    the 180° rotation flips port C's offset to the OPPOSITE side of port A,
+    and we measure C->A as (port_A - port_C) where port A's flipped position
+    minus port C's flipped position works out to (port_c_dx, port_c_dy).
+
+    The train arrives heading port_c_dtheta_deg in main (anti-parallel to
+    port C's natural exit direction after reversal), and exits heading 0°
+    (parallel to main). Result is expressed in the train's entry-local frame.
+    """
+    # Displacement port C -> port A in MAIN frame (after reversal):
+    dx_world = port_c_dx
+    dy_world = port_c_dy
+    # Train enters port C heading port_c_dtheta_deg in main:
+    entry_theta = port_c_dtheta_deg
+    c, s = np.cos(np.radians(entry_theta)), np.sin(np.radians(entry_theta))
+    # Express world displacement in train entry-local frame (rotate by -entry):
+    dx_local = dx_world * c + dy_world * s
+    dy_local = -dx_world * s + dy_world * c
+    # Train heading change: from entry_theta to 0 = -entry_theta
+    dtheta_local = -port_c_dtheta_deg
+    return (float(dx_local), float(dy_local), float(dtheta_local))
+
+
+# Catalog port C values per handedness (must match data/track_pieces_v2.yaml)
+_LEFT_C_DX, _LEFT_C_DY, _LEFT_C_DTHETA_DEG = 32.75, 13.0, 22.5
+_RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG = 32.75, -13.0, -22.5
+
+
+# A LEFT siding (above main) uses LEFT_IN + RIGHT_OUT (reversed). The train
+# exiting LEFT_IN's port C is heading +22.5°; it runs parallel above main;
+# returns heading -22.5° to enter the reversed RIGHT_OUT's port C. The OUT
+# switch's port C in main frame is at +y (same side as siding) because of the
+# reversal; the merge_fk is computed from RIGHT switch's natural port C
+# (-13 dy in switch frame, flipped by the reversal).
 LEFT_SIDING = PassingSidingTemplate(
     name="left_passing_siding",
     handedness="LEFT",
-    in_switch_idx=R40_SWITCH_LEFT_IN,
-    out_switch_idx=R40_SWITCH_LEFT_OUT,
-    # After LEFT_IN diverge (heading +22.5°), use R40_RIGHT to go parallel
     approach_curve_idx=R40_RIGHT,
-    # Before LEFT_OUT merge, use R40_LEFT to approach at +22.5°
-    return_curve_idx=R40_LEFT,
+    return_curve_idx=R40_RIGHT,
     straight_idx=STRAIGHT_16,
-    diverge_fk=(31.0, 6.2, 22.5),
-    merge_fk=(31.0, -6.2, -22.5),
+    diverge_fk=(_LEFT_C_DX, _LEFT_C_DY, _LEFT_C_DTHETA_DEG),
+    merge_fk=_compute_reversed_out_merge_fk(
+        _RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG,
+    ),
 )
 
+# Mirror: RIGHT siding (below main).
 RIGHT_SIDING = PassingSidingTemplate(
     name="right_passing_siding",
     handedness="RIGHT",
-    in_switch_idx=R40_SWITCH_RIGHT_IN,
-    out_switch_idx=R40_SWITCH_RIGHT_OUT,
-    # After RIGHT_IN diverge (heading -22.5°), use R40_LEFT to go parallel
     approach_curve_idx=R40_LEFT,
-    # Before RIGHT_OUT merge, use R40_RIGHT to approach at -22.5°
-    return_curve_idx=R40_RIGHT,
+    return_curve_idx=R40_LEFT,
     straight_idx=STRAIGHT_16,
-    diverge_fk=(31.0, -6.2, -22.5),
-    merge_fk=(31.0, 6.2, 22.5),
+    diverge_fk=(_RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG),
+    merge_fk=_compute_reversed_out_merge_fk(
+        _LEFT_C_DX, _LEFT_C_DY, _LEFT_C_DTHETA_DEG,
+    ),
 )
+
+
+def switch_indices_for(template: PassingSidingTemplate) -> Tuple[int, int]:
+    """Return (entry_switch_idx, exit_switch_idx) given a template.
+
+    The entry switch matches the siding's handedness; the exit switch is
+    the opposite handedness (installed reversed). For a LEFT siding this
+    yields (SWITCH_LEFT, SWITCH_RIGHT); for RIGHT it yields (SWITCH_RIGHT,
+    SWITCH_LEFT).
+    """
+    if template.handedness == "LEFT":
+        return (R40_SWITCH_LEFT, R40_SWITCH_RIGHT)
+    return (R40_SWITCH_RIGHT, R40_SWITCH_LEFT)
 
 # Template lookup by handedness index (0=LEFT, 1=RIGHT)
 TEMPLATES = {
@@ -149,15 +207,13 @@ R40_LEFT_FK = (15.307, 3.045, 22.5)
 R40_RIGHT_FK = (15.307, -3.045, -22.5)
 STRAIGHT_16_FK = (16.0, 0.0, 0.0)
 
-# FK lookup by piece index
+# FK lookup by piece index (default route — switches use through-route here)
 PIECE_FK = {
     STRAIGHT_16: STRAIGHT_16_FK,
     R40_LEFT: R40_LEFT_FK,
     R40_RIGHT: R40_RIGHT_FK,
-    R40_SWITCH_LEFT_IN: (32.0, 0.0, 0.0),  # Default (straight-through, 32-stud switch)
-    R40_SWITCH_LEFT_OUT: (32.0, 0.0, 0.0),
-    R40_SWITCH_RIGHT_IN: (32.0, 0.0, 0.0),
-    R40_SWITCH_RIGHT_OUT: (32.0, 0.0, 0.0),
+    R40_SWITCH_LEFT: (32.0, 0.0, 0.0),
+    R40_SWITCH_RIGHT: (32.0, 0.0, 0.0),
 }
 
 
@@ -235,29 +291,26 @@ def compute_branch_endpoint(
 def compute_required_main_distance(
     template: PassingSidingTemplate,
     n_straights: int,
+    body_length: float = 32.0,
+    out_switch_port_c_dx: float = 32.75,
 ) -> float:
-    """Compute main loop X-distance the siding spans.
+    """X contribution of main-loop pieces strictly between IN and OUT switches
+    (NOT counting the two switch bodies themselves) needed so that main and
+    branch paths through this siding traverse the same X distance.
 
-    This is used to find where the OUT switch should be placed.
-    The branch runs parallel to the main line, so the X-distance
-    is approximately the sum of X-components.
-
-    Args:
-        template: Passing siding template.
-        n_straights: Number of straights in parallel section.
-
-    Returns:
-        Approximate X-distance along main loop axis (studs).
+    Derivation in IN-entry frame:
+      branch_end_x = compute_branch_endpoint(...)[0] = X just before OUT.
+      merge_fk takes the train from branch_end through the reversed-install
+      OUT switch, ending at OUT body END (in main frame). The world-frame X
+      delta of that traversal works out to +port_c_dx, so:
+          OUT_body_END = branch_end_x + port_c_dx
+          OUT_body_start = OUT_body_END - body_length
+          main_pieces_x = OUT_body_start - body_length    (IN body end = body_length)
+                        = branch_end_x + port_c_dx - 2 * body_length
     """
-    # Start at origin, compute branch endpoint
     start_state = (0.0, 0.0, 0.0)
-    end_state = compute_branch_endpoint(start_state, template, n_straights)
-
-    # X-distance is the total forward travel
-    # For parallel siding, this equals the main loop distance needed
-    total_x = end_state[0]
-
-    return total_x
+    branch_end = compute_branch_endpoint(start_state, template, n_straights)
+    return float(branch_end[0] + out_switch_port_c_dx - 2.0 * body_length)
 
 
 def compute_out_switch_alignment_error(
@@ -281,41 +334,31 @@ def compute_out_switch_alignment_error(
     Returns:
         (position_error, angle_error) tuple in (studs, degrees).
     """
-    # Compute where branch actually ends
+    # Strategy: simulate the full branch traversal, including the reversed-
+    # install OUT switch via template.merge_fk, and compare the train's exit
+    # state to where the OUT switch's main-side exit (port A in main frame,
+    # body_length forward of out_switch_state) actually sits.
     branch_end = compute_branch_endpoint(in_switch_state, template, n_straights)
+    after_merge = apply_fk(branch_end, template.merge_fk)
 
-    # Expected: OUT switch merge entry should receive the branch
-    # The merge FK (15.3073, ±3.0448, ±22.5) is applied FROM port 2 TO port 1
-    # So port 2 is at (16 - 15.3073, ±3.0448) = (0.6927, ±3.0448) in switch local frame
-
-    # Transform OUT switch port 2 to world frame
     out_x, out_y, out_theta = out_switch_state
+    body_length = 32.0
+    out_theta_rad = np.radians(out_theta)
+    target_x = out_x + body_length * np.cos(out_theta_rad)
+    target_y = out_y + body_length * np.sin(out_theta_rad)
+    target_theta = out_theta  # exit on main heading
 
-    # Port 2 position relative to switch entry (from track_pieces.yaml, 32-stud switches)
-    # LEFT_OUT: port 2 at (1.0, 6.2) heading 22.5°
-    # RIGHT_OUT: port 2 at (1.0, -6.2) heading -22.5°
-    if template.handedness == "LEFT":
-        port2_local = (1.0, 6.2, 22.5)
-    else:
-        port2_local = (1.0, -6.2, -22.5)
-
-    # Transform to world coordinates
-    port2_x = out_x + port2_local[0] * np.cos(np.radians(out_theta)) - port2_local[1] * np.sin(np.radians(out_theta))
-    port2_y = out_y + port2_local[0] * np.sin(np.radians(out_theta)) + port2_local[1] * np.cos(np.radians(out_theta))
-    port2_theta = out_theta + port2_local[2]
-
-    # Compute errors
-    position_error = np.sqrt((branch_end[0] - port2_x) ** 2 + (branch_end[1] - port2_y) ** 2)
-
-    # Angle error (normalize to [-180, 180])
-    angle_diff = branch_end[2] - port2_theta
+    position_error = float(np.sqrt(
+        (after_merge[0] - target_x) ** 2 + (after_merge[1] - target_y) ** 2
+    ))
+    angle_diff = after_merge[2] - target_theta
     while angle_diff > 180:
         angle_diff -= 360
     while angle_diff < -180:
         angle_diff += 360
-    angle_error = abs(angle_diff)
+    angle_error = float(abs(angle_diff))
 
-    return (float(position_error), float(angle_error))
+    return (position_error, angle_error)
 
 
 def is_valid_siding(
@@ -365,11 +408,11 @@ def get_siding_inventory_requirements(
     """
     requirements: dict[int, int] = {}
 
-    # Switches
-    requirements[template.in_switch_idx] = requirements.get(template.in_switch_idx, 0) + 1
-    requirements[template.out_switch_idx] = requirements.get(template.out_switch_idx, 0) + 1
+    # Every passing siding consumes 1 LEFT + 1 RIGHT switch (opposite-handed).
+    requirements[R40_SWITCH_LEFT] = requirements.get(R40_SWITCH_LEFT, 0) + 1
+    requirements[R40_SWITCH_RIGHT] = requirements.get(R40_SWITCH_RIGHT, 0) + 1
 
-    # Curves
+    # Curves (approach + return are same handedness, so two of the same curve type)
     requirements[template.approach_curve_idx] = requirements.get(template.approach_curve_idx, 0) + 1
     requirements[template.return_curve_idx] = requirements.get(template.return_curve_idx, 0) + 1
 

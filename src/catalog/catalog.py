@@ -25,11 +25,9 @@ _LEGACY_PIECE_INDEX: Dict[str, int] = {
     "R40_LEFT": 2,
     "R40_RIGHT": 3,
     "CROSS_90": 4,
-    "R40_SWITCH_LEFT_IN": 5,
-    "R40_SWITCH_LEFT_OUT": 6,
-    "R40_SWITCH_RIGHT_IN": 7,
-    "R40_SWITCH_RIGHT_OUT": 8,
-    "DOUBLE_CROSSOVER": 9,
+    "R40_SWITCH_LEFT": 5,
+    "R40_SWITCH_RIGHT": 6,
+    "DOUBLE_CROSSOVER": 7,
 }
 
 # V2 kind -> legacy piece_type string used by PIECE_TYPE_TO_CLASS.
@@ -60,10 +58,8 @@ _V2_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
 # Per-route physics overrides for multi-route pieces, used to reconstruct the
 # legacy routes_data list in v1-parity form.
 _V2_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
-    "R40_SWITCH_LEFT_IN":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
-    "R40_SWITCH_LEFT_OUT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
-    "R40_SWITCH_RIGHT_IN": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
-    "R40_SWITCH_RIGHT_OUT":{"through": (None, 1.57), "diverging": (320.0, 0.97)},
+    "R40_SWITCH_LEFT":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+    "R40_SWITCH_RIGHT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
     "CROSS_90": {
         "horizontal": (None, 1.57),
         "vertical":   (None, 1.57),

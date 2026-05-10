@@ -97,12 +97,11 @@ class TestV2YamlCurves:
 
 class TestV2YamlSwitches:
     @pytest.mark.parametrize("piece_id,port_c_dx,port_c_dy,port_c_dtheta", [
-        ("R40_SWITCH_LEFT_IN",   31.0,  6.2,  0.39269908),
-        ("R40_SWITCH_LEFT_OUT",   1.0,  6.2,  0.39269908),
-        ("R40_SWITCH_RIGHT_IN",  31.0, -6.2, -0.39269908),
-        ("R40_SWITCH_RIGHT_OUT",  1.0, -6.2, -0.39269908),
+        # Post-refactor: 2 switch types, port C at canonical (dx=32.75, dy=±13)
+        ("R40_SWITCH_LEFT",  32.75,  13.0,  0.39269908),
+        ("R40_SWITCH_RIGHT", 32.75, -13.0, -0.39269908),
     ])
-    def test_switch_port_c_matches_legacy_fk(self, piece_id, port_c_dx, port_c_dy, port_c_dtheta):
+    def test_switch_port_c_matches_canonical_geometry(self, piece_id, port_c_dx, port_c_dy, port_c_dtheta):
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         sw = cat.by_id[piece_id]
@@ -133,15 +132,14 @@ class TestV2YamlCrossings:
         assert set(x.routes.keys()) == {"track1_through", "track2_through",
                                          "cross_1_to_2", "cross_2_to_1"}
 
-    def test_v2_catalog_has_all_10_pieces(self):
-        """Every piece from v1 track_pieces.yaml appears in v2."""
+    def test_v2_catalog_has_all_8_pieces(self):
+        """Post-refactor: 8 piece types (4 switch entries collapsed to 2)."""
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         expected = {
             "STRAIGHT_16", "STRAIGHT_24",
             "R40_LEFT", "R40_RIGHT",
-            "R40_SWITCH_LEFT_IN", "R40_SWITCH_LEFT_OUT",
-            "R40_SWITCH_RIGHT_IN", "R40_SWITCH_RIGHT_OUT",
+            "R40_SWITCH_LEFT", "R40_SWITCH_RIGHT",
             "CROSS_90", "DOUBLE_CROSSOVER",
         }
         assert set(cat.by_id.keys()) == expected

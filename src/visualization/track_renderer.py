@@ -29,21 +29,18 @@ from src.lego_track_models import (
     offset_path,
 )
 
-# Color palette for piece types (index-based)
+# Color palette for piece types (index-based, post-refactor)
 # Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_LEFT, 3=R40_RIGHT,
-#          4=CROSS_90, 5=SW_LEFT_IN, 6=SW_LEFT_OUT, 7=SW_RIGHT_IN, 8=SW_RIGHT_OUT,
-#          9=DOUBLE_CROSSOVER
+#          4=CROSS_90, 5=SWITCH_LEFT, 6=SWITCH_RIGHT, 7=DOUBLE_CROSSOVER
 PIECE_COLORS = {
     0: "#3498db",  # STRAIGHT_16 - Blue
     1: "#2980b9",  # STRAIGHT_24 - Darker Blue
     2: "#27ae60",  # R40_LEFT - Green
     3: "#16a085",  # R40_RIGHT - Teal
     4: "#9b59b6",  # CROSS_90 - Purple
-    5: "#e74c3c",  # SW_LEFT_IN - Red
-    6: "#c0392b",  # SW_LEFT_OUT - Dark Red
-    7: "#e67e22",  # SW_RIGHT_IN - Orange
-    8: "#d35400",  # SW_RIGHT_OUT - Dark Orange
-    9: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
+    5: "#e74c3c",  # SWITCH_LEFT - Red
+    6: "#e67e22",  # SWITCH_RIGHT - Orange
+    7: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
 }
 
 # Fallback colors for unknown pieces
@@ -52,9 +49,9 @@ FALLBACK_COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
-# Switch piece indices
-SWITCH_INDICES = {5, 6, 7, 8}
-CROSSING_INDICES = {4, 9}
+# Switch piece indices (post-refactor)
+SWITCH_INDICES = {5, 6}
+CROSSING_INDICES = {4, 7}
 
 # Shortened names for legend
 PIECE_SHORT_NAMES = {
@@ -63,11 +60,9 @@ PIECE_SHORT_NAMES = {
     2: "R40_LEFT",
     3: "R40_RIGHT",
     4: "CROSS_90",
-    5: "SW_LEFT_IN",
-    6: "SW_LEFT_OUT",
-    7: "SW_RIGHT_IN",
-    8: "SW_RIGHT_OUT",
-    9: "DBL_CROSSOVER",
+    5: "SWITCH_LEFT",
+    6: "SWITCH_RIGHT",
+    7: "DBL_CROSSOVER",
 }
 
 
@@ -77,11 +72,9 @@ PIECE_IDX_STRAIGHT_24 = 1
 PIECE_IDX_R40_LEFT = 2
 PIECE_IDX_R40_RIGHT = 3
 PIECE_IDX_CROSS_90 = 4
-PIECE_IDX_SW_LEFT_IN = 5
-PIECE_IDX_SW_LEFT_OUT = 6
-PIECE_IDX_SW_RIGHT_IN = 7
-PIECE_IDX_SW_RIGHT_OUT = 8
-PIECE_IDX_DBL_CROSSOVER = 9
+PIECE_IDX_SWITCH_LEFT = 5
+PIECE_IDX_SWITCH_RIGHT = 6
+PIECE_IDX_DBL_CROSSOVER = 7
 
 # Piece lengths for straight pieces
 STRAIGHT_LENGTHS = {
@@ -363,10 +356,10 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True):
         _draw_curve_piece(ax, x0, y0, theta0, R40, CURVE_ANGLE, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_R40_RIGHT:
         _draw_curve_piece(ax, x0, y0, theta0, R40, -CURVE_ANGLE, color, draw_rails_flag)
-    elif piece_idx in (PIECE_IDX_SW_LEFT_IN, PIECE_IDX_SW_LEFT_OUT):
+    elif piece_idx == PIECE_IDX_SWITCH_LEFT:
         color_branch = PIECE_COLORS.get(piece_idx, color)
         _draw_switch_piece(ax, x0, y0, theta0, 'left', color, color_branch, draw_rails_flag)
-    elif piece_idx in (PIECE_IDX_SW_RIGHT_IN, PIECE_IDX_SW_RIGHT_OUT):
+    elif piece_idx == PIECE_IDX_SWITCH_RIGHT:
         color_branch = PIECE_COLORS.get(piece_idx, color)
         _draw_switch_piece(ax, x0, y0, theta0, 'right', color, color_branch, draw_rails_flag)
     elif piece_idx == PIECE_IDX_CROSS_90:
@@ -627,11 +620,13 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
     ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
 
-    # Mark switch positions on main path (from switch pairs, not raw scan)
+    # Mark switch positions on main path. The pair holds two opposite-handed
+    # switches; read the actual piece index from the augmented main_loop_pieces.
     for sp in layout.switch_pairs:
-        for pos, idx in [(sp.in_position, sp.in_switch_idx), (sp.out_position, sp.out_switch_idx)]:
-            if pos < len(x) - 1:
-                sw_color = get_piece_color(idx)
+        for pos in (sp.in_position, sp.out_position):
+            if pos < len(x) - 1 and pos < len(layout.main_loop_pieces):
+                sw_idx = layout.main_loop_pieces[pos]
+                sw_color = get_piece_color(sw_idx)
                 mid_x = (x[pos] + x[pos + 1]) / 2
                 mid_y = (y[pos] + y[pos + 1]) / 2
                 ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
@@ -655,6 +650,19 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
             color='#e74c3c', linewidth=2.5, linestyle='-',
             alpha=0.6, zorder=5,
             label='Branch' if seg_idx == 0 else None,
+        )
+
+    # Overlay post-merge FK drift as a diagnostic indicator. These points
+    # represent physically real pieces (already drawn solid above) whose FK
+    # positions drifted because a branch's merge route did not align with the
+    # main loop. Drawn dotted gray to distinguish from real geometry.
+    drift_segments = layout.get_post_merge_drift()
+    for seg_idx, (_, drift_states) in enumerate(drift_segments):
+        ax.plot(
+            drift_states[:, 0], drift_states[:, 1],
+            color='#888888', linewidth=1.0, linestyle=':',
+            alpha=0.6, zorder=3,
+            label='FK drift (failed merge)' if seg_idx == 0 else None,
         )
 
     # Draw boundary
@@ -699,23 +707,43 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
         if piece_idx in SWITCH_INDICES:
             switch_positions.append(i)
 
-    # Plot each piece with proper geometry
-    for i in range(len(path.piece_sequence)):
+    # Drift boundary: pieces at index >= drift_start are at drifted FK positions
+    # (their physical positions are reflected in path 0 / branch templates).
+    # Drawn as a dotted gray polyline rather than solid pieces, to distinguish
+    # diagnostic FK trajectory from real geometry.
+    drift_start = (
+        min(end for _, end in path.divergent_ranges.values()) + 1
+        if path.divergent_ranges else len(path.piece_sequence)
+    )
+
+    # Plot solid pieces only up to the drift boundary
+    for i in range(min(drift_start, len(path.piece_sequence))):
         if i < len(x) - 1:
             piece_idx = path.piece_sequence[i]
             _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
 
-    # Mark switch positions with diamond markers
-    for sw_pos in switch_positions:
-        if sw_pos < len(x) - 1:
-            piece_idx = path.piece_sequence[sw_pos]
-            sw_color = get_piece_color(piece_idx)
-            mid_x = (x[sw_pos] + x[sw_pos + 1]) / 2
-            mid_y = (y[sw_pos] + y[sw_pos + 1]) / 2
-            ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=8,
-                   markeredgecolor="black", markeredgewidth=1, zorder=6)
+    # Overlay drift trajectory (if any) as a dotted gray polyline
+    if drift_start < len(x) - 1:
+        ax.plot(
+            x[drift_start:], y[drift_start:],
+            color='#888888', linewidth=1.0, linestyle=':',
+            alpha=0.6, zorder=3,
+            label='FK drift (failed merge)',
+        )
 
-    # Mark start/end
+    # Mark switch positions with diamond markers — only for non-drifted switches
+    for sw_pos in switch_positions:
+        if sw_pos >= drift_start or sw_pos >= len(x) - 1:
+            continue
+        piece_idx = path.piece_sequence[sw_pos]
+        sw_color = get_piece_color(piece_idx)
+        mid_x = (x[sw_pos] + x[sw_pos + 1]) / 2
+        mid_y = (y[sw_pos] + y[sw_pos + 1]) / 2
+        ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=8,
+               markeredgecolor="black", markeredgewidth=1, zorder=6)
+
+    # Mark start/end (end may be a drifted position — that's intentional, it
+    # visualizes closure-failure magnitude).
     ax.plot(x[0], y[0], "gs", markersize=8, zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=8, zorder=10)
 

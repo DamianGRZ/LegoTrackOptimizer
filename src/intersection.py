@@ -8,14 +8,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-from .encoding import (
-    SWITCH_LEFT_IN,
-    SWITCH_LEFT_OUT,
-    SWITCH_RIGHT_IN,
-    SWITCH_RIGHT_OUT,
-)
-
-
 CROSS_90_INDEX = 4
 
 

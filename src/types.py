@@ -109,28 +109,35 @@ class PieceTopology:
 
 @dataclass
 class SwitchPair:
-    """Defines a paired IN/OUT switch creating a branch point.
+    """A passing siding occupying two positions in the main loop.
 
-    A switch pair creates two possible routes:
-    1. Straight-through: main loop path (both switches use default route)
-    2. Branch: diverge at IN, follow branch pieces, merge at OUT
+    The two switches are opposite-handed (one LEFT, one RIGHT). The entry
+    switch matches `handedness`; the exit switch is opposite handedness and
+    is installed REVERSED on the main loop. The decoder derives concrete
+    switch piece indices from `handedness` when building the FK chain.
+
+    Two route modes per pair:
+      - Through: main loop traversal — both switches as 32-stud straights.
+      - Branch: enter siding via the entry switch's diverge route, follow
+        `branch_pieces`, return via the exit switch's reversed merge.
     """
 
     pair_id: int
-    in_position: int
-    out_position: int
-    in_switch_idx: int = -1
-    out_switch_idx: int = -1
+    in_position: int                # main-loop position of the entry switch
+    out_position: int               # main-loop position of the exit switch
+    handedness: str = "LEFT"        # "LEFT" or "RIGHT" — siding diverges to this side
     branch_pieces: List[int] = field(default_factory=list)
     absorbed_positions: List[int] = field(default_factory=list)
+    # Train-frame FK applied at the exit (reversed-install) switch on a branch
+    # path. Populated from PassingSidingTemplate.merge_fk at decode time
+    # because catalog routes can't express reversed-installation traversal.
+    merge_fk: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     def is_valid(self) -> bool:
-        """Check if switch pair is properly defined."""
         return (
             self.in_position >= 0
             and self.out_position > self.in_position
-            and self.in_switch_idx >= 0
-            and self.out_switch_idx >= 0
+            and self.handedness in ("LEFT", "RIGHT")
         )
 
     @property
@@ -216,10 +223,10 @@ class MultiPathLayout:
 
     @property
     def total_pieces(self) -> int:
+        # main_loop_pieces already includes both switches (injected at
+        # in_position and out_position by the decoder). Just add branch pieces.
         all_pieces = set(self.main_loop_pieces)
         for sp in self.switch_pairs:
-            all_pieces.add(sp.in_switch_idx)
-            all_pieces.add(sp.out_switch_idx)
             all_pieces.update(sp.branch_pieces)
         all_pieces.discard(-1)
         return len(all_pieces)
@@ -252,6 +259,26 @@ class MultiPathLayout:
                 states = path.states[start : end + 2]  # +2 to include exit state
                 segments.append((pieces, states))
         return segments
+
+    def get_post_merge_drift(self) -> List[Tuple[int, NDArray[np.float64]]]:
+        """Return (path_idx, drift_states) for each path with FK drift.
+
+        Drift starts after the FIRST branched OUT switch in the path's
+        sequence. Pieces past that point are physically real (drawn solid in
+        the main path / branch templates), but their FK positions here have
+        drifted because the branch's merge route did not align with the main
+        loop heading. Renderers should display this as a diagnostic indicator
+        (dotted line), not as solid track.
+        """
+        drifts: List[Tuple[int, NDArray[np.float64]]] = []
+        for path_idx, path in enumerate(self.paths):
+            if not path.divergent_ranges:
+                continue
+            first_merge_end = min(end for _, end in path.divergent_ranges.values())
+            drift_states = path.states[first_merge_end + 1 :]
+            if len(drift_states) >= 2:
+                drifts.append((path_idx, drift_states))
+        return drifts
 
     # Backward compatibility with Layout interface
     @property
