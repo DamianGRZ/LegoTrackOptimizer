@@ -1,18 +1,15 @@
 # LEGO Track Optimizer - Configuration with 90-Degree Crossing
 # Includes one CROSS_90 for figure-8 and self-intersecting layouts
 
-<<<<<<< Updated upstream
-train_config_path: trains/measured_consist.yaml
-=======
 train_config_path: trains/default.yaml
->>>>>>> Stashed changes
 
 inventory:
   # Straights
   # STRAIGHT_24: 8
   STRAIGHT_16: 40
-  # R40 curves: single SKU; flip bit selects L/R per placement.
-  R40_CURVE: 40
+  # R40 curves (post-refactor: separate LEFT/RIGHT piece types)
+  R40_LEFT: 20
+  R40_RIGHT: 20
   # 90-degree crossing (allows track to cross itself)
   CROSS_90: 20
 
