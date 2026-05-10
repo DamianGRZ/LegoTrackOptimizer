@@ -79,7 +79,7 @@ class TestIntegerSampling:
         )
 
         def max_pieces(pats):
-            return max(len(pieces) for pieces, _ in pats)
+            return max(len(p[0]) for p in pats)
 
         assert max_pieces(pats_large) > max_pieces(pats_small)
 
@@ -89,7 +89,7 @@ class TestIntegerSampling:
             np.random.default_rng()
         )
         assert patterns, "expected non-empty heuristic patterns for switches_config"
-        with_switch = sum(1 for _, junctions in patterns if junctions)
+        with_switch = sum(1 for p in patterns if p[1])
         assert with_switch / len(patterns) >= 0.33
 
     def test_two_siding_pattern_present_when_junctions_ge_2(
@@ -100,9 +100,9 @@ class TestIntegerSampling:
             np.random.default_rng()
         )
         assert any(
-            junctions is not None
-            and sum(1 for junc in junctions if junc[0] == 1) == 2
-            for _, junctions in patterns
+            p[1] is not None
+            and sum(1 for junc in p[1] if junc[0] == 1) == 2
+            for p in patterns
         )
 
     def test_seeds_respect_inventory(self, catalog, switches_config):
@@ -111,7 +111,8 @@ class TestIntegerSampling:
         patterns = sampling._get_heuristic_patterns(np.random.default_rng())
         inv = sampling.inventory_by_index
 
-        for pieces, _ in patterns:
+        for pat in patterns:
+            pieces = pat[0]
             counts: dict[int, int] = {}
             for p in pieces:
                 counts[p] = counts.get(p, 0) + 1
@@ -119,3 +120,64 @@ class TestIntegerSampling:
                 assert c <= inv.get(idx, 0), (
                     f"variant overuses piece {idx}: {c} > {inv.get(idx, 0)}"
                 )
+
+
+class TestCrossJunctionSeeder:
+    """Soft-seed cross-junction patterns: descriptor present, geometry not yet
+    guaranteed to validate. The decoder skips invalid descriptors silently;
+    the active flag enters the gene pool so crossover/mutation can carry it
+    into individuals whose evolved geometry happens to fit."""
+
+    def _config_with_cross(self, tmp_path) -> OptimizationConfig:
+        """Build a config with switches + spurs + CROSS_90 inventory and a
+        boundary large enough to host the seeded oval."""
+        from src.config import AlgorithmConfig
+        cfg = OptimizationConfig(
+            train_config_path="trains/default.yaml",
+            inventory={
+                "STRAIGHT_16": 80,
+                "R40_LEFT": 40,
+                "R40_RIGHT": 40,
+                "R40_SWITCH_LEFT": 4,
+                "R40_SWITCH_RIGHT": 4,
+                "CROSS_90": 4,
+            },
+            boundary=BoundaryConfig(min_x=-200, max_x=200, min_y=-200, max_y=200),
+            algorithm=AlgorithmConfig(name="NSGA2", pop_size=20, n_gen=5),
+        )
+        return cfg
+
+    def test_cross_junction_pattern_emitted(self, catalog, tmp_path):
+        cfg = self._config_with_cross(tmp_path)
+        sampling = IntegerSampling(catalog, cfg)
+        patterns = sampling._get_heuristic_patterns(np.random.default_rng())
+
+        with_cross = [p for p in patterns if p[2]]
+        assert with_cross, "expected at least one pattern with cross-junction descriptors"
+
+        # Each cross-junction pattern carries an ACTIVE descriptor.
+        for pat in with_cross:
+            for desc in pat[2]:
+                active, position_w, handedness = desc
+                assert active == 1
+                assert handedness in (0, 1)
+                assert 0 <= position_w < len(pat[0])
+
+    def test_cross_junction_not_emitted_without_inventory(self, catalog):
+        """No cross-junction patterns when CROSS_90 (or switches) absent."""
+        from src.config import AlgorithmConfig
+        cfg = OptimizationConfig(
+            train_config_path="trains/default.yaml",
+            inventory={
+                "STRAIGHT_16": 80,
+                "R40_LEFT": 40,
+                "R40_RIGHT": 40,
+                # No switches, no CROSS_90.
+            },
+            boundary=BoundaryConfig(min_x=-200, max_x=200, min_y=-200, max_y=200),
+            algorithm=AlgorithmConfig(name="NSGA2", pop_size=20, n_gen=5),
+        )
+        sampling = IntegerSampling(catalog, cfg)
+        patterns = sampling._get_heuristic_patterns(np.random.default_rng())
+        with_cross = [p for p in patterns if p[2]]
+        assert with_cross == []

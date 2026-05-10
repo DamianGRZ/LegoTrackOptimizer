@@ -147,6 +147,38 @@ class SwitchPair:
 
 
 @dataclass
+class CrossJunction:
+    """4-switch + CROSS_90 junction in the layout.
+
+    The 4 switches sit on the main loop (replacing pieces at four specific
+    positions). The CROSS_90 + 4 R40 spurs are an internal sub-structure.
+
+    Per junction, train traversal at the junction has 3 modes:
+      0: bypass — train uses each switch's port B, stays on main loop
+      1: cross_we — train enters via switch_for_W, traverses cross W↔E,
+                     exits via switch_for_E (or reverse direction)
+      2: cross_ns — train enters via switch_for_N, traverses cross N↔S,
+                     exits via switch_for_S (or reverse direction)
+    """
+
+    junction_id: int
+    handedness: str  # "LEFT" or "RIGHT" — handedness of all 4 switches
+    # Main-loop positions where the 4 switches are injected, keyed by which
+    # cross port they connect to. Each position is an index in main_loop_pieces.
+    switch_positions: Dict[str, int] = field(default_factory=dict)  # "W"/"E"/"N"/"S" -> position
+    # Cross center in main frame (computed from switch positions during inject)
+    cross_center: Tuple[float, float] = (0.0, 0.0)
+    cross_idx: int = 4  # CROSS_90 piece index
+
+    def is_valid(self) -> bool:
+        return (
+            len(self.switch_positions) == 4
+            and self.handedness in ("LEFT", "RIGHT")
+            and all(p >= 0 for p in self.switch_positions.values())
+        )
+
+
+@dataclass
 class TraversalPath:
     """A specific continuous route through the track topology."""
 
@@ -192,10 +224,15 @@ class MultiPathLayout:
 
     main_loop_pieces: List[int] = field(default_factory=list)
     switch_pairs: List[SwitchPair] = field(default_factory=list)
+    cross_junctions: List["CrossJunction"] = field(default_factory=list)
     paths: List[TraversalPath] = field(default_factory=list)
     start_position: Tuple[float, float] = (0.0, 0.0)
     loose_port_count: int = 0
     secondary_closure_error: float = 0.0
+
+    @property
+    def n_cross_junctions(self) -> int:
+        return len(self.cross_junctions)
 
     @property
     def n_switch_pairs(self) -> int:

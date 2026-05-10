@@ -16,7 +16,7 @@ from .catalog import TrackCatalog
 from .decoder import DecoderConfig, decode_chromosome
 from .encoding import compute_dimensions, generate_bounds
 from .train import evaluate_layout
-from .intersection import count_segment_crossings
+from .intersection import count_dangling_cross_ports, count_segment_crossings
 
 
 class TrackOptimizationProblem(ElementwiseProblem):
@@ -145,9 +145,20 @@ class TrackOptimizationProblem(ElementwiseProblem):
             self._compute_boundary_violation(layout) - self.boundary_tolerance
         ) / max(self.diagonal, 1.0)
 
-        g_collisions = float(
-            count_segment_crossings(layout.states, list(layout.main_loop_pieces))
-        ) / 5.0
+        # Two failure modes contribute to this constraint with different
+        # weights:
+        #  - segment crossings without any CROSS_90 placement: scaled by
+        #    /5 (legacy weight, mild penalty per unresolved crossing)
+        #  - CROSS_90 slots whose perpendicular partner doesn't exist
+        #    (2 dangling ports): each one contributes 1.0 directly, so a
+        #    single dangling-port cross is enough to keep g_collisions > 0
+        #    with a margin much larger than mutation can shrink in one
+        #    operation. A dangling cross is structurally unbuildable, so
+        #    we want it 5x more "infeasible" than an unresolved crossing.
+        main_pieces_list = list(layout.main_loop_pieces)
+        unresolved = count_segment_crossings(layout.states, main_pieces_list)
+        dangling = count_dangling_cross_ports(layout.states, main_pieces_list)
+        g_collisions = (unresolved / 5.0) + float(dangling)
 
         g_inventory_per_type = self._compute_per_type_inventory_violation(layout)
 

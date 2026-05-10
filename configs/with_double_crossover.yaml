@@ -1,0 +1,60 @@
+# LEGO Track Optimizer - Configuration with DOUBLE_CROSSOVER
+#
+# WARNING: DOUBLE_CROSSOVER (catalog index 7) is currently INERT in this build.
+# The piece is in the catalog but not wired into the optimizer:
+#   - encoding.MAIN_LOOP_PIECE_INDICES does not include it, so the GA
+#     cannot place it via the main-loop chromosome.
+#   - There is no decoder injection pass that detects "two parallel
+#     STR-16 runs at lateral 16 stud, >=48 stud each" and substitutes
+#     the DOUBLE_CROSSOVER for them.
+#   - There is no heuristic seeder pattern that constructs a layout
+#     using it.
+#   - Visualization and route enumeration would also need to handle the
+#     piece's 4 ports / 4 routes (track1_through, track2_through,
+#     cross_1_to_2, cross_2_to_1).
+#
+# This config sets up the inventory budget so when the integration work
+# lands, the optimizer can run against it without further config edits.
+# Until then, runs against this config will simply ignore the
+# DOUBLE_CROSSOVER inventory line and behave like with_crossing.yaml
+# minus the CROSS_90 budget.
+#
+# Integration is non-trivial: the piece is a 4-port multi-route element
+# (same architectural class as the 4-switch + CROSS_90 cross-junction
+# template, which is itself in Phase A / stub state). The expectation is
+# that DOUBLE_CROSSOVER injection lands together with the cross-junction
+# Phase B geometric search, since both require parallel-track detection
+# and route-choice plumbing.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_16: 40
+  STRAIGHT_24: 8
+  R40_LEFT: 20
+  R40_RIGHT: 20
+  DOUBLE_CROSSOVER: 2     # 4-port scissors crossover, 48x16 stud
+
+boundary:
+  min_x: -200.0
+  max_x: 200.0
+  min_y: -200.0
+  max_y: 200.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 1000
+  n_gen: 500
+  heuristic_ratio: 0.20
+  crossover_prob: 0.2
+  mutation_prob: 0.8
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 100  # Early stop if no improvement for 100 generations
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 1

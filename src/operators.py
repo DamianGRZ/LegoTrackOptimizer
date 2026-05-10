@@ -11,20 +11,25 @@ Mutation:
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 from numpy.typing import NDArray
 from pymoo.core.crossover import Crossover
 from pymoo.core.mutation import Mutation
 
+from .catalog import TrackCatalog
 from .encoding import (
+    CROSS_90,
     GENES_PER_JUNCTION,
     INACTIVE,
     MAIN_LOOP_PIECE_INDICES,
     MAX_MAIN_LOOP_PIECE,
+    STRAIGHT_16,
     PartitionedDimensions,
 )
+from .geometry import compute_fk_chain
+from .intersection import find_crossing_pairs
 
 # Valid main-loop piece types as a sorted array for fast random selection
 _MAIN_LOOP_TYPES = np.array(sorted(MAIN_LOOP_PIECE_INDICES), dtype=np.int16)
@@ -94,9 +99,15 @@ class PartitionedCrossover(Crossover):
 # Mutation Sub-operators (Main Loop)
 # =============================================================================
 
-def _mutate_piece_type(x: NDArray, dims: PartitionedDimensions) -> None:
-    """Change a random active main-loop position to a different piece type."""
-    active = np.where(x[:dims.n_main] != INACTIVE)[0]
+def _mutate_piece_type(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Change a random active non-CROSS_90 main-loop position to a different
+    piece type. CROSS_90 slots are sticky — once placed by the decoder's
+    aggressive repair, mutation will not overwrite them, so partial repairs
+    accumulate across generations instead of churning."""
+    main = x[:dims.n_main]
+    active = np.where((main != INACTIVE) & (main != int(CROSS_90)))[0]
     if len(active) == 0:
         return
     pos = active[np.random.randint(len(active))]
@@ -107,7 +118,9 @@ def _mutate_piece_type(x: NDArray, dims: PartitionedDimensions) -> None:
     x[pos] = choices[np.random.randint(len(choices))]
 
 
-def _activate_position(x: NDArray, dims: PartitionedDimensions) -> None:
+def _activate_position(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
     """Set a random inactive main-loop position to a random piece type."""
     inactive = np.where(x[:dims.n_main] == INACTIVE)[0]
     if len(inactive) == 0:
@@ -116,21 +129,85 @@ def _activate_position(x: NDArray, dims: PartitionedDimensions) -> None:
     x[pos] = _MAIN_LOOP_TYPES[np.random.randint(len(_MAIN_LOOP_TYPES))]
 
 
-def _deactivate_position(x: NDArray, dims: PartitionedDimensions) -> None:
-    """Set a random active main-loop position to INACTIVE."""
-    active = np.where(x[:dims.n_main] != INACTIVE)[0]
+def _deactivate_position(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Set a random active non-CROSS_90 main-loop position to INACTIVE.
+    CROSS_90 slots are sticky and will not be deactivated."""
+    main = x[:dims.n_main]
+    active = np.where((main != INACTIVE) & (main != int(CROSS_90)))[0]
     if len(active) <= 4:  # keep minimum for closure
         return
     pos = active[np.random.randint(len(active))]
     x[pos] = INACTIVE
 
 
-def _swap_positions(x: NDArray, dims: PartitionedDimensions) -> None:
-    """Swap two random main-loop positions (active or inactive)."""
+def _swap_positions(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Swap two random main-loop positions. Skips when either picked slot is
+    CROSS_90 — sticky CROSS_90 must keep its world location so its
+    perpendicular partner (placed by the decoder repair) doesn't desync."""
     if dims.n_main < 2:
         return
     i, j = np.random.choice(dims.n_main, size=2, replace=False)
+    if int(x[i]) == int(CROSS_90) or int(x[j]) == int(CROSS_90):
+        return
     x[i], x[j] = x[j], x[i]
+
+
+def _straighten_near_unresolved_crossing(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Replace a curve near an unresolved self-intersection with STRAIGHT_16.
+
+    Decodes the chromosome's main loop, runs find_crossing_pairs on the FK
+    chain, and looks for crossings the existing _apply_crossing_repair would
+    refuse — pairs where at least one piece is non-STRAIGHT_16. For one such
+    pair, swaps the curve-side piece to STRAIGHT_16 so subsequent decode
+    passes have a chance of producing a STR-on-STR perpendicular crossing
+    that the repair will convert to CROSS_90.
+
+    Falls through to _mutate_piece_type when:
+      - the catalog is unavailable (operator called outside a Problem context)
+      - no main-loop pieces are active
+      - find_crossing_pairs returns nothing
+      - all detected crossings are already STR-on-STR (the existing repair
+        already handles those; nudging won't help)
+    """
+    if catalog is None:
+        _mutate_piece_type(x, dims)
+        return
+
+    main_pieces: List[int] = []
+    chrom_indices: List[int] = []
+    for i in range(dims.n_main):
+        v = int(x[i])
+        if v == INACTIVE:
+            continue
+        main_pieces.append(v)
+        chrom_indices.append(i)
+
+    if len(main_pieces) < 4:
+        _mutate_piece_type(x, dims)
+        return
+
+    indices = np.asarray(main_pieces, dtype=np.int32)
+    states = compute_fk_chain(catalog.get_fk(indices))
+    pairs = find_crossing_pairs(states, main_pieces)
+
+    unresolved = [
+        (pi, pj) for pi, pj, _ang in pairs
+        if main_pieces[pi] != STRAIGHT_16 or main_pieces[pj] != STRAIGHT_16
+    ]
+    if not unresolved:
+        _mutate_piece_type(x, dims)
+        return
+
+    pi, pj = unresolved[np.random.randint(len(unresolved))]
+    target = pi if main_pieces[pi] != STRAIGHT_16 else pj
+    chrom_pos = chrom_indices[target]
+    x[chrom_pos] = int(STRAIGHT_16)
 
 
 # =============================================================================
@@ -182,9 +259,18 @@ def _adjust_straights(x: NDArray, dims: PartitionedDimensions) -> None:
 # Combined Mutation
 # =============================================================================
 
-# Main loop sub-operators with equal weights
-_MAIN_LOOP_OPS = [_mutate_piece_type, _activate_position, _deactivate_position, _swap_positions]
-_MAIN_LOOP_WEIGHTS = np.array([0.30, 0.25, 0.20, 0.25])
+# Main loop sub-operators with equal weights. The crossing-aware nudge has a
+# small weight so its decode + intersection cost (O(n_main^2)) doesn't dominate
+# total mutation cost, while still firing often enough to bias the population
+# toward repairable straight-on-straight crossings.
+_MAIN_LOOP_OPS = [
+    _mutate_piece_type,
+    _activate_position,
+    _deactivate_position,
+    _swap_positions,
+    _straighten_near_unresolved_crossing,
+]
+_MAIN_LOOP_WEIGHTS = np.array([0.28, 0.24, 0.19, 0.24, 0.05])
 _MAIN_LOOP_WEIGHTS /= _MAIN_LOOP_WEIGHTS.sum()
 
 # Junction sub-operators with equal weights
@@ -215,6 +301,7 @@ class PartitionedMutation(Mutation):
 
     def _do(self, problem, X, **kwargs) -> NDArray:
         has_junctions = self.dims.max_junctions > 0
+        catalog = getattr(problem, "catalog", None)
 
         for i in range(len(X)):
             # Select category: main loop vs junction
@@ -223,7 +310,7 @@ class PartitionedMutation(Mutation):
                 _JUNCTION_OPS[op_idx](X[i], self.dims)
             else:
                 op_idx = np.random.choice(len(_MAIN_LOOP_OPS), p=_MAIN_LOOP_WEIGHTS)
-                _MAIN_LOOP_OPS[op_idx](X[i], self.dims)
+                _MAIN_LOOP_OPS[op_idx](X[i], self.dims, catalog)
 
         return X
 
