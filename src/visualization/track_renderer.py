@@ -239,6 +239,33 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch, 
         ax.plot(xo2, yo2, color=COL_RAIL, lw=RAIL_LW, solid_capstyle='butt', zorder=3)
 
 
+def _draw_switch_with_install(ax, x0, y0, theta0, catalog_direction,
+                              color_main, color_branch, draw_rails_flag, installed_reversed):
+    """Render a switch accounting for installation orientation.
+
+    `_draw_switch_piece` always sprouts the diverge S-curve from the train's
+    entry point. That's correct for normal install (port C is forward of port
+    A entry), but a reversed-install switch has port C at the OPPOSITE end of
+    the body. Calling `_draw_switch_piece` directly would put the diverge in
+    the wrong location.
+
+    Trick: for reversed install, render the switch from the FAR end with
+    heading rotated 180°. The resulting through line is visually the same
+    32-stud segment, but the natural diverge S-curve now sprouts from what
+    was the FAR end (the "actual port A" end in main frame), curving back
+    toward the body start where port C truly sits in main frame.
+    """
+    if installed_reversed:
+        theta_rad = np.radians(theta0)
+        x_far = x0 + 32.0 * np.cos(theta_rad)
+        y_far = y0 + 32.0 * np.sin(theta_rad)
+        _draw_switch_piece(ax, x_far, y_far, theta0 + 180.0, catalog_direction,
+                           color_main, color_branch, draw_rails_flag)
+    else:
+        _draw_switch_piece(ax, x0, y0, theta0, catalog_direction,
+                           color_main, color_branch, draw_rails_flag)
+
+
 def _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
     """Draw a 90-degree crossing with two perpendicular routes.
 
@@ -336,15 +363,20 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
         _draw_rails(ax, x_cross2, y_cross2)
 
 
-def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True):
+def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False):
     """Draw a single piece with proper geometry based on piece type.
 
     Args:
         ax: Matplotlib axes.
-        piece_idx: Piece index (0-9).
+        piece_idx: Piece index (post-refactor 0..7).
         x0, y0: Start position (studs).
         theta0: Entry heading (degrees).
         draw_rails_flag: Whether to draw rails.
+        installed_reversed: Only meaningful for switches. When True, the switch
+            is the OUT (return) end of a passing siding pair and is physically
+            installed rotated 180°. The diverge port is on the OPPOSITE
+            lateral side from the catalog's natural orientation, so we flip
+            the visual diverge direction so it points toward the actual siding.
     """
     color = get_piece_color(piece_idx)
 
@@ -358,10 +390,12 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True):
         _draw_curve_piece(ax, x0, y0, theta0, R40, -CURVE_ANGLE, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_SWITCH_LEFT:
         color_branch = PIECE_COLORS.get(piece_idx, color)
-        _draw_switch_piece(ax, x0, y0, theta0, 'left', color, color_branch, draw_rails_flag)
+        _draw_switch_with_install(ax, x0, y0, theta0, 'left', color, color_branch,
+                                  draw_rails_flag, installed_reversed)
     elif piece_idx == PIECE_IDX_SWITCH_RIGHT:
         color_branch = PIECE_COLORS.get(piece_idx, color)
-        _draw_switch_piece(ax, x0, y0, theta0, 'right', color, color_branch, draw_rails_flag)
+        _draw_switch_with_install(ax, x0, y0, theta0, 'right', color, color_branch,
+                                  draw_rails_flag, installed_reversed)
     elif piece_idx == PIECE_IDX_CROSS_90:
         _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_DBL_CROSSOVER:
@@ -612,10 +646,13 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
     y = main_path.states[:, 1]
     theta = main_path.states[:, 2]
 
+    # OUT positions of all switch pairs — these switches are installed reversed.
+    out_positions = {sp.out_position for sp in layout.switch_pairs}
     for i in range(len(main_path.piece_sequence)):
         if i < len(x) - 1:
             piece_idx = main_path.piece_sequence[i]
-            _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
+            _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
+                        draw_rails_flag=True, installed_reversed=(i in out_positions))
 
     ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
@@ -641,9 +678,14 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
         if len(states) <= 1:
             continue
 
-        for k, piece_idx in enumerate(pieces):
+        # Skip the IN switch (pieces[0]) and OUT switch (pieces[-1]); they're
+        # already drawn at their main-loop positions by the main-path render
+        # above. Drawing them again here at the branch-end positions (which
+        # differ from the main-loop positions) would visually duplicate them
+        # at conflicting angles. Just draw the branch INTERNAL pieces.
+        for k in range(1, len(pieces) - 1):
             sx, sy, stheta = states[k]
-            _draw_piece(ax, piece_idx, sx, sy, stheta, draw_rails_flag=True)
+            _draw_piece(ax, pieces[k], sx, sy, stheta, draw_rails_flag=True)
 
         ax.plot(
             states[:, 0], states[:, 1],
@@ -707,20 +749,35 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
         if piece_idx in SWITCH_INDICES:
             switch_positions.append(i)
 
-    # Drift boundary: pieces at index >= drift_start are at drifted FK positions
-    # (their physical positions are reflected in path 0 / branch templates).
-    # Drawn as a dotted gray polyline rather than solid pieces, to distinguish
-    # diagnostic FK trajectory from real geometry.
+    # Drift boundary: only show diagnostic dotted-gray drift trajectory when
+    # the path actually fails to close. A path that closes (small closure /
+    # angle error) has no meaningful drift — render the whole thing solid.
+    DRIFT_POS_THRESHOLD = 1.0  # studs
+    DRIFT_ANG_THRESHOLD = 1.0  # degrees
+    has_drift = (
+        path.closure_error > DRIFT_POS_THRESHOLD
+        or path.angle_error > DRIFT_ANG_THRESHOLD
+    )
     drift_start = (
         min(end for _, end in path.divergent_ranges.values()) + 1
-        if path.divergent_ranges else len(path.piece_sequence)
+        if (has_drift and path.divergent_ranges)
+        else len(path.piece_sequence)
     )
 
-    # Plot solid pieces only up to the drift boundary
+    # Plot solid pieces only up to the drift boundary. Switches in a path
+    # alternate IN, OUT, IN, OUT (one pair contributes its entry switch then
+    # its exit switch); the 2nd, 4th, ... switches are OUTs and were installed
+    # reversed, so the renderer flips their visual diverge direction.
+    switches_seen = 0
     for i in range(min(drift_start, len(path.piece_sequence))):
         if i < len(x) - 1:
             piece_idx = path.piece_sequence[i]
-            _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
+            installed_reversed = False
+            if piece_idx in SWITCH_INDICES:
+                switches_seen += 1
+                installed_reversed = (switches_seen % 2 == 0)
+            _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
+                        draw_rails_flag=True, installed_reversed=installed_reversed)
 
     # Overlay drift trajectory (if any) as a dotted gray polyline
     if drift_start < len(x) - 1:
