@@ -18,6 +18,7 @@ from pymoo.core.sampling import Sampling
 from .config import OptimizationConfig
 from .catalog import TrackCatalog
 from .encoding import (
+    CROSS_90,
     INACTIVE,
     MAIN_LOOP_PIECE_INDICES,
     R40_LEFT,
@@ -25,11 +26,14 @@ from .encoding import (
     STRAIGHT_16,
     STRAIGHT_24,
     SWITCH_INDICES,
+    SWITCH_LEFT,
+    SWITCH_RIGHT,
     PartitionedDimensions,
     compute_dimensions,
     create_chromosome_from_pieces,
     create_empty_chromosome,
     generate_bounds,
+    set_cross_junction,
     set_junction,
 )
 from .templates import (
@@ -46,7 +50,12 @@ from .templates import (
 # =============================================================================
 
 Junction = Tuple[int, int, int, int]
-Pattern = Tuple[List[int], Optional[List[Junction]]]
+CrossJunctionDescriptor = Tuple[int, int, int]   # (active, position_W, handedness)
+Pattern = Tuple[
+    List[int],
+    Optional[List[Junction]],
+    Optional[List[CrossJunctionDescriptor]],
+]
 
 _PIECE_LEN = 16       # Stud length of STRAIGHT_16 (also a proxy for axial step)
 _END_CAP = 80         # ~2 * R40 diameter: half-circle end cap along axial dir
@@ -137,9 +146,9 @@ def _gen_simple_loop(
     """16 same-direction R40 curves = a tight closed circle."""
     variants: List[Pattern] = []
     if inv.get(R40_LEFT, 0) >= 16:
-        variants.append(([int(R40_LEFT)] * 16, None))
+        variants.append(([int(R40_LEFT)] * 16, None, None))
     if inv.get(R40_RIGHT, 0) >= 16:
-        variants.append(([int(R40_RIGHT)] * 16, None))
+        variants.append(([int(R40_RIGHT)] * 16, None, None))
     return variants
 
 
@@ -163,7 +172,7 @@ def _gen_oval(
                 + [int(curve)] * 8 + [int(STRAIGHT_16)] * m
             )
             if _pieces_fit_inventory(_count_pieces(pieces), inv):
-                variants.append((pieces, None))
+                variants.append((pieces, None, None))
     return variants
 
 
@@ -192,7 +201,7 @@ def _gen_racetrack(
                 + corner + [int(STRAIGHT_16)] * S
             )
             if _pieces_fit_inventory(_count_pieces(pieces), inv):
-                variants.append((pieces, None))
+                variants.append((pieces, None, None))
     return variants
 
 
@@ -261,7 +270,7 @@ def _gen_oval_with_siding(
                 junctions: List[Junction] = [
                     (1, section_start + offset, hand, n_br),
                 ]
-                variants.append((main_pieces, junctions))
+                variants.append((main_pieces, junctions, None))
     return variants
 
 
@@ -282,6 +291,139 @@ def _siding_fits_in_section(template, n_br: int, m: int) -> bool:
     ``m`` straights; a one-straight guard keeps OUT strictly inside the section.
     """
     return m >= _siding_walk_slots(template, n_br)
+
+
+def _gen_figure_eight(
+    inv: Dict[int, int], dims: PartitionedDimensions,
+) -> List[Pattern]:
+    """Single-loop figure-8 wrapped around one CROSS_90.
+
+    Construction (from cross center at (8, 0) with 2-STR extensions on each
+    port and 12-R40 three-quarter arcs on diagonally opposite quadrants):
+
+      Variant A (TL + BR arcs):
+        N ext (S-bound) -> cross V (N->S) -> S ext (S-bound)
+          -> 12 R40_L (bottom-right arc) -> E ext (W-bound)
+          -> cross H (E->W) -> W ext (W-bound)
+          -> 12 R40_R (top-left arc) -> back to N ext start
+
+      Variant B (TR + BL arcs):
+        N ext (S-bound) -> cross V (N->S) -> S ext (S-bound)
+          -> 12 R40_R (bottom-left arc) -> W ext (E-bound)
+          -> cross H (W->E) -> E ext (E-bound)
+          -> 12 R40_L (top-right arc) -> back to N ext start
+
+    Each variant is a 34-piece chromosome (10 STR + 12 R40_L + 12 R40_R).
+    The two STR slots that physically pass through the cross center (8, 0)
+    cross at 90 deg; the self-intersection repair (decoder Step 4)
+    converts one slot to CROSS_90 -> net inventory 9 STR + 12 R40_L +
+    12 R40_R + 1 CROSS_90.
+
+    Bounding box ~160 x 160 stud (x in [-72, 88], y in [-80, 80] before
+    auto-centering), so a boundary of at least ~200 stud per axis is
+    required for the seed to sit cleanly inside.
+    """
+    if (
+        inv.get(STRAIGHT_16, 0) < 10
+        or inv.get(R40_LEFT, 0) < 12
+        or inv.get(R40_RIGHT, 0) < 12
+        or inv.get(CROSS_90, 0) < 1
+    ):
+        return []
+
+    # Boundary guard: figure-8 needs ~160 stud in each dimension; reject if the
+    # bounding box would not fit with a small margin on each side.
+    w, h = _boundary_wh(dims)
+    if w < 180 or h < 180:
+        return []
+
+    # Variant A: train sequence N -> cross_V -> S -> BR arc -> E -> cross_H -> W -> TL arc.
+    variant_a = (
+        [int(STRAIGHT_16)] * 5
+        + [int(R40_LEFT)] * 12
+        + [int(STRAIGHT_16)] * 5
+        + [int(R40_RIGHT)] * 12
+    )
+
+    # Variant B (mirror): N -> cross_V -> S -> BL arc -> W -> cross_H -> E -> TR arc.
+    variant_b = (
+        [int(STRAIGHT_16)] * 5
+        + [int(R40_RIGHT)] * 12
+        + [int(STRAIGHT_16)] * 5
+        + [int(R40_LEFT)] * 12
+    )
+
+    variants: List[Pattern] = []
+    for pieces in (variant_a, variant_b):
+        if _pieces_fit_inventory(_count_pieces(pieces), inv):
+            variants.append((pieces, None, None))
+    return variants
+
+
+def _gen_oval_with_cross_junction(
+    inv: Dict[int, int], dims: PartitionedDimensions,
+) -> List[Pattern]:
+    """Soft seed: large oval main loop + 1 active cross-junction descriptor.
+
+    Phase A limitation — geometry won't validate:
+        The decoder's geometric search requires the main loop to pass through
+        the four cross-port positions (-48..+64 stud spread for LEFT cross)
+        within (siding_position_tolerance, siding_angle_tolerance). A simple
+        oval doesn't satisfy that constraint, so _inject_cross_junctions will
+        skip the descriptor on the seed itself. The descriptor is set so the
+        active flag enters the gene pool and crossover/mutation can carry it
+        into chromosomes whose evolved main loop happens to satisfy the
+        geometry. Hard pre-designed cross-junction patterns are deferred
+        until the multi-corner geometric search is implemented.
+
+    Emits one variant per (handedness, position_W) combination compatible
+    with available LEFT or RIGHT switch + spur + CROSS_90 inventory.
+    """
+    if dims.max_cross_junctions < 1:
+        return []
+    if inv.get(CROSS_90, 0) < 1:
+        return []
+
+    variants: List[Pattern] = []
+    n_str = inv.get(STRAIGHT_16, 0)
+    m = _fit_oval_straights_per_section(dims, n_str)
+
+    for curve, hand_idx in ((R40_LEFT, 0), (R40_RIGHT, 1)):
+        if inv.get(curve, 0) < 16:
+            continue
+        if 2 * m > n_str:
+            continue
+        # Inventory check: 4 same-hand switches + 4 opposite-hand R40 spurs + 1 CROSS_90.
+        switch_id = "R40_SWITCH_LEFT" if hand_idx == 0 else "R40_SWITCH_RIGHT"
+        spur_idx = R40_RIGHT if hand_idx == 0 else R40_LEFT
+        catalog_switch_idx = SWITCH_LEFT if hand_idx == 0 else SWITCH_RIGHT
+        if inv.get(catalog_switch_idx, 0) < 4:
+            continue
+        if inv.get(spur_idx, 0) < 4:
+            continue
+
+        main_pieces = (
+            [int(curve)] * 8 + [int(STRAIGHT_16)] * m
+            + [int(curve)] * 8 + [int(STRAIGHT_16)] * m
+        )
+        if not _pieces_fit_inventory(_count_pieces(main_pieces), inv):
+            continue
+
+        # Two W candidates: middle of each STRAIGHT_16 section so the GA gets
+        # two distinct hint positions.
+        section_starts = (8, 16 + m)
+        for sec_start in section_starts:
+            position_w = sec_start + max(0, m // 2)
+            if not 0 <= position_w < len(main_pieces):
+                continue
+            if main_pieces[position_w] != STRAIGHT_16:
+                continue
+            cross_descriptors: List[CrossJunctionDescriptor] = [
+                (1, position_w, hand_idx),
+            ]
+            variants.append((main_pieces, None, cross_descriptors))
+
+    return variants
 
 
 def _gen_oval_two_sidings(
@@ -329,7 +471,7 @@ def _gen_oval_two_sidings(
                 (1, 8, h1, n_br),
                 (1, 16 + m, h2, n_br),
             ]
-            variants.append((main_pieces, junctions))
+            variants.append((main_pieces, junctions, None))
     return variants
 
 
@@ -379,8 +521,10 @@ class IntegerSampling(Sampling):
 
         for i in range(n_heuristic):
             if patterns:
-                pieces, junctions = patterns[i % len(patterns)]
-                x = create_chromosome_from_pieces(dims, pieces, junctions)
+                pieces, junctions, cross_junctions = patterns[i % len(patterns)]
+                x = create_chromosome_from_pieces(
+                    dims, pieces, junctions, cross_junctions,
+                )
                 self._set_random_start(x, rng)
                 X[i, :] = x
             else:
@@ -405,6 +549,8 @@ class IntegerSampling(Sampling):
         patterns += _gen_racetrack(inv, dims)
         patterns += _gen_oval_with_siding(inv, dims)
         patterns += _gen_oval_two_sidings(inv, dims)
+        patterns += _gen_figure_eight(inv, dims)
+        patterns += _gen_oval_with_cross_junction(inv, dims)
         rng.shuffle(patterns)
         return patterns
 

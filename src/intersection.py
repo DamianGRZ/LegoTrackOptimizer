@@ -131,6 +131,69 @@ def count_segment_crossings(
     return crossings
 
 
+def count_dangling_cross_ports(
+    states: NDArray[np.float64],
+    piece_indices: List[int],
+    pos_tol: float = 4.0,
+    ang_tol_deg: float = 15.0,
+) -> int:
+    """Count CROSS_90 chromosome slots that lack a perpendicular partner.
+
+    Each CROSS_90 piece has 4 ports. To use ALL 4 ports the train must
+    traverse the same physical world location TWICE: once through the
+    horizontal route (W<->E) and once through the perpendicular vertical
+    route (N<->S). In our chromosome encoding, that means BOTH a CROSS_90
+    slot AND another slot (CROSS_90 or FK-equivalent STRAIGHT_16) must
+    exist at the same world midpoint with perpendicular heading.
+
+    Returns the count of CROSS_90 slots WITHOUT a perpendicular partner;
+    those represent crosses with 2 dangling ports and are unbuildable.
+
+    Args:
+        states: (n+1, 3) FK states array [x, y, theta_deg].
+        piece_indices: piece index at each chromosome slot.
+        pos_tol: how close two midpoints must be to count as the same
+            world location (studs).
+        ang_tol_deg: how close to perpendicular two headings must be.
+    """
+    if len(piece_indices) == 0:
+        return 0
+
+    midpoints: List[Tuple[float, float, float]] = []
+    cross_slots: List[int] = []
+    for i, piece_idx in enumerate(piece_indices):
+        x_start, y_start, theta_deg = states[i]
+        # Train midpoint approx (cross center if CROSS_90, segment center
+        # otherwise). 8 stud forward in train direction works for any
+        # 16-stud-FK piece (CROSS_90, STRAIGHT_16, R40 close enough).
+        theta_rad = np.radians(theta_deg)
+        mx = x_start + 8.0 * np.cos(theta_rad)
+        my = y_start + 8.0 * np.sin(theta_rad)
+        midpoints.append((mx, my, theta_deg))
+        if piece_idx == CROSS_90_INDEX:
+            cross_slots.append(i)
+
+    dangling = 0
+    for ci in cross_slots:
+        cx, cy, ctheta = midpoints[ci]
+        partner_found = False
+        for j, (jx, jy, jtheta) in enumerate(midpoints):
+            if j == ci:
+                continue
+            if abs(jx - cx) > pos_tol or abs(jy - cy) > pos_tol:
+                continue
+            ang_diff = (jtheta - ctheta + 180.0) % 360.0 - 180.0
+            # Partner must be perpendicular: |ang_diff| in (90 - tol, 90 + tol)
+            if abs(abs(ang_diff) - 90.0) > ang_tol_deg:
+                continue
+            partner_found = True
+            break
+        if not partner_found:
+            dangling += 1
+
+    return dangling
+
+
 def _segments_intersect(
     ax: float, ay: float, bx: float, by: float,
     cx: float, cy: float, dx: float, dy: float,

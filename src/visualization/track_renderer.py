@@ -6,7 +6,7 @@ from typing import Optional, Union
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Polygon
 
 from src.config import BoundaryConfig
 from src.catalog import TrackCatalog
@@ -22,7 +22,7 @@ from src.lego_track_models import (
     ARC1_ANGLE,
     ARC2_ANGLE,
     COL_RAIL,
-    BED_LW,
+    BED_WIDTH_STUD,
     RAIL_LW,
     N_ARC_PTS,
     arc_points,
@@ -90,10 +90,24 @@ def get_piece_color(piece_idx: int) -> str:
     return FALLBACK_COLORS[piece_idx % len(FALLBACK_COLORS)]
 
 
-def _draw_track_bed(ax, x, y, color, lw=BED_LW, alpha=0.88, zorder=2):
-    """Draw thick colored track bed."""
-    ax.plot(x, y, color=color, lw=lw, solid_capstyle='butt',
-            alpha=alpha, zorder=zorder)
+def _draw_track_bed(ax, x, y, color, alpha=0.88, zorder=2, width_stud=None):
+    """Fill the colored track bed as a polygon centered on the path.
+
+    Width is in DATA units (studs) and defaults to BED_WIDTH_STUD = 8
+    (full physical piece width). Callers may override width_stud to draw
+    visually-distinct thinner overlays (e.g. switch diverge segments at
+    ~6 stud, double-crossover diagonal routes at ~5 stud) so multiple
+    routes through the same physical area remain readable."""
+    half = float(BED_WIDTH_STUD if width_stud is None else width_stud) / 2.0
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    if x_arr.size < 2:
+        return
+    lx, ly = offset_path(x_arr, y_arr, +half)
+    rx, ry = offset_path(x_arr, y_arr, -half)
+    verts = list(zip(lx, ly)) + list(zip(rx[::-1], ry[::-1]))
+    ax.add_patch(Polygon(verts, closed=True, facecolor=color,
+                         edgecolor='none', alpha=alpha, zorder=zorder))
 
 
 def _draw_rails(ax, x, y, offset=RAIL_OFFSET, zorder=3):
@@ -206,7 +220,7 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch, 
     a1_sweep = flip * ARC1_ANGLE
 
     x1, y1 = arc_points(c1x, c1y, R40, a1_start, a1_sweep, n=30)
-    _draw_track_bed(ax, x1, y1, color_branch, lw=8)
+    _draw_track_bed(ax, x1, y1, color_branch, width_stud=6.4)
 
     if draw_rails_flag:
         xi1, yi1 = arc_points(c1x, c1y, R40 - RAIL_OFFSET, a1_start, a1_sweep, n=30)
@@ -230,7 +244,7 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch, 
     a2_sweep = -flip * ARC2_ANGLE
 
     x2, y2 = arc_points(c2x, c2y, R40, a2_start, a2_sweep, n=30)
-    _draw_track_bed(ax, x2, y2, color_branch, lw=8)
+    _draw_track_bed(ax, x2, y2, color_branch, width_stud=6.4)
 
     if draw_rails_flag:
         xi2, yi2 = arc_points(c2x, c2y, R40 - RAIL_OFFSET, a2_start, a2_sweep, n=30)
@@ -348,7 +362,7 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
     c1_end = transform_point(36, 16)
     x_cross1 = np.array([c1_start[0], c1_end[0]])
     y_cross1 = np.array([c1_start[1], c1_end[1]])
-    _draw_track_bed(ax, x_cross1, y_cross1, color, lw=6, alpha=0.7)
+    _draw_track_bed(ax, x_cross1, y_cross1, color, width_stud=4.8, alpha=0.7)
     if draw_rails_flag:
         _draw_rails(ax, x_cross1, y_cross1)
 
@@ -358,7 +372,7 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
     c2_end = transform_point(36, 0)
     x_cross2 = np.array([c2_start[0], c2_end[0]])
     y_cross2 = np.array([c2_start[1], c2_end[1]])
-    _draw_track_bed(ax, x_cross2, y_cross2, color, lw=6, alpha=0.7)
+    _draw_track_bed(ax, x_cross2, y_cross2, color, width_stud=4.8, alpha=0.7)
     if draw_rails_flag:
         _draw_rails(ax, x_cross2, y_cross2)
 

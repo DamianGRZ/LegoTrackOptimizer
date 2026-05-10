@@ -169,6 +169,130 @@ TEMPLATES = {
 
 
 # =============================================================================
+# CROSS-JUNCTION TEMPLATE (4 switches + CROSS_90)
+# =============================================================================
+# Geometry: cross at origin, 4 switches arranged in 90° rotational symmetry.
+# Each switch's port C connects to one cross port via a single R40 spur curve.
+# All-LEFT configuration: 4 LEFT switches + 4 R40_RIGHT spur curves + 1 CROSS_90.
+# Geometry validated by spike script — all 4 spurs land exactly on cross ports.
+CROSS_90_PIECE_IDX = 4
+
+# Cross ports in cross local frame: (dx, dy, entry_heading_degrees).
+# Entry heading is the train heading when entering the cross at this port.
+CROSS_PORTS_LOCAL = {
+    "W": (0.0,  0.0,    0.0),    # port A — train enters going east
+    "E": (16.0, 0.0,  180.0),    # port B — train enters going west
+    "S": (8.0, -8.0,   90.0),    # port C — train enters going north
+    "N": (8.0,  8.0,  -90.0),    # port D — train enters going south
+}
+
+
+@dataclass(frozen=True)
+class CrossJunctionTemplate:
+    """4-switch + CROSS_90 junction template.
+
+    A junction places 4 switches at the 4 sides of a CROSS_90, each connected
+    to one cross port via a 1-curve spur. The switches sit on the main loop;
+    the cross + spurs are an internal sub-structure.
+
+    Train traversal modes per junction (3):
+      - bypass: stay on main loop (use switch's port B, skip the cross)
+      - cross W↔E: divert via switch_for_W's port C, traverse cross W→E,
+                    re-merge via switch_for_E's port C (and reverse)
+      - cross N↔S: similar via N and S switches
+
+    Attributes:
+        name: Human-readable.
+        handedness: "LEFT" or "RIGHT" — handedness of all 4 switches.
+        switch_idx: catalog piece index of the switches (all same handedness).
+        spur_curve_idx: catalog piece index of the spur curve (1 per arm).
+                        For LEFT switches: R40_RIGHT (curves back to align).
+                        For RIGHT switches: R40_LEFT (mirror).
+        cross_idx: catalog piece index of CROSS_90 (= 4).
+    """
+
+    name: str
+    handedness: str
+    switch_idx: int
+    spur_curve_idx: int
+    cross_idx: int = CROSS_90_PIECE_IDX
+
+
+CROSS_JUNCTION_LEFT = CrossJunctionTemplate(
+    name="cross_junction_left",
+    handedness="LEFT",
+    switch_idx=R40_SWITCH_LEFT,
+    spur_curve_idx=R40_RIGHT,
+)
+
+CROSS_JUNCTION_RIGHT = CrossJunctionTemplate(
+    name="cross_junction_right",
+    handedness="RIGHT",
+    switch_idx=R40_SWITCH_RIGHT,
+    spur_curve_idx=R40_LEFT,
+)
+
+CROSS_JUNCTION_TEMPLATES = {
+    0: CROSS_JUNCTION_LEFT,
+    1: CROSS_JUNCTION_RIGHT,
+}
+
+
+def switch_position_for_cross_port(
+    port_name: str,
+    cross_position: Tuple[float, float] = (0.0, 0.0),
+    template: CrossJunctionTemplate = CROSS_JUNCTION_LEFT,
+) -> Tuple[float, float, float]:
+    """Compute the (x, y, theta) where a switch must be placed in the main
+    loop so that its port C + spur lands exactly on the named cross port.
+
+    The 1-curve spur (R40 of opposite handedness from the switch) cancels
+    the switch's ±22.5° divergence, so the train heading at spur end equals
+    the switch's main heading. That heading must equal the cross port's
+    entry heading.
+    """
+    px_local, py_local, pt_local = CROSS_PORTS_LOCAL[port_name]
+    target_x = cross_position[0] + px_local
+    target_y = cross_position[1] + py_local
+    switch_heading = pt_local
+
+    # Forward-displacement from switch port A through diverge + spur, in main:
+    sh_rad = np.radians(switch_heading)
+    if template.handedness == "LEFT":
+        port_c_local_dy = 13.0
+        port_c_dtheta = 22.5
+        spur_local_dy = -3.045  # R40_RIGHT
+        spur_local_dtheta = -22.5
+    else:
+        port_c_local_dy = -13.0
+        port_c_dtheta = -22.5
+        spur_local_dy = 3.045   # R40_LEFT
+        spur_local_dtheta = 22.5
+
+    pc_rad = np.radians(switch_heading + port_c_dtheta)
+    dx = (32.75 * np.cos(sh_rad) - port_c_local_dy * np.sin(sh_rad)
+          + 15.307 * np.cos(pc_rad) - spur_local_dy * np.sin(pc_rad))
+    dy = (32.75 * np.sin(sh_rad) + port_c_local_dy * np.cos(sh_rad)
+          + 15.307 * np.sin(pc_rad) + spur_local_dy * np.cos(pc_rad))
+    return (target_x - dx, target_y - dy, switch_heading)
+
+
+def get_cross_junction_inventory_requirements(
+    template: CrossJunctionTemplate,
+) -> dict:
+    """Pieces consumed by one cross-junction instance.
+
+    4 switches of the chosen handedness + 4 spur curves (opposite handedness)
+    + 1 CROSS_90.
+    """
+    return {
+        template.switch_idx: 4,
+        template.spur_curve_idx: 4,
+        template.cross_idx: 1,
+    }
+
+
+# =============================================================================
 # BRANCH PIECE COMPUTATION
 # =============================================================================
 

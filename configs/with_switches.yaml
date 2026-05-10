@@ -21,10 +21,16 @@ inventory:
 #  max_y: 350.0
 
 boundary:
-  min_x: -100.0
-  max_x: 100.0
-  min_y: -100.0
-  max_y: 100.0
+  min_x: -150.0
+  max_x: 150.0
+  min_y: -150.0
+  max_y: 150.0
+
+#boundary:
+#  min_x: -100.0
+#  max_x: 100.0
+#  min_y: -100.0
+#  max_y: 100.0
 
 algorithm:
   name: NSGA2

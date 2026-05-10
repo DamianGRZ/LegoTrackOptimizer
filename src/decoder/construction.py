@@ -19,9 +19,14 @@ from numpy.typing import NDArray
 from src.catalog import TrackCatalog
 from src.decoder.types import DecoderConfig, InventoryTracker, ValidatedJunction
 from src.encoding import (
+    CJ_ACTIVE,
+    CJ_HANDEDNESS,
+    CJ_POSITION_W,
     INACTIVE,
+    STRAIGHT_16,
     SWITCH_INDICES,
     PartitionedDimensions,
+    get_active_cross_junctions,
     get_active_junctions,
     get_main_loop_types,
     get_start_position,
@@ -29,14 +34,18 @@ from src.encoding import (
 from src.geometry import compute_closure_metrics, compute_fk_chain
 from src.intersection import CROSS_90_INDEX, find_crossing_pairs
 from src.templates import (
+    CROSS_JUNCTION_TEMPLATES,
+    CROSS_PORTS_LOCAL,
     TEMPLATES,
     compute_branch_pieces,
     compute_required_main_distance,
+    get_cross_junction_inventory_requirements,
     get_siding_inventory_requirements,
     is_valid_siding,
     switch_indices_for,
+    switch_position_for_cross_port,
 )
-from src.types import MultiPathLayout, SwitchPair, TraversalPath
+from src.types import CrossJunction, MultiPathLayout, SwitchPair, TraversalPath
 
 
 # =============================================================================
@@ -81,11 +90,22 @@ def decode_chromosome(
         main_pieces, junctions, tracker, catalog, config,
     )
 
+    # Step 3.5: Inject cross junctions (4 switches + CROSS_90 sub-structure)
+    # MINIMAL IMPLEMENTATION: reads descriptors and validates inventory only.
+    # Full geometric validation (finding 4 switch positions in main loop that
+    # form a valid junction) is deferred until heuristic seeder bootstraps
+    # valid configurations. For now, random chromosomes don't satisfy the
+    # geometric constraints, so cross_junctions stays empty.
+    cross_junctions = _inject_cross_junctions(
+        augmented_pieces, x, dims, tracker, catalog, config,
+    )
+
     # Step 4: Self-intersection repair (CROSS_90 injection)
     augmented_pieces = _apply_crossing_repair(augmented_pieces, tracker, catalog, config)
 
     # Step 5 + 6: Build multi-path layout with FK and 2^J paths
     multi_path = _build_multi_path_layout(augmented_pieces, switch_pairs, catalog)
+    multi_path.cross_junctions = cross_junctions
 
     # Step 7: Auto-center within boundary
     start_x, start_y = get_start_position(x, dims)
@@ -292,6 +312,205 @@ def _inject_switches(
     return augmented, switch_pairs
 
 
+# =============================================================================
+# Step 3.5: Cross-Junction Injection
+# =============================================================================
+
+def _inject_cross_junctions(
+    main_pieces: List[int],
+    x: NDArray,
+    dims: PartitionedDimensions,
+    tracker: InventoryTracker,
+    catalog: TrackCatalog,
+    config: DecoderConfig,
+) -> List[CrossJunction]:
+    """Inject 4-switch + CROSS_90 junctions where descriptors validate.
+
+    For each active descriptor (W position + handedness):
+      1. Validate W position points at a STRAIGHT_16 in the (post-siding)
+         main loop and is not already claimed by a passing siding.
+      2. Reserve inventory for {4 switches + 4 spurs + 1 CROSS_90}.
+      3. Compute the cross center from W's FK state and template-supplied
+         port-W back-displacement.
+      4. For each remaining port (N/E/S), compute the target switch
+         (x, y, theta) by rotating the cross-local port pose by the cross
+         orientation alpha = W switch's heading, then finding the
+         downstream main-loop slot whose FK state matches within the
+         siding tolerance and is itself a STRAIGHT_16.
+      5. If all four positions resolve, mutate the four slots to the
+         template's switch index, deduct inventory, and emit a
+         CrossJunction record. On any failure, release the reserved
+         inventory and skip this descriptor.
+
+    Phase A caveat: the search uses pre-mutation FK. The W switch's
+    32-stud body (vs the replaced 16-stud STRAIGHT_16) shifts everything
+    downstream by 16 stud in the train direction; random chromosomes
+    rarely satisfy the constraint and the heuristic seeder is expected to
+    spell out main-loop layouts whose natural spacing already accounts
+    for the switch lengths.
+    """
+    descriptors = get_active_cross_junctions(x, dims)
+    if not descriptors:
+        return []
+
+    n_main = len(main_pieces)
+    if n_main == 0:
+        return []
+
+    pos_tol = config.siding_position_tolerance
+    ang_tol_rad = np.radians(config.siding_angle_tolerance)
+    pre_existing_switches = {pos for pos, p in enumerate(main_pieces)
+                             if p in SWITCH_INDICES}
+    used_positions: Set[int] = set(pre_existing_switches)
+    cross_junctions: List[CrossJunction] = []
+
+    indices = np.array(main_pieces, dtype=np.int32)
+    states = compute_fk_chain(catalog.get_fk(indices))
+
+    for slot, _active, position_w, handedness_idx in descriptors:
+        if not 0 <= position_w < n_main:
+            continue
+        if position_w in used_positions:
+            continue
+        if main_pieces[position_w] != STRAIGHT_16:
+            continue
+        if handedness_idx not in CROSS_JUNCTION_TEMPLATES:
+            continue
+
+        template = CROSS_JUNCTION_TEMPLATES[handedness_idx]
+        requirements = get_cross_junction_inventory_requirements(template)
+        if not tracker.can_use_batch(requirements):
+            continue
+
+        sw_x, sw_y, sw_theta = (float(states[position_w][0]),
+                                float(states[position_w][1]),
+                                float(states[position_w][2]))
+
+        cross_center = _cross_center_from_w_switch(
+            sw_x, sw_y, sw_theta, template,
+        )
+
+        target_states = {
+            port: _target_switch_state(port, cross_center, sw_theta, template)
+            for port in ("N", "E", "S")
+        }
+
+        switch_positions: Dict[str, int] = {"W": position_w}
+        all_found = True
+        for port, (tx, ty, tt) in target_states.items():
+            pos = _find_main_position_matching(
+                states, main_pieces, tx, ty, tt,
+                start=position_w + 1,
+                pos_tol=pos_tol,
+                ang_tol_rad=ang_tol_rad,
+                claimed=used_positions | set(switch_positions.values()),
+            )
+            if pos is None:
+                all_found = False
+                break
+            switch_positions[port] = pos
+
+        if not all_found:
+            continue
+
+        for pos in switch_positions.values():
+            tracker.release(main_pieces[pos])
+            main_pieces[pos] = template.switch_idx
+        tracker.use_batch(requirements)
+
+        cross_junctions.append(CrossJunction(
+            junction_id=slot,
+            handedness=template.handedness,
+            switch_positions=switch_positions,
+            cross_center=cross_center,
+            cross_idx=template.cross_idx,
+        ))
+        used_positions.update(switch_positions.values())
+
+    return cross_junctions
+
+
+def _cross_center_from_w_switch(
+    sw_x: float,
+    sw_y: float,
+    sw_theta_rad: float,
+    template,
+) -> Tuple[float, float]:
+    """Invert switch_position_for_cross_port for the W port.
+
+    With the cross axis-aligned at the origin, the W switch sits at some
+    (s0_x, s0_y, 0). For an arbitrarily-oriented cross we rotate that
+    offset by alpha = sw_theta_rad and translate by the actual switch
+    position to recover the cross center.
+    """
+    s0_x, s0_y, _ = switch_position_for_cross_port(
+        "W", cross_position=(0.0, 0.0), template=template,
+    )
+    cos_a, sin_a = np.cos(sw_theta_rad), np.sin(sw_theta_rad)
+    cx = sw_x - (s0_x * cos_a - s0_y * sin_a)
+    cy = sw_y - (s0_x * sin_a + s0_y * cos_a)
+    return float(cx), float(cy)
+
+
+def _target_switch_state(
+    port: str,
+    cross_center: Tuple[float, float],
+    cross_theta_rad: float,
+    template,
+) -> Tuple[float, float, float]:
+    """World-frame (x, y, theta_rad) for a switch at the named cross port.
+
+    Cross is rotated by cross_theta_rad relative to its canonical local
+    frame; switch placement formulas live in cross-local frame, so we
+    compute there and then rotate + translate back to world.
+    """
+    cx, cy = cross_center
+    s0_x, s0_y, s0_theta_deg = switch_position_for_cross_port(
+        port, cross_position=(0.0, 0.0), template=template,
+    )
+    cos_a, sin_a = np.cos(cross_theta_rad), np.sin(cross_theta_rad)
+    tx = cx + s0_x * cos_a - s0_y * sin_a
+    ty = cy + s0_x * sin_a + s0_y * cos_a
+    tt = np.radians(s0_theta_deg) + cross_theta_rad
+    return float(tx), float(ty), float(tt)
+
+
+def _find_main_position_matching(
+    states: NDArray,
+    main_pieces: List[int],
+    target_x: float,
+    target_y: float,
+    target_theta_rad: float,
+    start: int,
+    pos_tol: float,
+    ang_tol_rad: float,
+    claimed: Set[int],
+) -> Optional[int]:
+    """Best STRAIGHT_16 slot in main_pieces[start:] whose FK state lies
+    within (pos_tol, ang_tol_rad) of the target. Returns None if no slot
+    qualifies.
+    """
+    best_pos: Optional[int] = None
+    best_err = float("inf")
+    n = len(main_pieces)
+    for pos in range(start, n):
+        if pos in claimed:
+            continue
+        if main_pieces[pos] != STRAIGHT_16:
+            continue
+        px, py, pt = float(states[pos][0]), float(states[pos][1]), float(states[pos][2])
+        pos_err = float(np.hypot(px - target_x, py - target_y))
+        if pos_err > pos_tol:
+            continue
+        ang_diff = (pt - target_theta_rad + np.pi) % (2 * np.pi) - np.pi
+        if abs(ang_diff) > ang_tol_rad:
+            continue
+        if pos_err < best_err:
+            best_err = pos_err
+            best_pos = pos
+    return best_pos
+
+
 def _find_out_position(
     pieces: List[int],
     in_pos: int,
@@ -399,57 +618,53 @@ def _apply_crossing_repair(
     catalog: TrackCatalog,
     config: DecoderConfig,
 ) -> List[int]:
-    """Replace ~90° self-intersections with CROSS_90 pieces.
+    """Replace EVERY detected self-intersection with a CROSS_90 piece.
 
-    Detects segment crossings near 90 degrees and replaces the piece
-    at one crossing position with CROSS_90 if inventory allows.
-    Does not remove pieces (maintains stable indices for switch pairs).
+    Aggressive policy: any segment-on-segment crossing reported by
+    find_crossing_pairs has its pos_i slot rewritten to CROSS_90,
+    regardless of the underlying piece type or crossing angle. The
+    original piece (STRAIGHT_16, STRAIGHT_24, R40_LEFT, or R40_RIGHT)
+    is released to inventory and one CROSS_90 is consumed.
 
-    Returns:
-        Modified piece list with CROSS_90 replacements.
+    This is intentionally not FK-preserving: replacing a curve with a
+    CROSS_90 (16-stud through-route) drops a 22.5 deg heading change and
+    a 3-stud lateral offset, shifting everything downstream. The cost is
+    accepted because a layout with a visible self-intersection that has
+    NOT been marked with a CROSS_90 is considered an unacceptable
+    rendering — the repair always wins over closure preservation. The
+    GA's path forward for these candidates is to either commit to the
+    crossing (build around it) or evolve the crossing away entirely; the
+    optimizer's closure constraint already drives that selection.
+
+    Recomputes FK and re-detects pairs after each replacement so multi-
+    intersection layouts converge correctly.
     """
     n = len(pieces)
     if n < 4:
         return pieces
 
-    cross_remaining = tracker.remaining(CROSS_90_INDEX)
-    if cross_remaining <= 0:
-        return pieces
-
-    # Compute FK states for crossing detection
-    indices = np.array(pieces, dtype=np.int32)
-    fk_deltas = catalog.get_fk(indices)
-    states = compute_fk_chain(fk_deltas)
-
-    pairs = find_crossing_pairs(states, pieces)
-    if not pairs:
+    if tracker.remaining(CROSS_90_INDEX) <= 0:
         return pieces
 
     result = list(pieces)
-    claimed: Set[int] = set()
-    replacements = 0
 
-    for pos_i, pos_j, angle_diff in pairs:
-        if abs(angle_diff - 90.0) > config.crossing_angle_tolerance:
-            continue
-        if cross_remaining <= 0:
+    while tracker.remaining(CROSS_90_INDEX) > 0:
+        indices = np.array(result, dtype=np.int32)
+        fk_deltas = catalog.get_fk(indices)
+        states = compute_fk_chain(fk_deltas)
+
+        pairs = find_crossing_pairs(states, result)
+        if not pairs:
             break
-        if pos_i in claimed or pos_j in claimed:
-            continue
-        # Skip switch positions
-        if pieces[pos_i] in SWITCH_INDICES or pieces[pos_j] in SWITCH_INDICES:
-            continue
 
-        # Replace pos_i with CROSS_90
-        orig = result[pos_i]
-        tracker.release(orig)
+        # Take the first pair; find_crossing_pairs already sorts by
+        # proximity to 90 deg so the most "natural" perpendicular
+        # crossings get repaired first.
+        pos_i, _pos_j, _ang = pairs[0]
+        original = result[pos_i]
+        tracker.release(original)
         tracker.use(CROSS_90_INDEX)
         result[pos_i] = CROSS_90_INDEX
-
-        claimed.add(pos_i)
-        claimed.add(pos_j)
-        cross_remaining -= 1
-        replacements += 1
 
     return result
 
