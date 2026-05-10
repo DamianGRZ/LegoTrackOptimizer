@@ -75,7 +75,12 @@ pieces:
   # V2's 3-4-5 derivation gives (32.69, ±12.96); see test_catalog_geometry.py.
   # =========================================================================
 
-  - piece_id: R40_SWITCH_LEFT_IN
+  # A LEFT switch is one physical piece. In a passing siding, two of them are
+  # used: one as the diverge entry (train enters at port A, exits at port C),
+  # one as the merge return (train enters at port C, exits at port B). Both
+  # positions use this same catalog entry — installation orientation is
+  # handled in the decoder, not by separate piece types.
+  - piece_id: R40_SWITCH_LEFT
     kind: switch
     manufacturer: 4dbrix
     part_numbers: ["2.04.021"]
@@ -85,27 +90,16 @@ pieces:
     ports:
       A: {dx: 0.0,    dy: 0.0,    dtheta: 0.0}        # throat
       B: {dx: 32.0,   dy: 0.0,    dtheta: 0.0}        # straight through
-      C: {dx: 31.0,   dy: 6.2,    dtheta: 0.39269908} # diverging (left)
+      C: {dx: 32.75,  dy: 13.0,   dtheta: 0.39269908} # diverging (left); dx 0.75 stud past port B; dy = 5 stud edge gap + 8 stud track width centerline-to-centerline
     routes:
-      through:   [A, B]
-      diverging: [A, C]
+      through:   [A, B]   # straight-through main traversal
+      diverging: [A, C]   # IN-position branch traversal (train enters main, exits to branch)
+      # OUT-position branch traversal (C-from-siding -> A-to-main with switch
+      # installed reversed) is not a catalog route — its FK is precomputed and
+      # stored on PassingSidingTemplate.merge_fk, since reversed installation
+      # requires sign-flipping that the natural-direction catalog can't express.
 
-  - piece_id: R40_SWITCH_LEFT_OUT
-    kind: switch
-    manufacturer: 4dbrix
-    part_numbers: ["2.04.022"]
-    body_length_studs: 32.0
-    diverging_radius_studs: 40.0
-    hand: left
-    ports:
-      A: {dx: 0.0,    dy: 0.0,    dtheta: 0.0}
-      B: {dx: 32.0,   dy: 0.0,    dtheta: 0.0}
-      C: {dx: 1.0,    dy: 6.2,    dtheta: 0.39269908}
-    routes:
-      through:   [A, B]
-      diverging: [A, C]
-
-  - piece_id: R40_SWITCH_RIGHT_IN
+  - piece_id: R40_SWITCH_RIGHT
     kind: switch
     manufacturer: 4dbrix
     part_numbers: ["2.04.018"]
@@ -113,24 +107,9 @@ pieces:
     diverging_radius_studs: 40.0
     hand: right
     ports:
-      A: {dx: 0.0,    dy:  0.0,    dtheta:  0.0}
-      B: {dx: 32.0,   dy:  0.0,    dtheta:  0.0}
-      C: {dx: 31.0,   dy: -6.2,    dtheta: -0.39269908}
-    routes:
-      through:   [A, B]
-      diverging: [A, C]
-
-  - piece_id: R40_SWITCH_RIGHT_OUT
-    kind: switch
-    manufacturer: 4dbrix
-    part_numbers: ["2.04.019"]
-    body_length_studs: 32.0
-    diverging_radius_studs: 40.0
-    hand: right
-    ports:
-      A: {dx: 0.0,    dy:  0.0,    dtheta:  0.0}
-      B: {dx: 32.0,   dy:  0.0,    dtheta:  0.0}
-      C: {dx: 1.0,    dy: -6.2,    dtheta: -0.39269908}
+      A: {dx: 0.0,    dy:  0.0,   dtheta:  0.0}
+      B: {dx: 32.0,   dy:  0.0,   dtheta:  0.0}
+      C: {dx: 32.75,  dy: -13.0,  dtheta: -0.39269908} # mirror of LEFT around y axis
     routes:
       through:   [A, B]
       diverging: [A, C]

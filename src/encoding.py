@@ -45,11 +45,9 @@ class PieceIndex(IntEnum):
     R40_LEFT = 2
     R40_RIGHT = 3
     CROSS_90 = 4
-    SWITCH_LEFT_IN = 5
-    SWITCH_LEFT_OUT = 6
-    SWITCH_RIGHT_IN = 7
-    SWITCH_RIGHT_OUT = 8
-    DOUBLE_CROSSOVER = 9
+    SWITCH_LEFT = 5
+    SWITCH_RIGHT = 6
+    DOUBLE_CROSSOVER = 7
 
 
 # Convenience aliases
@@ -58,32 +56,21 @@ STRAIGHT_24 = PieceIndex.STRAIGHT_24
 R40_LEFT = PieceIndex.R40_LEFT
 R40_RIGHT = PieceIndex.R40_RIGHT
 CROSS_90 = PieceIndex.CROSS_90
-SWITCH_LEFT_IN = PieceIndex.SWITCH_LEFT_IN
-SWITCH_LEFT_OUT = PieceIndex.SWITCH_LEFT_OUT
-SWITCH_RIGHT_IN = PieceIndex.SWITCH_RIGHT_IN
-SWITCH_RIGHT_OUT = PieceIndex.SWITCH_RIGHT_OUT
+SWITCH_LEFT = PieceIndex.SWITCH_LEFT
+SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
 DOUBLE_CROSSOVER = PieceIndex.DOUBLE_CROSSOVER
 
 # Piece categories
 SIMPLE_PIECE_INDICES = {STRAIGHT_16, STRAIGHT_24, R40_LEFT, R40_RIGHT}
-SWITCH_INDICES = {SWITCH_LEFT_IN, SWITCH_LEFT_OUT, SWITCH_RIGHT_IN, SWITCH_RIGHT_OUT}
-IN_SWITCH_INDICES = {SWITCH_LEFT_IN, SWITCH_RIGHT_IN}
-OUT_SWITCH_INDICES = {SWITCH_LEFT_OUT, SWITCH_RIGHT_OUT}
+SWITCH_INDICES = {SWITCH_LEFT, SWITCH_RIGHT}
 CROSSING_INDICES = {CROSS_90, DOUBLE_CROSSOVER}
 
 # Main loop piece types: simple pieces + crossings (no switches, no double crossover)
 MAIN_LOOP_PIECE_INDICES = {STRAIGHT_16, STRAIGHT_24, R40_LEFT, R40_RIGHT, CROSS_90, DOUBLE_CROSSOVER}
 MAX_MAIN_LOOP_PIECE = max(MAIN_LOOP_PIECE_INDICES)
 
-# Physical switch types (2 types, not 4 — see plan Switch Piece Physical Reality)
-# Type A: LEFT_IN (5) = RIGHT_OUT (8) — same physical piece, FK (31.0, +6.2, +22.5)
-# Type B: LEFT_OUT (6) = RIGHT_IN (7) — same physical piece, FK (31.0, -6.2, -22.5)
-SWITCH_TYPE_A_INDICES = {SWITCH_LEFT_IN, SWITCH_RIGHT_OUT}
-SWITCH_TYPE_B_INDICES = {SWITCH_LEFT_OUT, SWITCH_RIGHT_IN}
-
-# ID mappings for inventory computation
-SWITCH_TYPE_A_IDS = {"R40_SWITCH_LEFT_IN", "R40_SWITCH_RIGHT_OUT"}
-SWITCH_TYPE_B_IDS = {"R40_SWITCH_LEFT_OUT", "R40_SWITCH_RIGHT_IN"}
+# Switch ID set used by inventory computation (one entry per handedness now).
+SWITCH_IDS = {"R40_SWITCH_LEFT", "R40_SWITCH_RIGHT"}
 
 
 # =============================================================================
@@ -144,10 +131,11 @@ def compute_dimensions(config, catalog) -> PartitionedDimensions:
             n_main += count
     n_main = max(1, n_main)
 
-    # Junctions: from physical switch types (2 types, not 4)
-    type_a = sum(inv.get(pid, 0) for pid in SWITCH_TYPE_A_IDS)
-    type_b = sum(inv.get(pid, 0) for pid in SWITCH_TYPE_B_IDS)
-    max_junctions = min(type_a, type_b)
+    # Each passing siding is opposite-handed: consumes 1 LEFT + 1 RIGHT switch.
+    # So available junctions = min of the two counts.
+    left_count = inv.get("R40_SWITCH_LEFT", 0)
+    right_count = inv.get("R40_SWITCH_RIGHT", 0)
+    max_junctions = min(left_count, right_count)
 
     # Straights available for branches
     total_straights = inv.get("STRAIGHT_16", 0) + inv.get("STRAIGHT_24", 0)

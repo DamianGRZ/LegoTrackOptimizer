@@ -20,8 +20,8 @@ from src.types import MultiPathLayout
 STRAIGHT_16 = PieceIndex.STRAIGHT_16
 R40_LEFT = PieceIndex.R40_LEFT
 R40_RIGHT = PieceIndex.R40_RIGHT
-R40_SWITCH_LEFT_IN = PieceIndex.SWITCH_LEFT_IN
-R40_SWITCH_LEFT_OUT = PieceIndex.SWITCH_LEFT_OUT
+R40_SWITCH_LEFT = PieceIndex.SWITCH_LEFT
+R40_SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
 
 
 class TestMainLoopDecoding:

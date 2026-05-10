@@ -10,11 +10,9 @@ inventory:
   # R40 curves
   R40_LEFT: 40
   R40_RIGHT: 40
-  # R40 Switches (straight-through mode in optimizer)
-  R40_SWITCH_LEFT_IN: 2
-  R40_SWITCH_LEFT_OUT: 2
-#  R40_SWITCH_RIGHT_IN: 4
-#  R40_SWITCH_RIGHT_OUT: 4
+  # R40 Switches: each passing siding consumes 1 LEFT + 1 RIGHT (opposite-handed pair).
+  R40_SWITCH_LEFT: 2
+  R40_SWITCH_RIGHT: 2
 
 boundary:
   min_x: -350.0

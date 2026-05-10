@@ -149,9 +149,9 @@ class TestTopologyAndRoutes:
 
     def test_switch_has_multiple_routes(self, catalog: TrackCatalog):
         """Switch pieces have multiple routes."""
-        topo = catalog.get_topology(5)  # R40_SWITCH_LEFT_IN
+        topo = catalog.get_topology(5)  # R40_SWITCH_LEFT
         assert topo is not None
-        assert len(topo.routes) >= 2  # Straight and diverge
+        assert len(topo.routes) >= 2  # through and diverging
 
     def test_crossing_has_multiple_routes(self, catalog: TrackCatalog):
         """Crossing pieces have multiple routes."""
@@ -162,7 +162,7 @@ class TestTopologyAndRoutes:
 
     def test_double_crossover_has_four_routes(self, catalog: TrackCatalog):
         """DOUBLE_CROSSOVER has 4 routes."""
-        topo = catalog.get_topology(9)  # DOUBLE_CROSSOVER
+        topo = catalog.get_topology(7)  # DOUBLE_CROSSOVER (post-refactor index)
         assert topo is not None
         assert len(topo.routes) == 4
 
@@ -202,8 +202,8 @@ class TestPieceClassification:
     def test_get_switch_pieces(self, catalog: TrackCatalog):
         """Can get switch pieces."""
         switches = catalog.get_switch_pieces()
-        assert 5 in switches  # R40_SWITCH_LEFT_IN
-        assert 6 in switches  # R40_SWITCH_LEFT_OUT
+        assert 5 in switches  # R40_SWITCH_LEFT
+        assert 6 in switches  # R40_SWITCH_RIGHT
 
 
 class TestStudMm:

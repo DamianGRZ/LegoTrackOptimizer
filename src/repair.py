@@ -245,18 +245,16 @@ class JunctionValidityRepair(Repair):
         self._deactivate_excess_junctions(x, active_junction_count)
 
     def _deactivate_excess_junctions(self, x: NDArray, n_active: int) -> None:
-        """Deactivate junctions beyond available switch inventory."""
-        # Import here to avoid circular reference issues with encoding constants
-        from .encoding import SWITCH_TYPE_A_INDICES, SWITCH_TYPE_B_INDICES
+        """Deactivate junctions beyond available switch inventory.
 
-        # Count available switch pairs from inventory
-        type_a_available = sum(
-            self.inventory_by_index.get(idx, 0) for idx in SWITCH_TYPE_A_INDICES
-        )
-        type_b_available = sum(
-            self.inventory_by_index.get(idx, 0) for idx in SWITCH_TYPE_B_INDICES
-        )
-        max_pairs = min(type_a_available, type_b_available)
+        Each passing siding is opposite-handed: 1 LEFT + 1 RIGHT switch.
+        Max pair count = min(LEFT_count, RIGHT_count).
+        """
+        from .encoding import SWITCH_LEFT, SWITCH_RIGHT
+
+        left_count = self.inventory_by_index.get(int(SWITCH_LEFT), 0)
+        right_count = self.inventory_by_index.get(int(SWITCH_RIGHT), 0)
+        max_pairs = min(left_count, right_count)
 
         if n_active <= max_pairs:
             return
@@ -312,33 +310,19 @@ class InventoryRepair(Repair):
                 continue
             usage[pt] = usage.get(pt, 0) + 1
 
-        # Count junction branch usage (switches + straights per active junction)
-        from .encoding import (
-            SWITCH_LEFT_IN,
-            SWITCH_LEFT_OUT,
-            SWITCH_RIGHT_IN,
-            SWITCH_RIGHT_OUT,
-        )
+        # Each active junction is a passing siding consuming 1 LEFT + 1 RIGHT
+        # switch (opposite-handed pair) regardless of which side it diverges to.
+        from .encoding import SWITCH_LEFT, SWITCH_RIGHT
+        left_sw, right_sw = int(SWITCH_LEFT), int(SWITCH_RIGHT)
 
         for k in range(self.dims.max_junctions):
             active, pos, hand, n_str = get_junction(x, self.dims, k)
             if not active:
                 continue
 
-            # Each junction uses one Type A switch (IN) and one Type B switch (OUT)
-            # Handedness determines which specific switch indices:
-            #   0=LEFT, 1=RIGHT, 2=LEFT_REV, 3=RIGHT_REV
-            if hand in (0, 2):  # LEFT variants
-                in_sw = int(SWITCH_LEFT_IN)
-                out_sw = int(SWITCH_LEFT_OUT)
-            else:  # RIGHT variants
-                in_sw = int(SWITCH_RIGHT_IN)
-                out_sw = int(SWITCH_RIGHT_OUT)
+            usage[left_sw] = usage.get(left_sw, 0) + 1
+            usage[right_sw] = usage.get(right_sw, 0) + 1
 
-            usage[in_sw] = usage.get(in_sw, 0) + 1
-            usage[out_sw] = usage.get(out_sw, 0) + 1
-
-            # Branch straights (assume STRAIGHT_16 for simplicity)
             if n_str > 0:
                 usage[STRAIGHT_16] = usage.get(STRAIGHT_16, 0) + n_str
 
