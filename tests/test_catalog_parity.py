@@ -42,7 +42,7 @@ class TestFKTableParity:
 
     @pytest.mark.parametrize("piece_id", [
         "STRAIGHT_16", "STRAIGHT_24",
-        "R40_LEFT", "R40_RIGHT",
+        "R40_CURVE", "R40_CURVE",
         "CROSS_90", "DOUBLE_CROSSOVER",
         "R40_SWITCH_LEFT_IN", "R40_SWITCH_LEFT_OUT",
         "R40_SWITCH_RIGHT_IN", "R40_SWITCH_RIGHT_OUT",

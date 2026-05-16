@@ -77,7 +77,7 @@ class TestV2YamlCurves:
     def test_r40_left_matches_legacy_fk(self):
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
-        curve = cat.by_id["R40_LEFT"]
+        curve = cat.by_id["R40_CURVE"]
         assert curve.kind == "curve"
         assert curve.radius_studs == 40.0
         assert abs(curve.sector_angle_rad - 0.39269908) < 1e-7
@@ -89,7 +89,7 @@ class TestV2YamlCurves:
     def test_r40_right_has_negative_dy_and_dtheta(self):
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
-        curve = cat.by_id["R40_RIGHT"]
+        curve = cat.by_id["R40_CURVE"]
         b = curve.ports["B"]
         assert b.dy < 0
         assert b.dtheta < 0
@@ -138,7 +138,7 @@ class TestV2YamlCrossings:
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         expected = {
             "STRAIGHT_16", "STRAIGHT_24",
-            "R40_LEFT", "R40_RIGHT",
+            "R40_CURVE", "R40_CURVE",
             "R40_SWITCH_LEFT", "R40_SWITCH_RIGHT",
             "CROSS_90", "DOUBLE_CROSSOVER",
         }

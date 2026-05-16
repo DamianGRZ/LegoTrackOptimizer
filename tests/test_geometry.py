@@ -101,7 +101,7 @@ class TestLayout:
     """Tests for Layout properties."""
 
     def test_r40_circle_closure(self, catalog: TrackCatalog):
-        """16 R40_LEFT pieces form closed circle."""
+        """16 R40_CURVE pieces form closed circle."""
         chromosome = np.full(16, 2, dtype=np.int32)
         layout = build_layout(chromosome, catalog)
 

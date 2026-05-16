@@ -41,31 +41,20 @@ pieces:
   # CURVES (R40, 22.5°)
   # FK: dx = R*sin(θ), dy = R*(1-cos(θ)), dtheta = θ
   # θ = 22.5° = π/8 rad
+  # ONE physical piece (4DBrix 2.04.069). Handedness is selected per placement
+  # via the chromosome's flip bit: flip=0 → LEFT (+22.5°), flip=1 → RIGHT (-22.5°).
+  # Catalog stores LEFT FK; decoder negates dy/dtheta when flip=1.
   # =========================================================================
 
-  - piece_id: R40_LEFT
+  - piece_id: R40_CURVE
     kind: curve
     manufacturer: 4dbrix
     part_numbers: ["2.04.069"]
     radius_studs: 40.0
     sector_angle_rad: 0.39269908                # π/8
-    hand: left
     ports:
       A: {dx: 0.0,     dy: 0.0,    dtheta: 0.0}
       B: {dx: 15.307,  dy: 3.045,  dtheta: 0.39269908}
-    routes:
-      main: [A, B]
-
-  - piece_id: R40_RIGHT
-    kind: curve
-    manufacturer: 4dbrix
-    part_numbers: ["2.04.069"]
-    radius_studs: 40.0
-    sector_angle_rad: 0.39269908
-    hand: right
-    ports:
-      A: {dx: 0.0,     dy:  0.0,    dtheta:  0.0}
-      B: {dx: 15.307,  dy: -3.045,  dtheta: -0.39269908}
     routes:
       main: [A, B]
 

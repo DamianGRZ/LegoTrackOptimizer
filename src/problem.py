@@ -16,7 +16,11 @@ from .catalog import TrackCatalog
 from .decoder import DecoderConfig, decode_chromosome
 from .encoding import compute_dimensions, generate_bounds
 from .train import evaluate_layout
-from .intersection import count_dangling_cross_ports, count_segment_crossings
+from .intersection import (
+    count_dangling_cross_ports,
+    count_dangling_double_crossover_ports,
+    count_segment_crossings,
+)
 
 
 class TrackOptimizationProblem(ElementwiseProblem):
@@ -158,7 +162,14 @@ class TrackOptimizationProblem(ElementwiseProblem):
         main_pieces_list = list(layout.main_loop_pieces)
         unresolved = count_segment_crossings(layout.states, main_pieces_list)
         dangling = count_dangling_cross_ports(layout.states, main_pieces_list)
-        g_collisions = (unresolved / 5.0) + float(dangling)
+        dangling_dc = count_dangling_double_crossover_ports(
+            main_pieces_list,
+            getattr(layout, "main_loop_routes", {}),
+            getattr(layout, "dbl_crossovers", []),
+        )
+        # Each dangling DBL_CROSSOVER port is structurally unbuildable, same
+        # weight as a dangling CROSS_90 port (1.0 per port).
+        g_collisions = (unresolved / 5.0) + float(dangling) + float(dangling_dc)
 
         g_inventory_per_type = self._compute_per_type_inventory_violation(layout)
 

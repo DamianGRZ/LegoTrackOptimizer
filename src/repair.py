@@ -25,13 +25,14 @@ from .encoding import (
     get_active_junctions,
     get_active_main_pieces,
     get_junction,
+    get_main_loop_flips,
     get_main_loop_types,
+    set_flip,
     set_junction,
     set_main_loop_type,
 )
 
-R40_LEFT = int(PieceIndex.R40_LEFT)
-R40_RIGHT = int(PieceIndex.R40_RIGHT)
+R40_CURVE = int(PieceIndex.R40_CURVE)
 STRAIGHT_16 = int(PieceIndex.STRAIGHT_16)
 STRAIGHT_24 = int(PieceIndex.STRAIGHT_24)
 
@@ -49,7 +50,7 @@ class MainLoopClosureRepair(Repair):
     """Adjust R40 curves in the main loop to approach 360 degree closure.
 
     Computes total angle from active main loop pieces using the FK table.
-    If angle deficit exists, appends R40_LEFT curves into empty slots.
+    If angle deficit exists, appends R40_CURVE curves into empty slots.
     If angle excess exists, removes R40 curves from the end.
     """
 
@@ -74,48 +75,52 @@ class MainLoopClosureRepair(Repair):
 
     def _repair_chromosome(self, x: NDArray) -> None:
         types = get_main_loop_types(x, self.dims)
+        flips = get_main_loop_flips(x, self.dims)
         active_mask = types != INACTIVE
 
         if not np.any(active_mask):
             return
 
-        # Compute total angle from FK table
         active_types = types[active_mask]
-        total_angle = self._compute_total_angle(active_types)
+        active_flips = flips[active_mask]
+        total_angle = self._compute_total_angle(active_types, active_flips)
         deficit = TARGET_ANGLE - total_angle
 
         if abs(deficit) < CLOSURE_TOLERANCE:
             return
 
-        # Count current R40 usage for inventory check
         usage = Counter(int(t) for t in active_types)
 
         if deficit > R40_ANGLE:
-            self._add_curves(x, types, usage, deficit)
+            self._add_curves(x, types, flips, usage, deficit)
         elif deficit < -R40_ANGLE:
-            self._remove_curves(x, types, deficit)
+            self._remove_curves(x, types, flips, deficit)
 
-    def _compute_total_angle(self, active_types: NDArray) -> float:
-        """Sum dtheta for all active pieces via FK table lookup."""
+    def _compute_total_angle(self, active_types: NDArray, active_flips: NDArray) -> float:
+        """Sum signed dtheta across active pieces, honoring R40_CURVE flips."""
         total = 0.0
-        for pt in active_types:
+        for pt, flip in zip(active_types, active_flips):
             pt_int = int(pt)
             if 0 <= pt_int < len(self.fk_table):
-                total += self.fk_table[pt_int, 2]
+                dtheta = float(self.fk_table[pt_int, 2])
+                if pt_int == R40_CURVE and int(flip):
+                    dtheta = -dtheta
+                total += dtheta
         return total
 
     def _add_curves(
         self,
         x: NDArray,
         types: NDArray,
+        flips: NDArray,
         usage: Counter,
         deficit: float,
     ) -> None:
-        """Add R40 curves to reduce angular deficit."""
-        # Choose curve direction based on deficit sign (positive = need left turns)
-        curve_idx = R40_LEFT if deficit > 0 else R40_RIGHT
-        curve_angle = R40_ANGLE if deficit > 0 else -R40_ANGLE
-
+        """Add R40_CURVE curves whose flip cancels the angular deficit."""
+        curve_idx = R40_CURVE
+        # flip=0 → +22.5°, flip=1 → -22.5°. To shrink a positive deficit we need
+        # left turns (flip=0); negative deficit → right turns (flip=1).
+        needed_flip = 0 if deficit > 0 else 1
         available = (
             self.inventory_by_index.get(curve_idx, 0) - usage.get(curve_idx, 0)
         )
@@ -125,27 +130,29 @@ class MainLoopClosureRepair(Repair):
         n_needed = int(abs(deficit) / R40_ANGLE)
         n_add = min(n_needed, available, self.max_corrections)
 
-        # Find empty slots after last active piece
         added = 0
         for pos in range(self.dims.n_main):
             if added >= n_add:
                 break
             if types[pos] == INACTIVE:
                 set_main_loop_type(x, self.dims, pos, curve_idx)
+                set_flip(x, self.dims, pos, needed_flip)
                 types[pos] = curve_idx
+                flips[pos] = needed_flip
                 added += 1
 
     def _remove_curves(
         self,
         x: NDArray,
         types: NDArray,
+        flips: NDArray,
         deficit: float,
     ) -> None:
-        """Remove R40 curves to reduce angular excess."""
-        # Excess angle: deficit is negative, remove curves matching the excess direction
-        # If total > 360 (deficit < 0), remove curves contributing to excess
-        curve_idx = R40_LEFT if deficit < 0 else R40_RIGHT
-
+        """Remove R40 curves contributing to the excess direction."""
+        curve_idx = R40_CURVE
+        # Excess in the LEFT direction (deficit < 0 → total > 360) is cured by
+        # dropping flip=0 curves; symmetric for RIGHT excess.
+        target_flip = 0 if deficit < 0 else 1
         n_needed = int(abs(deficit) / R40_ANGLE)
         n_remove = min(n_needed, self.max_corrections)
 
@@ -153,9 +160,11 @@ class MainLoopClosureRepair(Repair):
         for pos in range(self.dims.n_main - 1, -1, -1):
             if removed >= n_remove:
                 break
-            if int(types[pos]) == curve_idx:
+            if int(types[pos]) == curve_idx and int(flips[pos]) == target_flip:
                 set_main_loop_type(x, self.dims, pos, INACTIVE)
+                set_flip(x, self.dims, pos, 0)
                 types[pos] = INACTIVE
+                flips[pos] = 0
                 removed += 1
 
 

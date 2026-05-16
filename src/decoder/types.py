@@ -104,4 +104,5 @@ class ValidatedJunction:
     n_straights: int
     template: PassingSidingTemplate
     branch_pieces: List[int]
+    branch_flips: List[int]
     siding_requirements: Dict[int, int]

@@ -15,8 +15,8 @@ from src.decoder.construction import _inject_cross_junctions
 from src.decoder.types import DecoderConfig, InventoryTracker
 from src.encoding import (
     CROSS_90,
-    R40_LEFT,
-    R40_RIGHT,
+    R40_CURVE,
+    R40_CURVE,
     STRAIGHT_16,
     SWITCH_LEFT,
     SWITCH_RIGHT,
@@ -42,6 +42,7 @@ def dims() -> PartitionedDimensions:
         n_main=64,
         max_junctions=0,
         max_cross_junctions=2,
+        max_double_crossovers=0,
         total_straights=40,
         boundary_min_x=-200.0,
         boundary_max_x=200.0,
@@ -64,7 +65,7 @@ class TestInjectCrossJunctionsFailurePaths:
     ) -> None:
         x = create_empty_chromosome(dims)
         pieces = [STRAIGHT_16] * 16
-        inv = {"STRAIGHT_16": 40, "R40_LEFT": 20, "R40_RIGHT": 20,
+        inv = {"STRAIGHT_16": 40, "R40_CURVE": 20, "R40_CURVE": 20,
                "CROSS_90": 5, "R40_SWITCH_LEFT": 10, "R40_SWITCH_RIGHT": 10}
         tracker = _make_tracker(cat, inv, pieces)
 
@@ -80,11 +81,11 @@ class TestInjectCrossJunctionsFailurePaths:
     ) -> None:
         x = create_empty_chromosome(dims)
         set_cross_junction(x, dims, slot=0, active=1, position_W=3, handedness=0)
-        # Position 3 is an R40_LEFT, not a STRAIGHT_16 — descriptor must be skipped.
-        pieces = [STRAIGHT_16, STRAIGHT_16, STRAIGHT_16, R40_LEFT,
+        # Position 3 is an R40_CURVE, not a STRAIGHT_16 — descriptor must be skipped.
+        pieces = [STRAIGHT_16, STRAIGHT_16, STRAIGHT_16, R40_CURVE,
                   STRAIGHT_16, STRAIGHT_16]
         original = list(pieces)
-        inv = {"STRAIGHT_16": 40, "R40_LEFT": 20, "R40_RIGHT": 20,
+        inv = {"STRAIGHT_16": 40, "R40_CURVE": 20, "R40_CURVE": 20,
                "CROSS_90": 5, "R40_SWITCH_LEFT": 10}
         tracker = _make_tracker(cat, inv, pieces)
 
@@ -103,7 +104,7 @@ class TestInjectCrossJunctionsFailurePaths:
         pieces = [STRAIGHT_16] * 8
         original = list(pieces)
         # No CROSS_90 in inventory — junction must be skipped.
-        inv = {"STRAIGHT_16": 40, "R40_LEFT": 20, "R40_RIGHT": 20,
+        inv = {"STRAIGHT_16": 40, "R40_CURVE": 20, "R40_CURVE": 20,
                "CROSS_90": 0, "R40_SWITCH_LEFT": 10}
         tracker = _make_tracker(cat, inv, pieces)
 
@@ -121,7 +122,7 @@ class TestInjectCrossJunctionsFailurePaths:
         pieces = [STRAIGHT_16, STRAIGHT_16, SWITCH_LEFT, STRAIGHT_16,
                   STRAIGHT_16, STRAIGHT_16]
         original = list(pieces)
-        inv = {"STRAIGHT_16": 40, "R40_LEFT": 20, "R40_RIGHT": 20,
+        inv = {"STRAIGHT_16": 40, "R40_CURVE": 20, "R40_CURVE": 20,
                "CROSS_90": 5, "R40_SWITCH_LEFT": 10}
         tracker = _make_tracker(cat, inv, pieces)
 
@@ -139,7 +140,7 @@ class TestInjectCrossJunctionsFailurePaths:
         set_cross_junction(x, dims, slot=0, active=1, position_W=1, handedness=0)
         pieces = [STRAIGHT_16] * 16
         original = list(pieces)
-        inv = {"STRAIGHT_16": 40, "R40_LEFT": 20, "R40_RIGHT": 20,
+        inv = {"STRAIGHT_16": 40, "R40_CURVE": 20, "R40_CURVE": 20,
                "CROSS_90": 5, "R40_SWITCH_LEFT": 10}
         tracker = _make_tracker(cat, inv, pieces)
 

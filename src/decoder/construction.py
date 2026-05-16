@@ -23,11 +23,14 @@ from src.encoding import (
     CJ_HANDEDNESS,
     CJ_POSITION_W,
     INACTIVE,
+    R40_CURVE,
     STRAIGHT_16,
     SWITCH_INDICES,
     PartitionedDimensions,
     get_active_cross_junctions,
+    get_active_double_crossovers,
     get_active_junctions,
+    get_main_loop_flips,
     get_main_loop_types,
     get_start_position,
 )
@@ -36,16 +39,58 @@ from src.intersection import CROSS_90_INDEX, find_crossing_pairs
 from src.templates import (
     CROSS_JUNCTION_TEMPLATES,
     CROSS_PORTS_LOCAL,
+    DC_PIECE_IDX,
     TEMPLATES,
     compute_branch_pieces,
     compute_required_main_distance,
+    dbl_crossover_piece_origin,
+    dbl_crossover_routes_cover_all_ports,
     get_cross_junction_inventory_requirements,
+    get_dbl_crossover_inventory_requirements,
     get_siding_inventory_requirements,
     is_valid_siding,
     switch_indices_for,
     switch_position_for_cross_port,
 )
-from src.types import CrossJunction, MultiPathLayout, SwitchPair, TraversalPath
+from src.types import CrossJunction, DblCrossover, MultiPathLayout, SwitchPair, TraversalPath
+
+
+# =============================================================================
+# FK with per-slot flip (R40_CURVE handedness chosen at placement time)
+# =============================================================================
+
+def get_fk_with_flip(
+    catalog: TrackCatalog, piece_idx: int, flip: int = 0,
+) -> NDArray[np.float64]:
+    """FK row for ``piece_idx``, negated when ``flip`` is set on an R40_CURVE.
+
+    Other piece types ignore the flip bit (catalog row is symmetric or has
+    its own per-route handling). Returned array shape is (3,): [dx, dy, dtheta_deg].
+    """
+    fk = catalog._fk_table[piece_idx].copy()
+    if piece_idx == int(R40_CURVE) and flip:
+        fk[1] *= -1.0
+        fk[2] *= -1.0
+    return fk
+
+
+def fk_array_with_flips(
+    catalog: TrackCatalog,
+    pieces: List[int],
+    flips: Optional[List[int]] = None,
+) -> NDArray[np.float64]:
+    """Vectorized FK lookup for a main-loop slice, applying per-slot flips."""
+    indices = np.asarray(pieces, dtype=np.int32)
+    fk = catalog.get_fk(indices).copy()
+    if flips is None:
+        return fk
+    pieces_arr = np.asarray(pieces, dtype=np.int32)
+    flips_arr = np.asarray(flips, dtype=np.int32)
+    negate = (pieces_arr == int(R40_CURVE)) & (flips_arr == 1)
+    if negate.any():
+        fk[negate, 1] *= -1.0
+        fk[negate, 2] *= -1.0
+    return fk
 
 
 # =============================================================================
@@ -76,36 +121,42 @@ def decode_chromosome(
 
     tracker = InventoryTracker(inventory, catalog)
 
-    # Step 1: Read main loop active pieces
-    main_pieces = _read_main_loop(x, dims, tracker)
+    # Step 1: Read main loop active pieces and their flip bits
+    main_pieces, main_flips = _read_main_loop(x, dims, tracker)
 
     if not main_pieces:
         return _empty_layout()
 
     # Step 2: Read and validate junctions
-    junctions = _read_junctions(x, dims, main_pieces, tracker, catalog, config)
+    junctions = _read_junctions(x, dims, main_pieces, tracker, catalog, config, main_flips=main_flips)
 
     # Step 3: Inject switches into main loop, build switch pairs
-    augmented_pieces, switch_pairs = _inject_switches(
-        main_pieces, junctions, tracker, catalog, config,
+    augmented_pieces, augmented_flips, switch_pairs = _inject_switches(
+        main_pieces, junctions, tracker, catalog, config, main_flips=main_flips,
     )
 
-    # Step 3.5: Inject cross junctions (4 switches + CROSS_90 sub-structure)
-    # MINIMAL IMPLEMENTATION: reads descriptors and validates inventory only.
-    # Full geometric validation (finding 4 switch positions in main loop that
-    # form a valid junction) is deferred until heuristic seeder bootstraps
-    # valid configurations. For now, random chromosomes don't satisfy the
-    # geometric constraints, so cross_junctions stays empty.
     cross_junctions = _inject_cross_junctions(
         augmented_pieces, x, dims, tracker, catalog, config,
+        main_flips=augmented_flips,
+    )
+
+    dbl_crossovers, dbl_route_map = _inject_double_crossovers(
+        augmented_pieces, x, dims, tracker, catalog, config,
+        main_flips=augmented_flips,
     )
 
     # Step 4: Self-intersection repair (CROSS_90 injection)
-    augmented_pieces = _apply_crossing_repair(augmented_pieces, tracker, catalog, config)
+    augmented_pieces, augmented_flips = _apply_crossing_repair(
+        augmented_pieces, tracker, catalog, config, flips=augmented_flips,
+    )
 
     # Step 5 + 6: Build multi-path layout with FK and 2^J paths
-    multi_path = _build_multi_path_layout(augmented_pieces, switch_pairs, catalog)
+    multi_path = _build_multi_path_layout(
+        augmented_pieces, augmented_flips, switch_pairs, catalog, dbl_route_map,
+    )
     multi_path.cross_junctions = cross_junctions
+    multi_path.dbl_crossovers = dbl_crossovers
+    multi_path.main_loop_routes = dbl_route_map
 
     # Step 7: Auto-center within boundary
     start_x, start_y = get_start_position(x, dims)
@@ -122,18 +173,19 @@ def _read_main_loop(
     x: NDArray,
     dims: PartitionedDimensions,
     tracker: InventoryTracker,
-) -> List[int]:
-    """Read active main loop pieces, consuming from inventory.
-
-    Filters INACTIVE genes and pieces that exceed inventory.
+) -> Tuple[List[int], List[int]]:
+    """Read active main loop pieces and their per-slot flips.
 
     Returns:
-        List of valid piece indices for the main loop.
+        (pieces, flips): parallel lists. Flips are kept only for slots that
+        survive the inventory check, so indexing aligns with ``pieces``.
     """
     raw_types = get_main_loop_types(x, dims)
+    raw_flips = get_main_loop_flips(x, dims)
     pieces: List[int] = []
+    flips: List[int] = []
 
-    for val in raw_types:
+    for slot, val in enumerate(raw_types):
         idx = int(val)
         if idx == INACTIVE:
             continue
@@ -141,8 +193,9 @@ def _read_main_loop(
             continue
         tracker.use(idx)
         pieces.append(idx)
+        flips.append(int(raw_flips[slot]))
 
-    return pieces
+    return pieces, flips
 
 
 # =============================================================================
@@ -156,6 +209,7 @@ def _read_junctions(
     tracker: InventoryTracker,
     catalog: TrackCatalog,
     config: DecoderConfig,
+    main_flips: Optional[List[int]] = None,
 ) -> List[ValidatedJunction]:
     """Read active junctions, validate inventory, deactivate if insufficient.
 
@@ -184,7 +238,7 @@ def _read_junctions(
         # Clamp n_straights to reasonable range
         n_straights = max(0, min(n_straights, dims.total_straights))
 
-        branch_pieces = compute_branch_pieces(template, n_straights)
+        branch_pieces, branch_flips = compute_branch_pieces(template, n_straights)
         requirements = get_siding_inventory_requirements(template, n_straights)
 
         # Greedy inventory check
@@ -201,6 +255,7 @@ def _read_junctions(
             n_straights=n_straights,
             template=template,
             branch_pieces=branch_pieces,
+            branch_flips=branch_flips,
             siding_requirements=requirements,
         ))
 
@@ -217,35 +272,31 @@ def _inject_switches(
     tracker: InventoryTracker,
     catalog: TrackCatalog,
     config: DecoderConfig,
-) -> Tuple[List[int], List[SwitchPair]]:
+    main_flips: Optional[List[int]] = None,
+) -> Tuple[List[int], List[int], List[SwitchPair]]:
     """Replace main loop pieces at junction positions with switches.
 
-    For each validated junction:
-    1. Replace piece at IN position with IN switch
-    2. Walk FK from IN to find OUT position matching required distance
-    3. Replace piece at OUT position with OUT switch
-    4. Validate geometric alignment via is_valid_siding()
-    5. Revert and deactivate if invalid
-
     Returns:
-        (augmented_pieces, switch_pairs) where augmented_pieces has
-        switches injected in place.
+        (augmented_pieces, augmented_flips, switch_pairs). The flips array is
+        parallel to ``augmented_pieces``; slots overwritten by a switch get
+        flip=0 (switches are not flip-aware).
     """
+    if main_flips is None:
+        main_flips = [0] * len(main_pieces)
     if not junctions:
-        return list(main_pieces), []
+        return list(main_pieces), list(main_flips), []
 
     augmented = list(main_pieces)
+    augmented_flips = list(main_flips)
     switch_pairs: List[SwitchPair] = []
     used_positions: Set[int] = set()
     n_main = len(augmented)
 
-    # Track cumulative offset from prior injections (none — we replace, not insert)
     pair_id = 0
 
     for junc in junctions:
         in_pos = junc.position
 
-        # Skip if position already claimed or out of range
         if in_pos in used_positions or in_pos >= n_main:
             _release_junction_inventory(junc, tracker)
             continue
@@ -253,8 +304,7 @@ def _inject_switches(
         template = junc.template
         required_dist = compute_required_main_distance(template, junc.n_straights)
 
-        # Find OUT position by walking FK from IN position
-        out_pos = _find_out_position(augmented, in_pos, required_dist, catalog)
+        out_pos = _find_out_position(augmented, augmented_flips, in_pos, required_dist, catalog)
 
         if out_pos is None or out_pos >= n_main or out_pos <= in_pos:
             _release_junction_inventory(junc, tracker)
@@ -264,33 +314,33 @@ def _inject_switches(
             _release_junction_inventory(junc, tracker)
             continue
 
-        # IN-state is the train state when entering the IN switch — same
-        # before/after injection (computed from positions 0..in_pos-1).
-        in_state = _compute_state_at_position(augmented, in_pos, catalog)
+        in_state = _compute_state_at_position(augmented, augmented_flips, in_pos, catalog)
 
-        # OUT-state must reflect post-injection geometry: the IN switch's
-        # body length differs from whatever piece it replaces, shifting
-        # everything downstream. Tentatively inject IN, then compute, then
-        # revert if the alignment check fails.
         entry_switch_idx, exit_switch_idx = switch_indices_for(template)
         orig_in = augmented[in_pos]
+        orig_in_flip = augmented_flips[in_pos]
         augmented[in_pos] = entry_switch_idx
-        out_state = _compute_state_at_position(augmented, out_pos, catalog)
+        augmented_flips[in_pos] = 0
+        out_state = _compute_state_at_position(augmented, augmented_flips, out_pos, catalog)
 
         if not is_valid_siding(
             in_state, out_state, template, junc.n_straights,
             position_tolerance=config.siding_position_tolerance,
             angle_tolerance=config.siding_angle_tolerance,
         ):
-            augmented[in_pos] = orig_in  # revert tentative IN injection
+            augmented[in_pos] = orig_in
+            augmented_flips[in_pos] = orig_in_flip
             _release_junction_inventory(junc, tracker)
             continue
 
         # Release the replaced pieces and complete the OUT injection.
         orig_out = augmented[out_pos]
+        orig_out = augmented[out_pos]
+        orig_out_flip = augmented_flips[out_pos]
         tracker.release(orig_in)
         tracker.release(orig_out)
         augmented[out_pos] = exit_switch_idx
+        augmented_flips[out_pos] = 0
 
         used_positions.add(in_pos)
         used_positions.add(out_pos)
@@ -305,11 +355,12 @@ def _inject_switches(
             out_position=out_pos,
             handedness=template.handedness,
             branch_pieces=junc.branch_pieces,
+            branch_flips=junc.branch_flips,
             merge_fk=template.merge_fk,
         ))
         pair_id += 1
 
-    return augmented, switch_pairs
+    return augmented, augmented_flips, switch_pairs
 
 
 # =============================================================================
@@ -323,6 +374,8 @@ def _inject_cross_junctions(
     tracker: InventoryTracker,
     catalog: TrackCatalog,
     config: DecoderConfig,
+    *,
+    main_flips: Optional[List[int]] = None,
 ) -> List[CrossJunction]:
     """Inject 4-switch + CROSS_90 junctions where descriptors validate.
 
@@ -364,8 +417,7 @@ def _inject_cross_junctions(
     used_positions: Set[int] = set(pre_existing_switches)
     cross_junctions: List[CrossJunction] = []
 
-    indices = np.array(main_pieces, dtype=np.int32)
-    states = compute_fk_chain(catalog.get_fk(indices))
+    states = compute_fk_chain(fk_array_with_flips(catalog, main_pieces, main_flips))
 
     for slot, _active, position_w, handedness_idx in descriptors:
         if not 0 <= position_w < n_main:
@@ -416,6 +468,7 @@ def _inject_cross_junctions(
         for pos in switch_positions.values():
             tracker.release(main_pieces[pos])
             main_pieces[pos] = template.switch_idx
+            main_flips[pos] = 0
         tracker.use_batch(requirements)
 
         cross_junctions.append(CrossJunction(
@@ -511,42 +564,168 @@ def _find_main_position_matching(
     return best_pos
 
 
+# =============================================================================
+# Step 3.6: Double-Crossover Injection
+# =============================================================================
+
+def _inject_double_crossovers(
+    main_pieces: List[int],
+    x: NDArray,
+    dims: PartitionedDimensions,
+    tracker: InventoryTracker,
+    catalog: TrackCatalog,
+    config: DecoderConfig,
+    *,
+    main_flips: Optional[List[int]] = None,
+) -> Tuple[List[DblCrossover], Dict[int, int]]:
+    """Replace pairs of main-loop slots with a physical DOUBLE_CROSSOVER.
+
+    Each active descriptor (pos_1, route_1, pos_2, route_2) is committed iff:
+      * routes form a valid 2-route cover of {A,B,C,D} (no dangling),
+      * both positions are distinct, in range, currently STRAIGHT_16, and free
+        from prior switch/cross-junction placements,
+      * the chromosome's FK chain — with the route at pos_1 applied — lands at
+        pos_2 such that both port-A world poses agree within tolerance, and
+      * DOUBLE_CROSSOVER inventory is available.
+
+    Returns (records, route_map) where route_map maps each replaced main-loop
+    position to its catalog-route index so _compute_path_fk can pull the right
+    FK row at each traversal.
+    """
+    descriptors = get_active_double_crossovers(x, dims)
+    if not descriptors:
+        return [], {}
+
+    n_main = len(main_pieces)
+    if n_main < 2:
+        return [], {}
+
+    pos_tol = config.siding_position_tolerance
+    ang_tol_deg = config.siding_angle_tolerance
+    occupied = {pos for pos, p in enumerate(main_pieces) if p in SWITCH_INDICES}
+    route_map: Dict[int, int] = {}
+    records: List[DblCrossover] = []
+
+    for slot, _active, p1, r1, p2, r2 in descriptors:
+        p1, p2 = (p1, p2) if p1 < p2 else (p2, p1)
+        if p1 == p2 or p1 >= n_main or p2 >= n_main:
+            continue
+        if not dbl_crossover_routes_cover_all_ports(r1, r2):
+            continue
+        if p1 in occupied or p2 in occupied:
+            continue
+        if main_pieces[p1] != STRAIGHT_16 or main_pieces[p2] != STRAIGHT_16:
+            continue
+        if not tracker.can_use_batch(get_dbl_crossover_inventory_requirements()):
+            continue
+
+        # Build a tentative pieces+route_map view so the FK chain at p2 sees
+        # the actual route the train takes at p1.
+        tentative = list(main_pieces)
+        tentative_flips = list(main_flips)
+        tentative_routes = dict(route_map)
+        state_p1 = _state_at_position_with_routes(
+            tentative, tentative_flips, p1, catalog, tentative_routes,
+        )
+        tentative[p1] = DC_PIECE_IDX
+        tentative_flips[p1] = 0
+        tentative_routes[p1] = r1
+        state_p2 = _state_at_position_with_routes(
+            tentative, tentative_flips, p2, catalog, tentative_routes,
+        )
+
+        origin_1 = dbl_crossover_piece_origin(state_p1, r1)
+        origin_2 = dbl_crossover_piece_origin(state_p2, r2)
+        if not _piece_origins_match(origin_1, origin_2, pos_tol, ang_tol_deg):
+            continue
+
+        # Commit: release the two STRAIGHT_16s, consume one DBL_CROSSOVER, and
+        # record the route at each occupied slot.
+        tracker.release(main_pieces[p1])
+        tracker.release(main_pieces[p2])
+        tracker.use_batch(get_dbl_crossover_inventory_requirements())
+        main_pieces[p1] = DC_PIECE_IDX
+        main_pieces[p2] = DC_PIECE_IDX
+        main_flips[p1] = 0
+        main_flips[p2] = 0
+        route_map[p1] = r1
+        route_map[p2] = r2
+        occupied.update((p1, p2))
+        records.append(DblCrossover(
+            slot=slot,
+            positions=(p1, p2),
+            routes=(r1, r2),
+            origin=origin_1,
+        ))
+
+    return records, route_map
+
+
+def _state_at_position_with_routes(
+    pieces: List[int],
+    flips: List[int],
+    position: int,
+    catalog: TrackCatalog,
+    route_map: Dict[int, int],
+) -> Tuple[float, float, float]:
+    """FK state at `position` using ``route_map`` for multi-route pieces and the
+    parallel ``flips`` array for R40_CURVE handedness."""
+    if position <= 0:
+        return (0.0, 0.0, 0.0)
+    x = y = theta_deg = 0.0
+    for i in range(position):
+        piece = pieces[i]
+        if i in route_map:
+            fk = catalog.get_fk_route(piece, route_map[i])
+            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
+        else:
+            fk = get_fk_with_flip(catalog, piece, flips[i] if i < len(flips) else 0)
+            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
+        c, s = np.cos(np.radians(theta_deg)), np.sin(np.radians(theta_deg))
+        x += dx * c - dy * s
+        y += dx * s + dy * c
+        theta_deg += dtheta
+    return (float(x), float(y), float(theta_deg))
+
+
+def _piece_origins_match(
+    o1: Tuple[float, float, float],
+    o2: Tuple[float, float, float],
+    pos_tol: float,
+    ang_tol_deg: float,
+) -> bool:
+    """True iff two derived port-A world poses agree within tolerance."""
+    if np.hypot(o1[0] - o2[0], o1[1] - o2[1]) > pos_tol:
+        return False
+    ang_diff = (o1[2] - o2[2] + 180.0) % 360.0 - 180.0
+    return abs(ang_diff) <= ang_tol_deg
+
+
 def _find_out_position(
     pieces: List[int],
+    flips: List[int],
     in_pos: int,
     required_dist: float,
     catalog: TrackCatalog,
 ) -> Optional[int]:
     """Find the main-loop position to place the OUT switch.
 
-    `required_dist` is the X contribution of main pieces strictly between IN
-    and OUT (not counting the switch bodies). We walk forward from in_pos+1
-    and find the position pos where cumulative X distance from IN body END
-    to pos's BODY START best matches `required_dist`. The OUT switch then
-    replaces whatever piece was at pos.
-
-    Args:
-        pieces: Current main loop piece list.
-        in_pos: IN switch position.
-        required_dist: Target X distance of main pieces between switches.
-        catalog: Track catalog for FK lookup.
-
-    Returns:
-        Best matching OUT position, or None if no valid position found.
+    Walks forward from ``in_pos + 1`` accumulating each piece's local-X
+    contribution (with the slot's flip applied so R40_CURVE flip=1 contributes
+    the same magnitude but opposite dtheta).
     """
     n = len(pieces)
     if in_pos + 2 >= n:
         return None
 
-    in_state = _compute_state_at_position(pieces, in_pos, catalog)
+    in_state = _compute_state_at_position(pieces, flips, in_pos, catalog)
     base_theta = in_state[2]
 
-    cumulative_x = 0.0  # distance from IN body end to start of current pos
+    cumulative_x = 0.0
     best_pos = None
     best_error = float('inf')
 
     for pos in range(in_pos + 1, n):
-        # Check error at pos's START (before adding pos's own dx contribution)
         error = abs(cumulative_x - required_dist)
         if error < best_error:
             best_error = error
@@ -556,7 +735,7 @@ def _find_out_position(
         if idx < 0 or idx >= len(catalog._fk_table):
             continue
 
-        fk = catalog._fk_table[idx]
+        fk = get_fk_with_flip(catalog, idx, flips[pos] if pos < len(flips) else 0)
         dx, dy, dtheta = fk[0], fk[1], fk[2]
         theta_rad = np.radians(base_theta)
         cos_t = np.cos(theta_rad)
@@ -565,11 +744,9 @@ def _find_out_position(
         cumulative_x += abs(local_x)
         base_theta += dtheta
 
-        # Stop searching once we've well past the target
         if cumulative_x > required_dist + 32.0:
             break
 
-    # Accept if within 20% + 2 stud tolerance
     if best_pos is not None and best_error <= max(required_dist * 0.2, 0.0) + 2.0:
         return best_pos
 
@@ -578,21 +755,15 @@ def _find_out_position(
 
 def _compute_state_at_position(
     pieces: List[int],
+    flips: List[int],
     position: int,
     catalog: TrackCatalog,
 ) -> Tuple[float, float, float]:
-    """Compute FK state (x, y, theta) at a given main loop position.
-
-    Runs FK chain from origin through pieces[0:position].
-
-    Returns:
-        (x, y, theta) tuple at the entry of the piece at `position`.
-    """
+    """FK state at ``position``, walking through pieces[0:position] with flips."""
     if position == 0:
         return (0.0, 0.0, 0.0)
 
-    indices = np.array(pieces[:position], dtype=np.int32)
-    fk_deltas = catalog.get_fk(indices)
+    fk_deltas = fk_array_with_flips(catalog, pieces[:position], flips[:position])
     states = compute_fk_chain(fk_deltas)
 
     final = states[-1]
@@ -617,13 +788,14 @@ def _apply_crossing_repair(
     tracker: InventoryTracker,
     catalog: TrackCatalog,
     config: DecoderConfig,
-) -> List[int]:
+    flips: Optional[List[int]] = None,
+) -> Tuple[List[int], List[int]]:
     """Replace EVERY detected self-intersection with a CROSS_90 piece.
 
     Aggressive policy: any segment-on-segment crossing reported by
     find_crossing_pairs has its pos_i slot rewritten to CROSS_90,
     regardless of the underlying piece type or crossing angle. The
-    original piece (STRAIGHT_16, STRAIGHT_24, R40_LEFT, or R40_RIGHT)
+    original piece (STRAIGHT_16, STRAIGHT_24, R40_CURVE)
     is released to inventory and one CROSS_90 is consumed.
 
     This is intentionally not FK-preserving: replacing a curve with a
@@ -640,33 +812,33 @@ def _apply_crossing_repair(
     intersection layouts converge correctly.
     """
     n = len(pieces)
+    if flips is None:
+        flips = [0] * n
     if n < 4:
-        return pieces
+        return pieces, list(flips)
 
     if tracker.remaining(CROSS_90_INDEX) <= 0:
-        return pieces
+        return pieces, list(flips)
 
     result = list(pieces)
+    result_flips = list(flips)
 
     while tracker.remaining(CROSS_90_INDEX) > 0:
-        indices = np.array(result, dtype=np.int32)
-        fk_deltas = catalog.get_fk(indices)
+        fk_deltas = fk_array_with_flips(catalog, result, result_flips)
         states = compute_fk_chain(fk_deltas)
 
         pairs = find_crossing_pairs(states, result)
         if not pairs:
             break
 
-        # Take the first pair; find_crossing_pairs already sorts by
-        # proximity to 90 deg so the most "natural" perpendicular
-        # crossings get repaired first.
         pos_i, _pos_j, _ang = pairs[0]
         original = result[pos_i]
         tracker.release(original)
         tracker.use(CROSS_90_INDEX)
         result[pos_i] = CROSS_90_INDEX
+        result_flips[pos_i] = 0
 
-    return result
+    return result, result_flips
 
 
 # =============================================================================
@@ -675,23 +847,17 @@ def _apply_crossing_repair(
 
 def _build_multi_path_layout(
     main_pieces: List[int],
+    main_flips: List[int],
     switch_pairs: List[SwitchPair],
     catalog: TrackCatalog,
+    main_loop_routes: Optional[Dict[int, int]] = None,
 ) -> MultiPathLayout:
-    """Build MultiPathLayout with all 2^J traversal paths.
-
-    Args:
-        main_pieces: Augmented main loop pieces (with switches injected).
-        switch_pairs: Validated switch pairs with branch pieces.
-        catalog: Track catalog for FK computation.
-
-    Returns:
-        MultiPathLayout with all paths computed.
-    """
+    """Build MultiPathLayout with all 2^J traversal paths."""
     n_pairs = len(switch_pairs)
+    routes = main_loop_routes or {}
 
     if n_pairs == 0:
-        main_path = _compute_single_path(main_pieces, [], tuple(), catalog)
+        main_path = _compute_single_path(main_pieces, main_flips, [], tuple(), catalog, routes)
         return MultiPathLayout(
             main_loop_pieces=main_pieces,
             switch_pairs=[],
@@ -699,12 +865,11 @@ def _build_multi_path_layout(
             loose_port_count=0,
         )
 
-    # Sort pairs by position for deterministic path construction
     sorted_pairs = sorted(switch_pairs, key=lambda p: p.in_position)
 
     paths: List[TraversalPath] = []
     for path_id, choices in enumerate(product([0, 1], repeat=n_pairs)):
-        path = _compute_single_path(main_pieces, sorted_pairs, choices, catalog)
+        path = _compute_single_path(main_pieces, main_flips, sorted_pairs, choices, catalog, routes)
         path.path_id = path_id
         paths.append(path)
 
@@ -718,9 +883,11 @@ def _build_multi_path_layout(
 
 def _compute_single_path(
     main_pieces: List[int],
+    main_flips: List[int],
     switch_pairs: List[SwitchPair],
     route_choices: Tuple[int, ...],
     catalog: TrackCatalog,
+    main_loop_routes: Optional[Dict[int, int]] = None,
 ) -> TraversalPath:
     """Compute FK chain for a single traversal path.
 
@@ -754,57 +921,65 @@ def _compute_single_path(
     # frame for a REVERSED installation — not expressible by catalog routes.
     # We register pair.merge_fk in `fk_overrides` for that one piece index.
     THROUGH, DIVERGING = 0, 1
+    routes = main_loop_routes or {}
 
     piece_sequence: List[int] = []
     route_indices: List[int] = []
+    flip_sequence: List[int] = []
     divergent_ranges: Dict[int, Tuple[int, int]] = {}
     fk_overrides: Dict[int, Tuple[float, float, float]] = {}
     current_pos = 0
 
+    def append_main(pos: int) -> None:
+        """Append main_pieces[pos] with its per-position route and flip."""
+        piece_sequence.append(main_pieces[pos])
+        route_indices.append(routes.get(pos, THROUGH))
+        flip_sequence.append(main_flips[pos] if pos < len(main_flips) else 0)
+
     for i, pair in enumerate(switch_pairs):
         choice = route_choices[i] if i < len(route_choices) else 0
 
-        # Add main loop pieces before this switch pair
         for pos in range(current_pos, pair.in_position):
-            piece_sequence.append(main_pieces[pos])
-            route_indices.append(THROUGH)
+            append_main(pos)
 
         in_seq_idx = len(piece_sequence)
-        # Switch piece indices were placed in main_pieces by _inject_switches.
         entry_switch = main_pieces[pair.in_position]
         exit_switch = main_pieces[pair.out_position]
 
         if choice == 0:
-            # Straight-through both switches; main loop pieces between them.
             piece_sequence.append(entry_switch)
             route_indices.append(THROUGH)
+            flip_sequence.append(0)
             for pos in range(pair.in_position + 1, pair.out_position):
-                piece_sequence.append(main_pieces[pos])
-                route_indices.append(THROUGH)
+                append_main(pos)
             piece_sequence.append(exit_switch)
             route_indices.append(THROUGH)
+            flip_sequence.append(0)
         else:
-            # Branch: entry diverges (A->C), branch template pieces, then
-            # exit merges via reversed-install C->A (pair.merge_fk override).
             piece_sequence.append(entry_switch)
             route_indices.append(DIVERGING)
+            flip_sequence.append(0)
             piece_sequence.extend(pair.branch_pieces)
             route_indices.extend([THROUGH] * len(pair.branch_pieces))
+            # Branch flips come from the template (per-curve flip already encoded
+            # in SwitchPair.branch_flips by _inject_switches).
+            branch_flips = list(pair.branch_flips) if pair.branch_flips else [0] * len(pair.branch_pieces)
+            if len(branch_flips) < len(pair.branch_pieces):
+                branch_flips = branch_flips + [0] * (len(pair.branch_pieces) - len(branch_flips))
+            flip_sequence.extend(branch_flips[:len(pair.branch_pieces)])
             piece_sequence.append(exit_switch)
             exit_seq_idx = len(piece_sequence) - 1
-            route_indices.append(THROUGH)  # placeholder; override takes precedence
+            route_indices.append(THROUGH)
+            flip_sequence.append(0)
             fk_overrides[exit_seq_idx] = pair.merge_fk
             divergent_ranges[i] = (in_seq_idx, exit_seq_idx)
 
         current_pos = pair.out_position + 1
 
-    # Remaining main loop pieces after last switch pair
     for pos in range(current_pos, len(main_pieces)):
-        piece_sequence.append(main_pieces[pos])
-        route_indices.append(THROUGH)
+        append_main(pos)
 
-    # Compute FK
-    states = _compute_path_fk(piece_sequence, route_indices, catalog, fk_overrides)
+    states = _compute_path_fk(piece_sequence, route_indices, catalog, fk_overrides, flip_sequence)
     closure_error, angle_error = compute_closure_metrics(states)
 
     return TraversalPath(
@@ -823,6 +998,7 @@ def _compute_path_fk(
     route_indices: List[int],
     catalog: TrackCatalog,
     fk_overrides: Optional[Dict[int, Tuple[float, float, float]]] = None,
+    flips: Optional[List[int]] = None,
 ) -> NDArray[np.float64]:
     """Compute FK states for a piece sequence with route selection.
 
@@ -848,8 +1024,15 @@ def _compute_path_fk(
         if fk_overrides is not None and i in fk_overrides:
             dx, dy, dtheta = fk_overrides[i]
         else:
-            fk = catalog.get_fk_route(piece_sequence[i], route_indices[i])
-            dx, dy, dtheta = fk[0], fk[1], fk[2]
+            piece = piece_sequence[i]
+            route_idx = route_indices[i]
+            fk = catalog.get_fk_route(piece, route_idx)
+            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
+            # Apply per-slot flip for R40_CURVE. Other piece types are
+            # symmetric / multi-route and ignore the flip bit.
+            if flips is not None and i < len(flips) and flips[i] and piece == int(R40_CURVE):
+                dy = -dy
+                dtheta = -dtheta
 
         theta_rad = np.radians(states[i, 2])
         cos_t = np.cos(theta_rad)

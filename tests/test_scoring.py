@@ -22,7 +22,7 @@ class TestSpeedProfile:
 
     def test_r40_circle_speed_limit(self, catalog, train_config):
         """16 R40 curves limited to ~0.97 m/s (catalog limit)."""
-        chromosome = np.full(16, 2, dtype=np.int32)  # 16x R40_LEFT
+        chromosome = np.full(16, 2, dtype=np.int32)  # 16x R40_CURVE
         layout = build_layout(chromosome, catalog)
 
         profile = compute_speed_profile(layout, catalog, train_config=train_config)
@@ -33,7 +33,7 @@ class TestSpeedProfile:
 
     def test_double_unroll_closure(self, catalog, train_config):
         """Closed loop speeds consistent at wrap point."""
-        chromosome = np.full(16, 2, dtype=np.int32)  # 16x R40_LEFT
+        chromosome = np.full(16, 2, dtype=np.int32)  # 16x R40_CURVE
         layout = build_layout(chromosome, catalog)
 
         profile = compute_speed_profile(layout, catalog, train_config=train_config)
@@ -55,7 +55,7 @@ class TestSpeedProfile:
 
     def test_friction_circle_limits_accel_on_curve(self, catalog, train_config):
         """On a mixed layout, friction ellipse reduces avg_speed vs unconstrained model."""
-        # Build an oval: 8 R40_LEFT curves + 8 straights
+        # Build an oval: 8 R40_CURVE curves + 8 straights
         chromosome = np.array([2] * 8 + [0] * 8, dtype=np.int32)
         layout = build_layout(chromosome, catalog)
         profile = compute_speed_profile(layout, catalog, train_config=train_config)

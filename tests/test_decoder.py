@@ -18,8 +18,8 @@ from src.types import MultiPathLayout
 
 # Piece indices
 STRAIGHT_16 = PieceIndex.STRAIGHT_16
-R40_LEFT = PieceIndex.R40_LEFT
-R40_RIGHT = PieceIndex.R40_RIGHT
+R40_CURVE = PieceIndex.R40_CURVE
+R40_CURVE = PieceIndex.R40_CURVE
 R40_SWITCH_LEFT = PieceIndex.SWITCH_LEFT
 R40_SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
 
@@ -37,9 +37,9 @@ class TestMainLoopDecoding:
         assert isinstance(layout, MultiPathLayout)
 
     def test_simple_circle_decodes_correctly(self, catalog, default_config):
-        """16 R40_LEFT curves should form a closed circle."""
+        """16 R40_CURVE curves should form a closed circle."""
         dims = compute_dimensions(default_config, catalog)
-        pattern = [R40_LEFT] * 16
+        pattern = [R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
 
         layout = decode_chromosome(chromosome, catalog, default_config.inventory, dims=dims)
@@ -52,8 +52,8 @@ class TestMainLoopDecoding:
         """Decoder should not exceed inventory limits."""
         dims = compute_dimensions(default_config, catalog)
 
-        # Request more R40_LEFT than available in default inventory
-        pattern = [R40_LEFT] * 50
+        # Request more R40_CURVE than available in default inventory
+        pattern = [R40_CURVE] * 50
         chromosome = create_chromosome_from_pieces(dims, pattern)
 
         layout = decode_chromosome(
@@ -69,7 +69,7 @@ class TestMultiPathGeneration:
     def test_no_switches_single_path(self, catalog, default_config):
         """Layout without switches should have exactly one path."""
         dims = compute_dimensions(default_config, catalog)
-        pattern = [R40_LEFT] * 16
+        pattern = [R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
 
         layout = decode_chromosome(chromosome, catalog, default_config.inventory, dims=dims)
@@ -85,7 +85,7 @@ class TestMultiPathClosure:
     def test_main_path_closure(self, catalog, default_config):
         """Main path (circle) should be closed."""
         dims = compute_dimensions(default_config, catalog)
-        pattern = [R40_LEFT] * 16
+        pattern = [R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
 
         layout = decode_chromosome(chromosome, catalog, default_config.inventory, dims=dims)
@@ -100,7 +100,7 @@ class TestBackwardCompatibility:
     def test_multi_path_has_layout_properties(self, catalog, default_config):
         """MultiPathLayout should have Layout-compatible properties."""
         dims = compute_dimensions(default_config, catalog)
-        pattern = [R40_LEFT] * 16
+        pattern = [R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
 
         layout = decode_chromosome(chromosome, catalog, default_config.inventory, dims=dims)

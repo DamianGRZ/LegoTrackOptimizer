@@ -19,10 +19,14 @@ from .config import OptimizationConfig
 from .catalog import TrackCatalog
 from .encoding import (
     CROSS_90,
+    DC_ROUTE_CROSS_1_TO_2,
+    DC_ROUTE_CROSS_2_TO_1,
+    DC_ROUTE_TRACK1_THROUGH,
+    DC_ROUTE_TRACK2_THROUGH,
+    DOUBLE_CROSSOVER,
     INACTIVE,
     MAIN_LOOP_PIECE_INDICES,
-    R40_LEFT,
-    R40_RIGHT,
+    R40_CURVE,
     STRAIGHT_16,
     STRAIGHT_24,
     SWITCH_INDICES,
@@ -50,12 +54,22 @@ from .templates import (
 # =============================================================================
 
 Junction = Tuple[int, int, int, int]
-CrossJunctionDescriptor = Tuple[int, int, int]   # (active, position_W, handedness)
+CrossJunctionDescriptor = Tuple[int, int, int]      # (active, position_W, handedness)
+DblCrossoverDescriptor = Tuple[int, int, int, int, int]  # (active, p1, r1, p2, r2)
+# (main_pieces, main_flips, junctions, cross_junctions, dbl_crossovers)
 Pattern = Tuple[
+    List[int],
     List[int],
     Optional[List[Junction]],
     Optional[List[CrossJunctionDescriptor]],
+    Optional[List[DblCrossoverDescriptor]],
 ]
+
+
+def _curve_flips(pieces: List[int], default_flip: int) -> List[int]:
+    """Per-slot flip array. R40_CURVE slots take ``default_flip``; everything else 0."""
+    r40 = int(R40_CURVE)
+    return [default_flip if p == r40 else 0 for p in pieces]
 
 _PIECE_LEN = 16       # Stud length of STRAIGHT_16 (also a proxy for axial step)
 _END_CAP = 80         # ~2 * R40 diameter: half-circle end cap along axial dir
@@ -143,36 +157,37 @@ def _pieces_fit_inventory(counts: Dict[int, int], inv: Dict[int, int]) -> bool:
 def _gen_simple_loop(
     inv: Dict[int, int], dims: PartitionedDimensions,
 ) -> List[Pattern]:
-    """16 same-direction R40 curves = a tight closed circle."""
+    """16 same-direction R40 curves = a tight closed circle. Emits LEFT and RIGHT."""
     variants: List[Pattern] = []
-    if inv.get(R40_LEFT, 0) >= 16:
-        variants.append(([int(R40_LEFT)] * 16, None, None))
-    if inv.get(R40_RIGHT, 0) >= 16:
-        variants.append(([int(R40_RIGHT)] * 16, None, None))
+    if inv.get(R40_CURVE, 0) < 16:
+        return variants
+    pieces = [int(R40_CURVE)] * 16
+    for flip_value in (0, 1):
+        variants.append((pieces, [flip_value] * 16, None, None, None))
     return variants
 
 
 def _gen_oval(
     inv: Dict[int, int], dims: PartitionedDimensions,
 ) -> List[Pattern]:
-    """2 directions × up to 4 size variants (m_max, 3/4, 1/2, 1/4)."""
+    """2 directions × up to 4 size variants. Direction is a flip bit on the R40 slots."""
     variants: List[Pattern] = []
     n_str = inv.get(STRAIGHT_16, 0)
+    if inv.get(R40_CURVE, 0) < 16:
+        return variants
     m_max = _fit_oval_straights_per_section(dims, n_str)
     sizes = sorted(
         {max(1, int(m_max * f)) for f in (1.0, 0.75, 0.5, 0.25)},
         reverse=True,
     )
-    for curve in (R40_LEFT, R40_RIGHT):
-        if inv.get(curve, 0) < 16:
-            continue
+    for direction_flip in (0, 1):
         for m in sizes:
             pieces = (
-                [int(curve)] * 8 + [int(STRAIGHT_16)] * m
-                + [int(curve)] * 8 + [int(STRAIGHT_16)] * m
+                [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
+                + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
             )
             if _pieces_fit_inventory(_count_pieces(pieces), inv):
-                variants.append((pieces, None, None))
+                variants.append((pieces, _curve_flips(pieces, direction_flip), None, None, None))
     return variants
 
 
@@ -182,6 +197,8 @@ def _gen_racetrack(
     """2 directions × up to 3 aspect ratios."""
     variants: List[Pattern] = []
     n_str = inv.get(STRAIGHT_16, 0)
+    if inv.get(R40_CURVE, 0) < 16:
+        return variants
     long_fit, short_fit = _fit_racetrack_runs(dims, n_str)
     seen: set = set()
     aspects: List[Tuple[int, int]] = []
@@ -189,10 +206,8 @@ def _gen_racetrack(
         if pair not in seen:
             seen.add(pair)
             aspects.append(pair)
-    for curve in (R40_LEFT, R40_RIGHT):
-        if inv.get(curve, 0) < 16:
-            continue
-        corner = [int(curve)] * 4
+    corner = [int(R40_CURVE)] * 4
+    for direction_flip in (0, 1):
         for L, S in aspects:
             pieces = (
                 corner + [int(STRAIGHT_16)] * L
@@ -201,7 +216,7 @@ def _gen_racetrack(
                 + corner + [int(STRAIGHT_16)] * S
             )
             if _pieces_fit_inventory(_count_pieces(pieces), inv):
-                variants.append((pieces, None, None))
+                variants.append((pieces, _curve_flips(pieces, direction_flip), None, None, None))
     return variants
 
 
@@ -230,16 +245,17 @@ def _gen_oval_with_siding(
     n_str = inv.get(STRAIGHT_16, 0)
     # Switches stretch the siding section by 32 studs post-injection; reserve that.
     m = _fit_oval_straights_per_section(dims, n_str, extra_axial=32.0)
-    for curve, hand in ((R40_LEFT, 0), (R40_RIGHT, 1)):
-        if inv.get(curve, 0) < 16:
-            continue
-        # Need enough straights for (m + 2) + m = 2m + 2 in the main loop.
+    if inv.get(R40_CURVE, 0) < 16:
+        return variants
+    for hand in (0, 1):
         if 2 * m + 2 > n_str:
             continue
+        # LEFT siding uses LEFT-curving mainline (flip=0); RIGHT siding uses RIGHT (flip=1).
         main_pieces = (
-            [int(curve)] * 8 + [int(STRAIGHT_16)] * (m + 2)
-            + [int(curve)] * 8 + [int(STRAIGHT_16)] * m
+            [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * (m + 2)
+            + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
         )
+        main_flips = _curve_flips(main_pieces, hand)
         main_counts = _count_pieces(main_pieces)
         if not _pieces_fit_inventory(main_counts, inv):
             continue
@@ -249,9 +265,8 @@ def _gen_oval_with_siding(
             {n_br_max, max(1, n_br_max // 2)}, reverse=True,
         )
         template = TEMPLATES[hand]
-        section_start = m + 18  # Start of second straight section in the asymmetric oval.
+        section_start = m + 18
         for n_br in branch_sizes:
-            # Guard: the second section must be long enough for the siding span.
             if not _siding_fits_in_section(template, n_br, m):
                 continue
             if not check_siding_inventory(
@@ -259,9 +274,6 @@ def _gen_oval_with_siding(
                 available_inventory=inv, used_inventory=main_counts,
             ):
                 continue
-            # Emit 1-3 distinct IN positions inside the section. More positions
-            # give more seed diversity without changing closure (section length
-            # is fixed pre-injection, swap locations don't affect axial sum).
             max_offset = m - _siding_walk_slots(template, n_br)
             offset_candidates = sorted({0, max_offset // 3, (2 * max_offset) // 3})
             for offset in offset_candidates:
@@ -270,7 +282,7 @@ def _gen_oval_with_siding(
                 junctions: List[Junction] = [
                     (1, section_start + offset, hand, n_br),
                 ]
-                variants.append((main_pieces, junctions, None))
+                variants.append((main_pieces, main_flips, junctions, None, None))
     return variants
 
 
@@ -325,8 +337,8 @@ def _gen_figure_eight(
     """
     if (
         inv.get(STRAIGHT_16, 0) < 10
-        or inv.get(R40_LEFT, 0) < 12
-        or inv.get(R40_RIGHT, 0) < 12
+        or inv.get(R40_CURVE, 0) < 12
+        or inv.get(R40_CURVE, 0) < 12
         or inv.get(CROSS_90, 0) < 1
     ):
         return []
@@ -337,27 +349,114 @@ def _gen_figure_eight(
     if w < 180 or h < 180:
         return []
 
-    # Variant A: train sequence N -> cross_V -> S -> BR arc -> E -> cross_H -> W -> TL arc.
-    variant_a = (
+    # Both variants share the same piece layout post-collapse; handedness is
+    # encoded entirely in the flip array. Variant A: first arc LEFT, second RIGHT.
+    # Variant B (mirror): first arc RIGHT, second LEFT.
+    pieces = (
         [int(STRAIGHT_16)] * 5
-        + [int(R40_LEFT)] * 12
+        + [int(R40_CURVE)] * 12
         + [int(STRAIGHT_16)] * 5
-        + [int(R40_RIGHT)] * 12
+        + [int(R40_CURVE)] * 12
     )
 
-    # Variant B (mirror): N -> cross_V -> S -> BL arc -> W -> cross_H -> E -> TR arc.
-    variant_b = (
-        [int(STRAIGHT_16)] * 5
-        + [int(R40_RIGHT)] * 12
-        + [int(STRAIGHT_16)] * 5
-        + [int(R40_LEFT)] * 12
-    )
+    flips_a = [0] * 5 + [0] * 12 + [0] * 5 + [1] * 12  # first arc LEFT, second RIGHT
+    flips_b = [0] * 5 + [1] * 12 + [0] * 5 + [0] * 12  # mirror
 
     variants: List[Pattern] = []
-    for pieces in (variant_a, variant_b):
+    for flips in (flips_a, flips_b):
         if _pieces_fit_inventory(_count_pieces(pieces), inv):
-            variants.append((pieces, None, None))
+            variants.append((pieces, flips, None, None, None))
     return variants
+
+
+def _figure_eight_main_loop(k: int) -> Tuple[List[int], List[int]]:
+    """Main-loop sequence + flips for a figure-8 around one DBL_CROSSOVER.
+
+    Each lobe consumes ``3 + 2*k`` straights between two half-circles. The two
+    lobes' R40_CURVE arcs use opposite handedness so the figure-8 closes:
+    first lobe uses flip=0 (LEFT), second uses flip=1 (RIGHT).
+    """
+    s_p = lambda n: [int(STRAIGHT_16)] * n
+    s_f = lambda n: [0] * n
+    arc_p = lambda n: [int(R40_CURVE)] * n
+    pieces = (
+        [int(STRAIGHT_16)]
+        + s_p(k) + arc_p(8) + s_p(2 * k + 3) + arc_p(8) + s_p(k)
+        + [int(STRAIGHT_16)]
+        + s_p(k) + arc_p(8) + s_p(2 * k + 3) + arc_p(8) + s_p(k)
+    )
+    flips = (
+        [0]
+        + s_f(k) + [0] * 8 + s_f(2 * k + 3) + [0] * 8 + s_f(k)
+        + [0]
+        + s_f(k) + [1] * 8 + s_f(2 * k + 3) + [1] * 8 + s_f(k)
+    )
+    return pieces, flips
+
+
+def _gen_figure_eight_dbl_crossover(
+    inv: Dict[int, int], dims: PartitionedDimensions,
+) -> List[Pattern]:
+    """Single-loop figure-8 wrapped around one DOUBLE_CROSSOVER.
+
+    Train passes through ONE physical DBL_CROSSOVER twice via cross_1_to_2 +
+    cross_2_to_1 (the both-cross 2-route cover of {A,B,C,D}) — no port dangles.
+
+    Emits up to ``len(_K_SIZES)`` size variants. Each variant inflates the
+    figure-8 along the east-west axis: ``k=0`` is the tight 40-piece base,
+    higher ``k`` adds 4 STR_16 per step. Larger variants compete on
+    utilisation with non-DC seeds, so the GA actually keeps them around.
+    """
+    if dims.max_double_crossovers < 1:
+        return []
+    base = {R40_CURVE: 16, R40_CURVE: 16, DOUBLE_CROSSOVER: 1}
+    if any(inv.get(idx, 0) < n for idx, n in base.items()):
+        return []
+
+    n_str = inv.get(STRAIGHT_16, 0)
+    # k extra east-bound straights per lobe cost (4k + 8) straights total.
+    # The 40-piece minimum already needs 8 STR_16; bigger variants grow from there.
+    k_inv = max(0, (n_str - 8) // 4)
+    w, h = _boundary_wh(dims)
+    # Each k increment widens the bounding box by 32 stud (16 stud per side);
+    # base width at k=0 is 128 stud, base height ~176 stud.
+    k_fit_w = max(0, int((w - 128) // 32))
+    k_max = max(0, min(k_inv, k_fit_w, 6))
+
+    variants: List[Pattern] = []
+    for k in sorted({k_max, k_max // 2, 0}, reverse=True):
+        if h < 200 or w < 128 + 32 * k:
+            continue
+        pieces, flips = _figure_eight_main_loop(k)
+        if not _pieces_fit_inventory(_count_pieces(pieces), inv):
+            continue
+        pos_2 = len(pieces) // 2
+        descriptors: List[DblCrossoverDescriptor] = [
+            (1, 0, DC_ROUTE_CROSS_1_TO_2, pos_2, DC_ROUTE_CROSS_2_TO_1),
+        ]
+        variants.append((pieces, flips, None, None, descriptors))
+    return variants
+
+
+def _gen_two_layer_loop_dbl_crossover(
+    inv: Dict[int, int], dims: PartitionedDimensions,
+) -> List[Pattern]:
+    """Disabled: the naive two-layer pattern has an unavoidable self-crossing
+    on the east side of the DOUBLE_CROSSOVER.
+
+    Train geometry: exiting port B of track 1 heading east, the first 4
+    R40_CURVE arc passes through (~72, 8) on its way up; exiting port D of
+    track 2 heading east, the first 4 R40_CURVE arc passes through (~72, 8)
+    on its way down. The two arcs cross at one external point. Repairing the
+    crossing needs a CROSS_90 piece, but the ``with_double_crossover``
+    inventory carries no CROSS_90s and a heuristic seed that consumes a
+    CROSS_90 it doesn't own is not useful.
+
+    Left as a stub so the seeder pipeline retains the slot for a future
+    redesign that uses extra straights/curves to lift one arc clear of the
+    other (or that ships a config with CROSS_90 inventory).
+    """
+    return []
 
 
 def _gen_oval_with_cross_junction(
@@ -388,29 +487,25 @@ def _gen_oval_with_cross_junction(
     n_str = inv.get(STRAIGHT_16, 0)
     m = _fit_oval_straights_per_section(dims, n_str)
 
-    for curve, hand_idx in ((R40_LEFT, 0), (R40_RIGHT, 1)):
-        if inv.get(curve, 0) < 16:
-            continue
+    if inv.get(R40_CURVE, 0) < 16:
+        return variants
+    for hand_idx in (0, 1):
         if 2 * m > n_str:
             continue
-        # Inventory check: 4 same-hand switches + 4 opposite-hand R40 spurs + 1 CROSS_90.
-        switch_id = "R40_SWITCH_LEFT" if hand_idx == 0 else "R40_SWITCH_RIGHT"
-        spur_idx = R40_RIGHT if hand_idx == 0 else R40_LEFT
         catalog_switch_idx = SWITCH_LEFT if hand_idx == 0 else SWITCH_RIGHT
         if inv.get(catalog_switch_idx, 0) < 4:
             continue
-        if inv.get(spur_idx, 0) < 4:
+        if inv.get(R40_CURVE, 0) < 4:
             continue
 
         main_pieces = (
-            [int(curve)] * 8 + [int(STRAIGHT_16)] * m
-            + [int(curve)] * 8 + [int(STRAIGHT_16)] * m
+            [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
+            + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
         )
+        main_flips = _curve_flips(main_pieces, hand_idx)
         if not _pieces_fit_inventory(_count_pieces(main_pieces), inv):
             continue
 
-        # Two W candidates: middle of each STRAIGHT_16 section so the GA gets
-        # two distinct hint positions.
         section_starts = (8, 16 + m)
         for sec_start in section_starts:
             position_w = sec_start + max(0, m // 2)
@@ -421,7 +516,7 @@ def _gen_oval_with_cross_junction(
             cross_descriptors: List[CrossJunctionDescriptor] = [
                 (1, position_w, hand_idx),
             ]
-            variants.append((main_pieces, None, cross_descriptors))
+            variants.append((main_pieces, main_flips, None, cross_descriptors, None))
 
     return variants
 
@@ -432,27 +527,29 @@ def _gen_oval_two_sidings(
     """Large oval + 2 passing sidings (up to 4 hand-pairs × 2 branch sizes)."""
     if dims.max_junctions < 2:
         return []
-    if inv.get(R40_LEFT, 0) < 16:
+    if inv.get(R40_CURVE, 0) < 16:
         return []
     variants: List[Pattern] = []
     n_str = inv.get(STRAIGHT_16, 0)
     # Both sections absorb a siding; both stretch by 32 studs post-injection.
     m = _fit_oval_straights_per_section(dims, n_str, extra_axial=32.0)
     main_pieces = (
-        [int(R40_LEFT)] * 8 + [int(STRAIGHT_16)] * m
-        + [int(R40_LEFT)] * 8 + [int(STRAIGHT_16)] * m
+        [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
+        + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
     )
     main_counts = _count_pieces(main_pieces)
     if not _pieces_fit_inventory(main_counts, inv):
         return []
     n_str_remaining = max(0, n_str - 2 * m)
-    # Split remaining straights across the two sidings
     n_br_max = _fit_siding_branch_straights(n_str_remaining // 2, m)
     branch_sizes = sorted(
         {n_br_max, max(1, n_br_max // 2)}, reverse=True,
     )
     hand_pairs = [(0, 0), (1, 1), (0, 1), (1, 0)]
     for h1, h2 in hand_pairs:
+        # Mainline curve direction matches the first siding's handedness so the
+        # branch curves cooperate with mainline curvature on at least one siding.
+        main_flips = _curve_flips(main_pieces, h1)
         for n_br in branch_sizes:
             used = dict(main_counts)
             t1 = TEMPLATES[h1]
@@ -471,7 +568,7 @@ def _gen_oval_two_sidings(
                 (1, 8, h1, n_br),
                 (1, 16 + m, h2, n_br),
             ]
-            variants.append((main_pieces, junctions, None))
+            variants.append((main_pieces, main_flips, junctions, None, None))
     return variants
 
 
@@ -521,9 +618,15 @@ class IntegerSampling(Sampling):
 
         for i in range(n_heuristic):
             if patterns:
-                pieces, junctions, cross_junctions = patterns[i % len(patterns)]
+                pieces, flips, junctions, cross_junctions, dbl_crossovers = (
+                    patterns[i % len(patterns)]
+                )
                 x = create_chromosome_from_pieces(
-                    dims, pieces, junctions, cross_junctions,
+                    dims, pieces,
+                    main_loop_flips=flips,
+                    junctions=junctions,
+                    cross_junctions=cross_junctions,
+                    double_crossovers=dbl_crossovers,
                 )
                 self._set_random_start(x, rng)
                 X[i, :] = x
@@ -551,6 +654,8 @@ class IntegerSampling(Sampling):
         patterns += _gen_oval_two_sidings(inv, dims)
         patterns += _gen_figure_eight(inv, dims)
         patterns += _gen_oval_with_cross_junction(inv, dims)
+        patterns += _gen_figure_eight_dbl_crossover(inv, dims)
+        patterns += _gen_two_layer_loop_dbl_crossover(inv, dims)
         rng.shuffle(patterns)
         return patterns
 
@@ -579,6 +684,7 @@ class IntegerSampling(Sampling):
         positions.sort()
 
         inv_remaining = dict(self.inventory_by_index)
+        r40_curve = int(R40_CURVE)
         for pos in positions:
             candidates = [idx for idx in available if inv_remaining.get(idx, 0) > 0]
             if not candidates:
@@ -586,6 +692,9 @@ class IntegerSampling(Sampling):
             idx = candidates[rng.integers(len(candidates))]
             x[pos] = idx
             inv_remaining[idx] -= 1
+            # Random handedness for R40_CURVE; symmetric pieces stay flip=0.
+            if idx == r40_curve:
+                x[dims.main_flips_start + pos] = int(rng.integers(0, 2))
 
         for k in range(dims.max_junctions):
             active = int(rng.integers(0, 2))

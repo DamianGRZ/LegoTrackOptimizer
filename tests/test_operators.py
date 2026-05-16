@@ -8,8 +8,8 @@ from src.catalog import TrackCatalog
 from src.encoding import (
     CROSS_90,
     GENES_PER_JUNCTION,
-    R40_LEFT,
-    R40_RIGHT,
+    R40_CURVE,
+    R40_CURVE,
     STRAIGHT_16,
     PartitionedDimensions,
     create_empty_chromosome,
@@ -32,6 +32,7 @@ def dims() -> PartitionedDimensions:
         n_main=10,
         max_junctions=2,
         max_cross_junctions=0,
+        max_double_crossovers=0,
         total_straights=10,
         boundary_min_x=-100.0,
         boundary_max_x=100.0,
@@ -74,6 +75,7 @@ def big_dims() -> PartitionedDimensions:
         n_main=64,
         max_junctions=0,
         max_cross_junctions=0,
+        max_double_crossovers=0,
         total_straights=40,
         boundary_min_x=-200.0,
         boundary_max_x=200.0,
@@ -106,21 +108,21 @@ class TestStraightenNearUnresolvedCrossing:
 
         Builds a closed CW spiral [STR16*6, R40_R*4, STR16*2, R40_R*4,
         STR16*3, R40_R*4, STR16*5] -- known to produce a 90 deg STR-on-STR
-        crossing. We then poison slot 27 to R40_LEFT so one of the crossing
+        crossing. We then poison slot 27 to R40_CURVE so one of the crossing
         pieces becomes a curve; the operator must swap it back to STRAIGHT_16.
         """
         spiral = (
-            [int(STRAIGHT_16)] * 6 + [int(R40_RIGHT)] * 4
-            + [int(STRAIGHT_16)] * 2 + [int(R40_RIGHT)] * 4
-            + [int(STRAIGHT_16)] * 3 + [int(R40_RIGHT)] * 4
+            [int(STRAIGHT_16)] * 6 + [int(R40_CURVE)] * 4
+            + [int(STRAIGHT_16)] * 2 + [int(R40_CURVE)] * 4
+            + [int(STRAIGHT_16)] * 3 + [int(R40_CURVE)] * 4
             + [int(STRAIGHT_16)] * 5
         )
         x = create_empty_chromosome(big_dims)
         x[: len(spiral)] = spiral
         # Poison slot 27 (one of the crossing pieces) with a curve.
-        x[27] = int(R40_LEFT)
+        x[27] = int(R40_CURVE)
         # Without poisoning the other side, slot 0 is still STRAIGHT_16, so
-        # the crossing pair (0, 27) is now STR_16 vs R40_LEFT -> unresolved.
+        # the crossing pair (0, 27) is now STR_16 vs R40_CURVE -> unresolved.
 
         np.random.seed(0)
         _straighten_near_unresolved_crossing(x, big_dims, catalog=cat)

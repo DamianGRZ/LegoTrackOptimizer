@@ -21,18 +21,42 @@ from pymoo.core.mutation import Mutation
 from .catalog import TrackCatalog
 from .encoding import (
     CROSS_90,
+    DC_N_ROUTES,
+    GENES_PER_DBL_CROSSOVER,
     GENES_PER_JUNCTION,
     INACTIVE,
     MAIN_LOOP_PIECE_INDICES,
     MAX_MAIN_LOOP_PIECE,
+    R40_CURVE,
     STRAIGHT_16,
     PartitionedDimensions,
+    get_active_double_crossovers,
+    get_double_crossover,
+    set_double_crossover,
 )
 from .geometry import compute_fk_chain
 from .intersection import find_crossing_pairs
 
 # Valid main-loop piece types as a sorted array for fast random selection
 _MAIN_LOOP_TYPES = np.array(sorted(MAIN_LOOP_PIECE_INDICES), dtype=np.int16)
+
+
+def _protected_positions(x: NDArray, dims: PartitionedDimensions) -> set:
+    """Main-loop positions that mutation must NOT disturb.
+
+    The whole figure-8 / two-layer-loop main loop is precisely tuned for FK
+    closure around its DOUBLE_CROSSOVER. Mutating ANY of its slots — not just
+    the DC entry/exit positions — silently breaks the geometry and the
+    decoder drops the DC from the layout. So when an active DC descriptor is
+    present, we treat every active main-loop slot as sticky; the GA can
+    still explore via DC mutations and uniform crossover slot swap.
+
+    Layouts without any active DC keep the legacy behaviour (empty set), so
+    non-DC heuristics still mutate normally.
+    """
+    if not get_active_double_crossovers(x, dims):
+        return set()
+    return {i for i in range(dims.n_main) if x[i] != INACTIVE}
 
 
 # =============================================================================
@@ -69,11 +93,36 @@ class PartitionedCrossover(Crossover):
             c1 = p1.copy()
             c2 = p2.copy()
 
-            # --- Main loop: one-point crossover ---
-            if dims.n_main > 1:
-                cut = np.random.randint(1, dims.n_main)
-                c1[cut:dims.n_main] = p2[cut:dims.n_main]
-                c2[cut:dims.n_main] = p1[cut:dims.n_main]
+            # --- Main loop + DC descriptors: tied together ---
+            # The DC descriptor refers to specific main-loop positions; swapping
+            # the descriptor alone from a different parent's main loop produces
+            # a "ghost" descriptor that can't decode. So when either parent has
+            # an active DC, we preserve the full main-loop AND DC-descriptor
+            # block together — children get one parent's main loop with that
+            # same parent's DC descriptors, no mixing. When neither parent has
+            # DC, do classic one-point on the main loop and uniform swap on DC
+            # slots (which are all-zero either way, so neutral).
+            p1_has_dc = bool(get_active_double_crossovers(p1, dims))
+            p2_has_dc = bool(get_active_double_crossovers(p2, dims))
+            if p1_has_dc or p2_has_dc:
+                # Preserve parent-to-child main loop + DC descriptors.
+                pass
+            else:
+                if dims.n_main > 1:
+                    cut = np.random.randint(1, dims.n_main)
+                    c1[cut:dims.n_main] = p2[cut:dims.n_main]
+                    c2[cut:dims.n_main] = p1[cut:dims.n_main]
+                    # Mirror the cut on the parallel flip array so each child
+                    # keeps the piece-and-flip pair from the same parent.
+                    flip_cut = dims.main_flips_start + cut
+                    c1[flip_cut:dims.main_flips_end] = p2[flip_cut:dims.main_flips_end]
+                    c2[flip_cut:dims.main_flips_end] = p1[flip_cut:dims.main_flips_end]
+                for j in range(dims.max_double_crossovers):
+                    if np.random.random() < 0.5:
+                        base = dims.dbl_crossover_start + j * GENES_PER_DBL_CROSSOVER
+                        end = base + GENES_PER_DBL_CROSSOVER
+                        c1[base:end] = p2[base:end]
+                        c2[base:end] = p1[base:end]
 
             # --- Junctions: uniform per-slot swap ---
             for j in range(dims.max_junctions):
@@ -99,61 +148,99 @@ class PartitionedCrossover(Crossover):
 # Mutation Sub-operators (Main Loop)
 # =============================================================================
 
+def _assign_piece(x: NDArray, dims: PartitionedDimensions, pos: int, piece: int) -> None:
+    """Write piece type at ``pos`` and align the flip slot with that piece's
+    symmetry: R40_CURVE gets a random flip bit; symmetric pieces get flip=0."""
+    x[pos] = piece
+    if int(piece) == int(R40_CURVE):
+        x[dims.main_flips_start + pos] = int(np.random.randint(0, 2))
+    else:
+        x[dims.main_flips_start + pos] = 0
+
+
 def _mutate_piece_type(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> None:
-    """Change a random active non-CROSS_90 main-loop position to a different
-    piece type. CROSS_90 slots are sticky — once placed by the decoder's
-    aggressive repair, mutation will not overwrite them, so partial repairs
-    accumulate across generations instead of churning."""
+    """Change a random active non-sticky main-loop position to a different piece
+    type. CROSS_90 (placed by the decoder's aggressive repair) and slots claimed
+    by an active DOUBLE_CROSSOVER descriptor are sticky."""
     main = x[:dims.n_main]
-    active = np.where((main != INACTIVE) & (main != int(CROSS_90)))[0]
-    if len(active) == 0:
+    protected = _protected_positions(x, dims)
+    candidates = [
+        i for i in range(dims.n_main)
+        if main[i] != INACTIVE and int(main[i]) != int(CROSS_90) and i not in protected
+    ]
+    if not candidates:
         return
-    pos = active[np.random.randint(len(active))]
+    pos = candidates[np.random.randint(len(candidates))]
     old = x[pos]
     choices = _MAIN_LOOP_TYPES[_MAIN_LOOP_TYPES != old]
     if len(choices) == 0:
         return
-    x[pos] = choices[np.random.randint(len(choices))]
+    _assign_piece(x, dims, pos, int(choices[np.random.randint(len(choices))]))
 
 
 def _activate_position(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> None:
-    """Set a random inactive main-loop position to a random piece type."""
-    inactive = np.where(x[:dims.n_main] == INACTIVE)[0]
-    if len(inactive) == 0:
+    """Activate a random inactive main-loop slot with a random piece type."""
+    protected = _protected_positions(x, dims)
+    inactive = [
+        i for i in range(dims.n_main)
+        if x[i] == INACTIVE and i not in protected
+    ]
+    if not inactive:
         return
     pos = inactive[np.random.randint(len(inactive))]
-    x[pos] = _MAIN_LOOP_TYPES[np.random.randint(len(_MAIN_LOOP_TYPES))]
+    _assign_piece(x, dims, pos, int(_MAIN_LOOP_TYPES[np.random.randint(len(_MAIN_LOOP_TYPES))]))
 
 
 def _deactivate_position(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> None:
-    """Set a random active non-CROSS_90 main-loop position to INACTIVE.
-    CROSS_90 slots are sticky and will not be deactivated."""
+    """Set a random active non-sticky main-loop position to INACTIVE. CROSS_90
+    and DC-claimed slots are sticky."""
     main = x[:dims.n_main]
-    active = np.where((main != INACTIVE) & (main != int(CROSS_90)))[0]
-    if len(active) <= 4:  # keep minimum for closure
+    protected = _protected_positions(x, dims)
+    candidates = [
+        i for i in range(dims.n_main)
+        if main[i] != INACTIVE and int(main[i]) != int(CROSS_90) and i not in protected
+    ]
+    if len(candidates) <= 4:  # keep minimum for closure
         return
-    pos = active[np.random.randint(len(active))]
+    pos = candidates[np.random.randint(len(candidates))]
     x[pos] = INACTIVE
 
 
 def _swap_positions(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> None:
-    """Swap two random main-loop positions. Skips when either picked slot is
-    CROSS_90 — sticky CROSS_90 must keep its world location so its
-    perpendicular partner (placed by the decoder repair) doesn't desync."""
+    """Swap two random main-loop slots — both piece type AND its flip move together."""
     if dims.n_main < 2:
         return
+    protected = _protected_positions(x, dims)
     i, j = np.random.choice(dims.n_main, size=2, replace=False)
     if int(x[i]) == int(CROSS_90) or int(x[j]) == int(CROSS_90):
         return
+    if i in protected or j in protected:
+        return
     x[i], x[j] = x[j], x[i]
+    fi = dims.main_flips_start + i
+    fj = dims.main_flips_start + j
+    x[fi], x[fj] = x[fj], x[fi]
+
+
+def _flip_position(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Toggle the flip bit on a random active R40_CURVE main-loop slot."""
+    r40 = int(R40_CURVE)
+    candidates = [i for i in range(dims.n_main) if int(x[i]) == r40]
+    if not candidates:
+        return
+    pos = candidates[np.random.randint(len(candidates))]
+    fp = dims.main_flips_start + pos
+    x[fp] = 0 if int(x[fp]) else 1
 
 
 def _straighten_near_unresolved_crossing(
@@ -208,6 +295,7 @@ def _straighten_near_unresolved_crossing(
     target = pi if main_pieces[pi] != STRAIGHT_16 else pj
     chrom_pos = chrom_indices[target]
     x[chrom_pos] = int(STRAIGHT_16)
+    x[dims.main_flips_start + chrom_pos] = 0
 
 
 # =============================================================================
@@ -256,6 +344,71 @@ def _adjust_straights(x: NDArray, dims: PartitionedDimensions) -> None:
 
 
 # =============================================================================
+# Mutation Sub-operators (Double Crossover)
+# =============================================================================
+
+# Catalog routes paired into valid 2-route covers — used by _rotate_dc_route_pair
+# to keep mutation inside the no-dangling family rather than dropping a
+# descriptor into infeasibility.
+_DC_BOTH_THROUGH = (0, 1)
+_DC_BOTH_CROSS = (2, 3)
+_DC_VALID_PAIRS = (_DC_BOTH_THROUGH, _DC_BOTH_CROSS)
+
+
+def _toggle_dc_active(x: NDArray, dims: PartitionedDimensions) -> None:
+    """Flip the active flag on a random DBL_CROSSOVER descriptor."""
+    if dims.max_double_crossovers == 0:
+        return
+    slot = np.random.randint(dims.max_double_crossovers)
+    active, p1, r1, p2, r2 = get_double_crossover(x, dims, slot)
+    set_double_crossover(x, dims, slot, 1 - active, p1, r1, p2, r2)
+
+
+def _shift_dc_position(x: NDArray, dims: PartitionedDimensions) -> None:
+    """Nudge pos_1 or pos_2 on a random DBL_CROSSOVER descriptor by ±1..5."""
+    if dims.max_double_crossovers == 0 or dims.n_main < 2:
+        return
+    slot = np.random.randint(dims.max_double_crossovers)
+    active, p1, r1, p2, r2 = get_double_crossover(x, dims, slot)
+    delta = int(np.random.choice([-5, -3, -1, 1, 3, 5]))
+    if np.random.random() < 0.5:
+        p1 = int(np.clip(p1 + delta, 0, dims.n_main - 1))
+    else:
+        p2 = int(np.clip(p2 + delta, 0, dims.n_main - 1))
+    set_double_crossover(x, dims, slot, active, p1, r1, p2, r2)
+
+
+def _rotate_dc_route_pair(x: NDArray, dims: PartitionedDimensions) -> None:
+    """Rotate routes on a random descriptor to the OTHER valid 2-route cover.
+
+    Keeps the descriptor in the no-dangling family — flips both-through to
+    both-cross or vice versa. Standalone route changes that break the cover
+    are pointless: the decoder skips invalid descriptors so the chromosome
+    just loses the piece.
+    """
+    if dims.max_double_crossovers == 0:
+        return
+    slot = np.random.randint(dims.max_double_crossovers)
+    active, p1, _r1, p2, _r2 = get_double_crossover(x, dims, slot)
+    other_pair = _DC_VALID_PAIRS[np.random.randint(len(_DC_VALID_PAIRS))]
+    set_double_crossover(x, dims, slot, active, p1, other_pair[0], p2, other_pair[1])
+
+
+def _swap_dc_traversals(x: NDArray, dims: PartitionedDimensions) -> None:
+    """Swap (pos_1, route_1) with (pos_2, route_2) on a random descriptor.
+
+    Reorders which traversal happens first along the loop; both end states
+    are still on the same physical piece, so the no-dangling property is
+    preserved.
+    """
+    if dims.max_double_crossovers == 0:
+        return
+    slot = np.random.randint(dims.max_double_crossovers)
+    active, p1, r1, p2, r2 = get_double_crossover(x, dims, slot)
+    set_double_crossover(x, dims, slot, active, p2, r2, p1, r1)
+
+
+# =============================================================================
 # Combined Mutation
 # =============================================================================
 
@@ -268,15 +421,28 @@ _MAIN_LOOP_OPS = [
     _activate_position,
     _deactivate_position,
     _swap_positions,
+    _flip_position,
     _straighten_near_unresolved_crossing,
 ]
-_MAIN_LOOP_WEIGHTS = np.array([0.28, 0.24, 0.19, 0.24, 0.05])
+# _flip_position carries 0.10 — it's the only operator that explores R40 handedness,
+# so giving it < 10% would leave LEFT/RIGHT diversity entirely to the initial seeds.
+_MAIN_LOOP_WEIGHTS = np.array([0.25, 0.22, 0.18, 0.20, 0.10, 0.05])
 _MAIN_LOOP_WEIGHTS /= _MAIN_LOOP_WEIGHTS.sum()
 
 # Junction sub-operators with equal weights
 _JUNCTION_OPS = [_toggle_active, _reposition_junction, _change_handedness, _adjust_straights]
 _JUNCTION_WEIGHTS = np.array([0.25, 0.25, 0.25, 0.25])
 _JUNCTION_WEIGHTS /= _JUNCTION_WEIGHTS.sum()
+
+# Double-crossover sub-operators with equal weights
+_DBL_CROSSOVER_OPS = [
+    _toggle_dc_active,
+    _shift_dc_position,
+    _rotate_dc_route_pair,
+    _swap_dc_traversals,
+]
+_DBL_CROSSOVER_WEIGHTS = np.array([0.25, 0.25, 0.25, 0.25])
+_DBL_CROSSOVER_WEIGHTS /= _DBL_CROSSOVER_WEIGHTS.sum()
 
 
 class PartitionedMutation(Mutation):
@@ -303,9 +469,19 @@ class PartitionedMutation(Mutation):
         has_junctions = self.dims.max_junctions > 0
         catalog = getattr(problem, "catalog", None)
 
+        # Mutation budget per individual:
+        #   10% junction (passing-siding) when present, remainder on the main
+        #   loop. DBL_CROSSOVER descriptors are deliberately NOT mutated:
+        #   heuristic seeds are the only safe source. Any mutation on a
+        #   working DC descriptor (shift/rotate/swap/toggle) reliably breaks
+        #   the geometric pair, drops the DC from the layout, and selection
+        #   then eliminates that lineage. Reintroducing DC via mutation alone
+        #   essentially never validates against random geometry.
+        junc_thresh = 0.10 if has_junctions else 0.0
+
         for i in range(len(X)):
-            # Select category: main loop vs junction
-            if has_junctions and np.random.random() < 0.2:
+            r = np.random.random()
+            if r < junc_thresh:
                 op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
                 _JUNCTION_OPS[op_idx](X[i], self.dims)
             else:

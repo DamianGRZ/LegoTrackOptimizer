@@ -12,8 +12,8 @@ from src.train.evaluation import PhysicalEvaluation, evaluate_layout
 
 # Piece indices from src/encoding.py
 STRAIGHT_16 = 0
-R40_LEFT = 2
-R40_RIGHT = 3
+R40_CURVE = 2
+R40_CURVE = 3
 
 
 def _make_layout(piece_indices: list[int], catalog: TrackCatalog) -> Layout:
@@ -25,8 +25,8 @@ class TestGeometryDomain:
     """coupler-phi per segment + per-switch + max."""
 
     def test_phi_R40_matches_user_sanity_check(self, catalog, measured_train_config):
-        """Single R40_LEFT, measured coupler_offset=0.106, R=0.32 m -> phi == 0.106/(2*0.32) ~ 9.49 deg."""
-        layout = _make_layout([R40_LEFT], catalog)
+        """Single R40_CURVE, measured coupler_offset=0.106, R=0.32 m -> phi == 0.106/(2*0.32) ~ 9.49 deg."""
+        layout = _make_layout([R40_CURVE], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         expected_rad = 0.106 / (2.0 * 0.32)
         assert phys.coupler_phi_per_segment[0] == pytest.approx(expected_rad, abs=1e-4)
@@ -40,7 +40,7 @@ class TestGeometryDomain:
 
     def test_max_coupler_phi_picks_worst(self, catalog, measured_train_config):
         """max_coupler_phi == max over segments and switches."""
-        layout = _make_layout([STRAIGHT_16, R40_LEFT, STRAIGHT_16], catalog)
+        layout = _make_layout([STRAIGHT_16, R40_CURVE, STRAIGHT_16], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         # Only the R40 segment has non-zero phi
         expected_max = 0.106 / (2.0 * 0.32)
@@ -52,13 +52,13 @@ class TestStabilityDomain:
 
     def test_v_slide_R40_matches_user_sanity(self, catalog, measured_train_config):
         """v_slide(R40) = sqrt(0.25 * 9.81 * 0.32) = 0.886 m/s (user's sanity check)."""
-        layout = _make_layout([R40_LEFT], catalog)
+        layout = _make_layout([R40_CURVE], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         assert phys.v_slide_per_segment[0] == pytest.approx(0.886, abs=1e-3)
 
     def test_v_eff_R40_is_slide_with_measured_consist(self, catalog, measured_train_config):
         """For measured config, v_slide < v_motor on R40, so v_eff == v_slide."""
-        layout = _make_layout([R40_LEFT], catalog)
+        layout = _make_layout([R40_CURVE], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         assert phys.v_eff_per_segment[0] == pytest.approx(phys.v_slide_per_segment[0], abs=1e-6)
 
@@ -70,7 +70,7 @@ class TestStabilityDomain:
 
     def test_binding_cap_labels_R40_then_straight(self, catalog, measured_train_config):
         """R40 -> 'slide', straight -> 'motor'."""
-        layout = _make_layout([R40_LEFT, STRAIGHT_16], catalog)
+        layout = _make_layout([R40_CURVE, STRAIGHT_16], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         assert phys.binding_cap_per_segment[0] == "slide"
         assert phys.binding_cap_per_segment[1] == "motor"
@@ -82,10 +82,10 @@ class TestKinematicsDomain:
     def test_safety_margin_default_unchanged(self, catalog, train_config):
         """compute_speed_profile with safety_margin=1.0 (default) keeps old behavior."""
         from src.train import compute_speed_profile
-        layout = _make_layout([R40_LEFT, R40_LEFT, R40_LEFT, R40_LEFT,
-                               R40_LEFT, R40_LEFT, R40_LEFT, R40_LEFT,
-                               R40_LEFT, R40_LEFT, R40_LEFT, R40_LEFT,
-                               R40_LEFT, R40_LEFT, R40_LEFT, R40_LEFT], catalog)
+        layout = _make_layout([R40_CURVE, R40_CURVE, R40_CURVE, R40_CURVE,
+                               R40_CURVE, R40_CURVE, R40_CURVE, R40_CURVE,
+                               R40_CURVE, R40_CURVE, R40_CURVE, R40_CURVE,
+                               R40_CURVE, R40_CURVE, R40_CURVE, R40_CURVE], catalog)
         sp = compute_speed_profile(layout, catalog, train_config)
         sp2 = compute_speed_profile(layout, catalog, train_config, safety_margin=1.0)
         assert np.allclose(sp.speeds, sp2.speeds, atol=1e-9)
@@ -93,20 +93,20 @@ class TestKinematicsDomain:
     def test_safety_margin_scales_speed(self, catalog, measured_train_config):
         """16-R40 closed circle at safety_margin=0.95 -> all speeds ~ 0.95 * 0.886 = 0.842."""
         from src.train import compute_speed_profile
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         sp = compute_speed_profile(layout, catalog, measured_train_config, safety_margin=0.95)
         # All segments slide-bound at 0.842 m/s
         assert np.all(sp.speeds == pytest.approx(0.842, abs=5e-3))
 
     def test_safety_factor_min_equals_margin_on_capped_loop(self, catalog, measured_train_config):
         """16-R40 circle at safety_margin=0.95 -> safety_factor_min == 0.95."""
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert phys.safety_factor_min == pytest.approx(0.95, abs=1e-3)
 
     def test_safety_factor_min_above_margin_on_brake_bound(self, catalog, measured_train_config):
         """Layout with curve before short straight -> brake-bound segments below 0.95 cap (so factor > 0.95)."""
-        layout = _make_layout([R40_LEFT, STRAIGHT_16, R40_LEFT, STRAIGHT_16] * 2, catalog)
+        layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 2, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         # Some segments forced below v_limit by accel/brake -> safety_factor > 0.95 there
         # safety_factor_min is still 0.95 (on cap-bound segments)
@@ -117,7 +117,7 @@ class TestKinematicsDomain:
     def test_lap_time_R40_circle_matches_pen_and_paper(self, catalog, measured_train_config):
         """16-R40 closed circle lap_time = 2*pi*R / (0.95 * v_slide).
         2*pi*0.32 / 0.842 = 2.011 / 0.842 ~ 2.39 s."""
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert phys.speed_profile.lap_time == pytest.approx(2.39, abs=0.05)
 
@@ -127,7 +127,7 @@ class TestDynamicsDomain:
 
     def test_a_lat_R40_at_margined_speed(self, catalog, measured_train_config):
         """16-R40 circle at safety_margin=0.95: a_lat = v^2/R = 0.842^2 / 0.32 ~ 2.215."""
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert phys.a_lat_per_segment[0] == pytest.approx(2.215, abs=0.05)
 
@@ -139,7 +139,7 @@ class TestDynamicsDomain:
 
     def test_grip_utilization_below_one(self, catalog, measured_train_config):
         """grip_utilization is in [0, 1] always (within numerical tolerance)."""
-        layout = _make_layout([R40_LEFT, STRAIGHT_16, R40_LEFT, STRAIGHT_16] * 4, catalog)
+        layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 4, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert np.all(phys.grip_utilization_per_segment <= 1.0 + 1e-6)
         assert np.all(phys.grip_utilization_per_segment >= 0.0)
@@ -147,14 +147,14 @@ class TestDynamicsDomain:
     def test_coupler_force_lat_zero_with_no_trailing(self, catalog):
         """With mass_trailing=0, lateral coupler force is 0 everywhere."""
         bare_loco = TrainConfig(mass_trailing=0.0, coupler_offset=0.106)
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, bare_loco, safety_margin=0.95)
         assert np.allclose(phys.coupler_force_lat_per_segment, 0.0, atol=1e-9)
 
     def test_coupler_force_lat_proportional_to_trailing_mass(self, catalog):
         """Doubling mass_trailing doubles the lateral coupler force (when a_long != 0)."""
         # Pick a layout with brake transitions (so a_long is non-zero)
-        layout = _make_layout([R40_LEFT, STRAIGHT_16, R40_LEFT, STRAIGHT_16] * 2, catalog)
+        layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 2, catalog)
         tc1 = TrainConfig(mass_trailing=0.327, coupler_offset=0.106)
         tc2 = TrainConfig(mass_trailing=0.654, coupler_offset=0.106)
         phys1 = evaluate_layout(layout, catalog, tc1, safety_margin=0.95)
@@ -183,13 +183,13 @@ class TestEnergyDomain:
 
     def test_ke_roundtrip_zero_on_constant_speed_loop(self, catalog, measured_train_config):
         """All-R40 circle at single speed: no brake-respin events, ke_roundtrip == 0."""
-        layout = _make_layout([R40_LEFT] * 16, catalog)
+        layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert phys.ke_roundtrip_per_lap == pytest.approx(0.0, abs=1e-3)
 
     def test_motor_work_nonneg(self, catalog, measured_train_config):
         """Motor work (sum of positive a_long contributions) is always non-negative."""
-        layout = _make_layout([R40_LEFT, STRAIGHT_16, R40_LEFT, STRAIGHT_16] * 4, catalog)
+        layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 4, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         assert phys.motor_work_per_lap >= 0.0
 

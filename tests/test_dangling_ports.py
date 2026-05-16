@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from src.catalog import TrackCatalog
-from src.encoding import CROSS_90, R40_LEFT, R40_RIGHT, STRAIGHT_16
+from src.encoding import CROSS_90, R40_CURVE, R40_CURVE, STRAIGHT_16
 from src.geometry import compute_fk_chain
 from src.intersection import count_dangling_cross_ports
 
@@ -26,7 +26,7 @@ def _states(pieces: list[int], cat: TrackCatalog) -> np.ndarray:
 class TestCountDanglingCrossPorts:
     def test_no_cross_no_dangling(self, cat: TrackCatalog) -> None:
         """A layout without any CROSS_90 returns 0 dangling."""
-        pieces = [STRAIGHT_16] * 4 + [R40_LEFT] * 4
+        pieces = [STRAIGHT_16] * 4 + [R40_CURVE] * 4
         s = _states(pieces, cat)
         assert count_dangling_cross_ports(s, pieces) == 0
 
@@ -44,9 +44,9 @@ class TestCountDanglingCrossPorts:
         perpendicular heading. count_dangling_cross_ports must report 0."""
         # Spiral known to produce a 90 deg STR-on-STR crossing at (0, 27).
         spiral = (
-            [int(STRAIGHT_16)] * 6 + [int(R40_RIGHT)] * 4
-            + [int(STRAIGHT_16)] * 2 + [int(R40_RIGHT)] * 4
-            + [int(STRAIGHT_16)] * 3 + [int(R40_RIGHT)] * 4
+            [int(STRAIGHT_16)] * 6 + [int(R40_CURVE)] * 4
+            + [int(STRAIGHT_16)] * 2 + [int(R40_CURVE)] * 4
+            + [int(STRAIGHT_16)] * 3 + [int(R40_CURVE)] * 4
             + [int(STRAIGHT_16)] * 5
         )
         # Simulate post-repair: slot 0 was STR, becomes CROSS_90.
