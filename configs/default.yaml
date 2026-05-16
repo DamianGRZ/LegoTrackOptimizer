@@ -1,16 +1,12 @@
 # LEGO Track Optimizer - Default Configuration
 # Rich inventory with plenty of all piece types
 
-<<<<<<< Updated upstream
-train_config_path: trains/measured_consist.yaml
-=======
 train_config_path: trains/default.yaml
->>>>>>> Stashed changes
 
 inventory:
   # Straights
   STRAIGHT_24: 8
-  STRAIGHT_16: 16
+  STRAIGHT_16: 24
   # R40 curves: single SKU (4DBrix 2.04.069). Left vs right turn is selected
   # per-placement via the chromosome's flip bit. 40 = 20 ex-left + 20 ex-right.
   R40_CURVE: 40
@@ -22,12 +18,12 @@ boundary:
   max_y: 150.0
 
 algorithm:
-  name: NSGA2
+  name: RNSGA2
   pop_size: 1000
   n_gen: 200
   heuristic_ratio: 0.20
-  crossover_prob: 0.9
-  mutation_prob: 0.1
+  crossover_prob: 0.2
+  mutation_prob: 0.8
   eliminate_duplicates: true
   seed: null
 

@@ -7,9 +7,8 @@ inventory:
   # Straights
   # STRAIGHT_24: 8
   STRAIGHT_16: 40
-  # R40 curves (post-refactor: separate LEFT/RIGHT piece types)
-  R40_LEFT: 20
-  R40_RIGHT: 20
+  # R40 curves (one physical piece; handedness via per-slot flip bit).
+  R40_CURVE: 40
   # 90-degree crossing (allows track to cross itself)
   CROSS_90: 20
 

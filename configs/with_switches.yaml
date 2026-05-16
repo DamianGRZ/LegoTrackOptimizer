@@ -8,8 +8,7 @@ inventory:
   #STRAIGHT_24: 8
   STRAIGHT_16: 80
   # R40 curves
-  R40_LEFT: 40
-  R40_RIGHT: 40
+  R40_CURVE: 80
   # R40 Switches: each passing siding consumes 1 LEFT + 1 RIGHT (opposite-handed pair).
   R40_SWITCH_LEFT: 2
   R40_SWITCH_RIGHT: 2

@@ -8,8 +8,7 @@ inventory:
   #STRAIGHT_24: 8
   STRAIGHT_16: 120
   # R40 curves
-  R40_LEFT: 40
-  R40_RIGHT: 40
+  R40_CURVE: 80
   # R40 Switches: each passing siding consumes 1 LEFT + 1 RIGHT (opposite-handed pair).
   R40_SWITCH_LEFT: 3
   R40_SWITCH_RIGHT: 3
@@ -28,12 +27,12 @@ boundary:
 #  max_y: 100.0
 
 algorithm:
-  name: NSGA2
+  name: RNSGA2
   pop_size: 1000
   n_gen: 500
-  heuristic_ratio: 0.20
-  crossover_prob: 0.2
-  mutation_prob: 0.8
+  heuristic_ratio: 0.30
+  crossover_prob: 0.8
+  mutation_prob: 0.2
   eliminate_duplicates: true
   seed: null
   termination:
