@@ -13,7 +13,7 @@ import pytest
 from src.catalog import TrackCatalog
 from src.decoder.construction import _apply_crossing_repair
 from src.decoder.types import DecoderConfig, InventoryTracker
-from src.encoding import CROSS_90, R40_LEFT, STRAIGHT_16, STRAIGHT_24
+from src.encoding import CROSS_90, R40_CURVE, STRAIGHT_16, STRAIGHT_24
 from src.geometry import compute_fk_chain
 from src.intersection import find_crossing_pairs
 
@@ -35,11 +35,11 @@ def _figure_eight_pieces() -> list[int]:
     Verified to produce exactly one (pos_i=0, pos_j=27, angle=90.0) crossing
     on the v2 catalog: the inward-spiraling loop crosses its own start leg.
     """
-    from src.encoding import R40_RIGHT
+    from src.encoding import R40_CURVE
     return (
-        [STRAIGHT_16] * 6 + [R40_RIGHT] * 4
-        + [STRAIGHT_16] * 2 + [R40_RIGHT] * 4
-        + [STRAIGHT_16] * 3 + [R40_RIGHT] * 4
+        [STRAIGHT_16] * 6 + [R40_CURVE] * 4
+        + [STRAIGHT_16] * 2 + [R40_CURVE] * 4
+        + [STRAIGHT_16] * 3 + [R40_CURVE] * 4
         + [STRAIGHT_16] * 5
     )
 
@@ -55,7 +55,7 @@ class TestApplyCrossingRepair:
     def test_no_inventory_no_change(self, cat: TrackCatalog) -> None:
         """Empty CROSS_90 inventory leaves pieces untouched."""
         pieces = _figure_eight_pieces()
-        inv = {"STRAIGHT_16": 60, "R40_LEFT": 20, "CROSS_90": 0}
+        inv = {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 0}
         tracker = _make_tracker(cat, inv, pieces)
 
         result = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
@@ -64,9 +64,9 @@ class TestApplyCrossingRepair:
         assert tracker.used.get(CROSS_90, 0) == 0
 
     def test_no_crossings_no_change(self, cat: TrackCatalog) -> None:
-        """Non-self-intersecting layout (16 R40_LEFT circle) is left alone."""
-        pieces = [R40_LEFT] * 16
-        inv = {"R40_LEFT": 20, "CROSS_90": 20}
+        """Non-self-intersecting layout (16 R40_CURVE circle) is left alone."""
+        pieces = [R40_CURVE] * 16
+        inv = {"R40_CURVE": 20, "CROSS_90": 20}
         tracker = _make_tracker(cat, inv, pieces)
 
         result = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
@@ -82,12 +82,12 @@ class TestApplyCrossingRepair:
         detected pair until either inventory runs out or no crossings
         remain.
         """
-        pieces = [R40_LEFT] * 16 + [R40_LEFT] * 16
+        pieces = [R40_CURVE] * 16 + [R40_CURVE] * 16
         pre = _crossings(pieces, cat)
         if not pre:
             pytest.skip("stacked-loop fixture does not self-intersect on this catalog")
 
-        inv = {"R40_LEFT": 40, "CROSS_90": 20}
+        inv = {"R40_CURVE": 40, "CROSS_90": 20}
         tracker = _make_tracker(cat, inv, pieces)
         cross_before = tracker.used.get(CROSS_90, 0)
 
@@ -125,7 +125,7 @@ class TestApplyCrossingRepair:
             pytest.skip("no STRAIGHT_16-on-STRAIGHT_16 crossing in fixture")
         pos_i, pos_j, _ = near_90
 
-        inv = {"STRAIGHT_16": 60, "R40_LEFT": 20, "CROSS_90": 20}
+        inv = {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 20}
         tracker = _make_tracker(cat, inv, pieces)
         cross_before = tracker.used.get(CROSS_90, 0)
         str16_before = tracker.used.get(STRAIGHT_16, 0)
@@ -150,7 +150,7 @@ class TestApplyCrossingRepair:
         if not pre:
             pytest.skip("hand-built layout does not self-intersect on this catalog")
 
-        inv = {"STRAIGHT_16": 60, "R40_LEFT": 20, "CROSS_90": 20}
+        inv = {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 20}
         tracker = _make_tracker(cat, inv, pieces)
         result = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
 

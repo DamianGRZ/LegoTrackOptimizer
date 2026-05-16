@@ -8,8 +8,8 @@ from src.templates import (
     RIGHT_SIDING,
     TEMPLATES,
     STRAIGHT_16,
-    R40_LEFT,
-    R40_RIGHT,
+    R40_CURVE,
+    R40_CURVE,
     R40_SWITCH_LEFT,
     R40_SWITCH_RIGHT,
     PassingSidingTemplate,
@@ -41,18 +41,18 @@ class TestTemplateDefinitions:
         assert exit_ == R40_SWITCH_LEFT
 
     def test_left_siding_uses_same_handed_curves(self):
-        """LEFT siding: R40_RIGHT for approach AND return (both bend train back).
+        """LEFT siding: R40_CURVE for approach AND return (both bend train back).
 
         Approach turns +22.5° -> 0° (parallel). Return turns 0° -> -22.5°
         (heads back DOWN to merge into the reversed-install OUT switch's port C).
         """
-        assert LEFT_SIDING.approach_curve_idx == R40_RIGHT
-        assert LEFT_SIDING.return_curve_idx == R40_RIGHT
+        assert LEFT_SIDING.approach_curve_idx == R40_CURVE
+        assert LEFT_SIDING.return_curve_idx == R40_CURVE
 
     def test_right_siding_uses_same_handed_curves(self):
-        """RIGHT siding: R40_LEFT for approach AND return (mirror of LEFT)."""
-        assert RIGHT_SIDING.approach_curve_idx == R40_LEFT
-        assert RIGHT_SIDING.return_curve_idx == R40_LEFT
+        """RIGHT siding: R40_CURVE for approach AND return (mirror of LEFT)."""
+        assert RIGHT_SIDING.approach_curve_idx == R40_CURVE
+        assert RIGHT_SIDING.return_curve_idx == R40_CURVE
 
     def test_templates_dict_has_both_handedness(self):
         """TEMPLATES dict should have entries for 0=LEFT and 1=RIGHT."""
@@ -104,7 +104,7 @@ class TestFKApplication:
     def test_curve_fk_rotates_and_offsets(self):
         """Curve FK should rotate heading and offset position."""
         state = (0.0, 0.0, 0.0)
-        fk = (15.307, 3.045, 22.5)  # R40_LEFT
+        fk = (15.307, 3.045, 22.5)  # R40_CURVE
         new_state = apply_fk(state, fk)
         assert abs(new_state[0] - 15.307) < 0.001
         assert abs(new_state[1] - 3.045) < 0.001
@@ -127,8 +127,8 @@ class TestBranchGeometry:
     def test_left_siding_zero_straights_lateral_returns_to_port_c(self):
         """LEFT siding with 0 straights: branch end matches OUT switch port C.
 
-        Trace: IN diverges to (32.75, 13, +22.5°), R40_RIGHT brings to
-        (48, 16.05, 0°), R40_RIGHT brings to (63.4, 13, -22.5°). Lateral
+        Trace: IN diverges to (32.75, 13, +22.5°), R40_CURVE brings to
+        (48, 16.05, 0°), R40_CURVE brings to (63.4, 13, -22.5°). Lateral
         returns to +13 (port C lateral) and heading is -22.5° (matches the
         train's entry direction at the reversed-install OUT switch's port C).
         """
@@ -190,7 +190,7 @@ class TestInventoryRequirements:
         """Each siding consumes 1 LEFT + 1 RIGHT switch + 2 of the same R40 curve.
 
         Approach and return are the same handedness curve (both bend back toward
-        main), so for LEFT_SIDING both are R40_RIGHT — count is 2 of one curve type.
+        main), so for LEFT_SIDING both are R40_CURVE — count is 2 of one curve type.
         """
         reqs = get_siding_inventory_requirements(LEFT_SIDING, n_straights=0)
 
@@ -209,8 +209,8 @@ class TestInventoryRequirements:
         available = {
             R40_SWITCH_LEFT: 1,
             R40_SWITCH_RIGHT: 1,
-            R40_RIGHT: 2,
-            R40_LEFT: 2,
+            R40_CURVE: 2,
+            R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
         assert check_siding_inventory(LEFT_SIDING, n_straights=2, available_inventory=available, used_inventory={})
@@ -219,8 +219,8 @@ class TestInventoryRequirements:
         available = {
             # Missing R40_SWITCH_LEFT
             R40_SWITCH_RIGHT: 1,
-            R40_RIGHT: 2,
-            R40_LEFT: 2,
+            R40_CURVE: 2,
+            R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
         assert not check_siding_inventory(LEFT_SIDING, n_straights=0, available_inventory=available, used_inventory={})
@@ -229,8 +229,8 @@ class TestInventoryRequirements:
         available = {
             R40_SWITCH_LEFT: 1,
             R40_SWITCH_RIGHT: 1,
-            R40_RIGHT: 1,
-            R40_LEFT: 1,
+            R40_CURVE: 1,
+            R40_CURVE: 1,
             STRAIGHT_16: 2,
         }
         used = {R40_SWITCH_LEFT: 1}  # already used the only LEFT switch

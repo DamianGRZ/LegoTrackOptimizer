@@ -282,18 +282,24 @@ Validates patterns against inventory before use.
 
 ## Track Piece Index Mapping
 
+R40 is ONE physical piece (4DBrix 2.04.069); handedness is selected per
+placement via the chromosome's parallel flip array (flip=0 → LEFT +22.5°,
+flip=1 → RIGHT -22.5°). Switches keep separate LEFT/RIGHT piece types
+because their port/route geometry isn't a simple mirror.
+
 | Index | Piece ID | Description |
 |-------|----------|-------------|
 | 0 | STRAIGHT_16 | 16-stud straight |
 | 1 | STRAIGHT_24 | 24-stud straight |
-| 2 | R40_LEFT | 22.5 deg left curve |
-| 3 | R40_RIGHT | 22.5 deg right curve |
-| 4 | CROSS_90 | 90 deg crossing |
-| 5 | R40_SWITCH_LEFT_IN | Left switch IN (diverges left) |
-| 6 | R40_SWITCH_LEFT_OUT | Left switch OUT (merges from left) |
-| 7 | R40_SWITCH_RIGHT_IN | Right switch IN (diverges right) |
-| 8 | R40_SWITCH_RIGHT_OUT | Right switch OUT (merges from right) |
-| 9 | DOUBLE_CROSSOVER | 4 independent switches, 48x24 studs |
+| 2 | R40_CURVE | 22.5 deg curve; direction set by per-slot flip bit |
+| 3 | CROSS_90 | 90 deg crossing |
+| 4 | R40_SWITCH_LEFT | Left switch (diverges left) |
+| 5 | R40_SWITCH_RIGHT | Right switch (diverges right) |
+| 6 | DOUBLE_CROSSOVER | 4 independent switches, 48x16 studs |
+
+Chromosome layout extends the main loop with a parallel `main_loop_flips`
+segment of equal length. Decoder applies the flip at FK time
+(`get_fk_with_flip`); non-R40 slots ignore it.
 
 ---
 

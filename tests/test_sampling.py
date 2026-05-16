@@ -62,7 +62,7 @@ class TestIntegerSampling:
 
     def test_oval_size_scales_with_boundary(self, catalog):
         """Larger boundary -> larger seeded layouts. Proves hardcoded caps are gone."""
-        inventory = {"STRAIGHT_16": 80, "R40_LEFT": 20, "R40_RIGHT": 20}
+        inventory = {"STRAIGHT_16": 80, "R40_CURVE": 20, "R40_CURVE": 20}
         small = OptimizationConfig(
             inventory=inventory,
             boundary=BoundaryConfig(min_x=-100, max_x=100, min_y=-100, max_y=100),
@@ -136,8 +136,8 @@ class TestCrossJunctionSeeder:
             train_config_path="trains/default.yaml",
             inventory={
                 "STRAIGHT_16": 80,
-                "R40_LEFT": 40,
-                "R40_RIGHT": 40,
+                "R40_CURVE": 40,
+                "R40_CURVE": 40,
                 "R40_SWITCH_LEFT": 4,
                 "R40_SWITCH_RIGHT": 4,
                 "CROSS_90": 4,
@@ -170,8 +170,8 @@ class TestCrossJunctionSeeder:
             train_config_path="trains/default.yaml",
             inventory={
                 "STRAIGHT_16": 80,
-                "R40_LEFT": 40,
-                "R40_RIGHT": 40,
+                "R40_CURVE": 40,
+                "R40_CURVE": 40,
                 # No switches, no CROSS_90.
             },
             boundary=BoundaryConfig(min_x=-200, max_x=200, min_y=-200, max_y=200),

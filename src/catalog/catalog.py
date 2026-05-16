@@ -22,12 +22,11 @@ from .specs import TrackCatalogSpec, TrackPieceSpec
 _LEGACY_PIECE_INDEX: Dict[str, int] = {
     "STRAIGHT_16": 0,
     "STRAIGHT_24": 1,
-    "R40_LEFT": 2,
-    "R40_RIGHT": 3,
-    "CROSS_90": 4,
-    "R40_SWITCH_LEFT": 5,
-    "R40_SWITCH_RIGHT": 6,
-    "DOUBLE_CROSSOVER": 7,
+    "R40_CURVE": 2,
+    "CROSS_90": 3,
+    "R40_SWITCH_LEFT": 4,
+    "R40_SWITCH_RIGHT": 5,
+    "DOUBLE_CROSSOVER": 6,
 }
 
 # V2 kind -> legacy piece_type string used by PIECE_TYPE_TO_CLASS.
@@ -51,8 +50,7 @@ _V2_KIND_TO_LEGACY_TYPE: Dict[str, str] = {
 # Curves keep their 0.97 / 320mm from v1.
 _V2_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
     # piece_id -> (radius_mm, speed_limit_ms) on the default route
-    "R40_LEFT": (320.0, 0.97),
-    "R40_RIGHT": (320.0, 0.97),
+    "R40_CURVE": (320.0, 0.97),
 }
 
 # Per-route physics overrides for multi-route pieces, used to reconstruct the

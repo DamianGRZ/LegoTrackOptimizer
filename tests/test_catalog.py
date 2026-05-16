@@ -64,7 +64,7 @@ class TestVectorizedLookup:
 
     def test_get_fk_valid_indices(self, catalog: TrackCatalog):
         """Vectorized FK retrieval works."""
-        indices = np.array([0, 1, 2, 3])  # STRAIGHT_16, STRAIGHT_24, R40_LEFT, R40_RIGHT
+        indices = np.array([0, 1, 2, 3])  # STRAIGHT_16, STRAIGHT_24, R40_CURVE, R40_CURVE
         fk = catalog.get_fk(indices)
 
         assert fk.shape == (4, 3)
@@ -83,7 +83,7 @@ class TestVectorizedLookup:
 
     def test_get_radii(self, catalog: TrackCatalog):
         """Radius lookup works."""
-        indices = np.array([0, 2])  # STRAIGHT_16, R40_LEFT
+        indices = np.array([0, 2])  # STRAIGHT_16, R40_CURVE
         radii = catalog.get_radii(indices)
 
         assert radii[0] == np.inf  # Straight has infinite radius
@@ -91,7 +91,7 @@ class TestVectorizedLookup:
 
     def test_get_speed_limits(self, catalog: TrackCatalog):
         """Speed limit lookup works."""
-        indices = np.array([0, 2])  # STRAIGHT_16, R40_LEFT
+        indices = np.array([0, 2])  # STRAIGHT_16, R40_CURVE
         speeds = catalog.get_speed_limits(indices)
 
         assert speeds[0] == pytest.approx(1.57)  # Straight = motor top speed
@@ -129,7 +129,7 @@ class TestTrackPiece:
 
     def test_arc_length_curve(self, catalog: TrackCatalog):
         """Curve arc_length = radius * angle_rad."""
-        curve = catalog[2]  # R40_LEFT
+        curve = catalog[2]  # R40_CURVE
         assert curve is not None
         assert curve.is_curve
         # R40: radius=40 studs, angle=22.5 deg
@@ -197,7 +197,7 @@ class TestPieceClassification:
         """Can get simple (2-port) pieces."""
         simple = catalog.get_simple_pieces()
         assert 0 in simple  # STRAIGHT_16
-        assert 2 in simple  # R40_LEFT
+        assert 2 in simple  # R40_CURVE
 
     def test_get_switch_pieces(self, catalog: TrackCatalog):
         """Can get switch pieces."""

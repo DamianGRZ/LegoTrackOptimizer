@@ -30,7 +30,7 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
         out = {}
 
@@ -63,7 +63,7 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
         out = {}
 
@@ -77,7 +77,7 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
         out = {}
 
@@ -91,7 +91,7 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
         out = {}
 
@@ -114,7 +114,7 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         chromosome = create_chromosome_from_pieces(dims, pattern)
         out = {}
 
@@ -126,7 +126,7 @@ class TestTrackOptimizationProblem:
         assert G[2] <= 0  # Closure theta satisfied
         assert G[3] <= 0  # Boundary satisfied
         assert G[4] <= 0  # No collisions
-        # All per-type inventory entries satisfied (16 R40_LEFT within 20-piece cap)
+        # All per-type inventory entries satisfied (16 R40_CURVE within 20-piece cap)
         assert np.all(G[5:] <= 0)
 
     def test_closure_tolerance_can_be_set(self, catalog, default_config):
@@ -147,14 +147,14 @@ class TestTrackOptimizationProblem:
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
 
-        circle = create_chromosome_from_pieces(dims, [PieceIndex.R40_LEFT] * 16)
+        circle = create_chromosome_from_pieces(dims, [PieceIndex.R40_CURVE] * 16)
         out_circle = {}
         problem._evaluate(circle, out_circle)
 
         oval = create_chromosome_from_pieces(dims, [
-            PieceIndex.R40_LEFT] * 8 +
+            PieceIndex.R40_CURVE] * 8 +
             [PieceIndex.STRAIGHT_16] * 4 +
-            [PieceIndex.R40_LEFT] * 8 +
+            [PieceIndex.R40_CURVE] * 8 +
             [PieceIndex.STRAIGHT_16] * 4,
         )
         out_oval = {}
@@ -240,9 +240,9 @@ class TestF1MinSpeed:
         problem = TrackOptimizationProblem(catalog, default_config)
         # Oval: 8 R40 + 4 straight + 8 R40 + 4 straight (closes, mixes curve/straight).
         pattern = (
-            [PieceIndex.R40_LEFT] * 8
+            [PieceIndex.R40_CURVE] * 8
             + [PieceIndex.STRAIGHT_16] * 4
-            + [PieceIndex.R40_LEFT] * 8
+            + [PieceIndex.R40_CURVE] * 8
             + [PieceIndex.STRAIGHT_16] * 4
         )
         x = create_chromosome_from_pieces(problem.dims, pattern)
@@ -288,7 +288,7 @@ class TestF1MinSpeed:
 
         problem = TrackOptimizationProblem(catalog, default_config)
         x = problem.xl.astype(np.int32).copy()
-        x[:16] = 2  # R40_LEFT
+        x[:16] = 2  # R40_CURVE
         out = {}
         problem._evaluate(x, out)
         if not np.isfinite(out["F"][1]):
@@ -328,7 +328,7 @@ class TestGShapeV2:
         from src.problem import TrackOptimizationProblem
 
         problem = TrackOptimizationProblem(catalog, default_config)
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         x = create_chromosome_from_pieces(problem.dims, pattern)
         out = {}
         problem._evaluate(x, out)
@@ -343,7 +343,7 @@ class TestGShapeV2:
         problem = TrackOptimizationProblem(catalog, default_config)
         # Use helper so start position defaults to (0, 0) — centers the circle
         # well inside the +/-150 boundary box.
-        pattern = [PieceIndex.R40_LEFT] * 16
+        pattern = [PieceIndex.R40_CURVE] * 16
         x = create_chromosome_from_pieces(problem.dims, pattern)
         out = {}
         problem._evaluate(x, out)
@@ -357,7 +357,7 @@ class TestGShapeV2:
         assert G[3] <= 0.0, f"G[3] boundary={G[3]} should be <= 0 for small circle in large box"
         # No collisions in a simple circle
         assert G[4] <= 0.0, f"G[4] collisions={G[4]} should be <= 0"
-        # Inventory entries: R40_LEFT (index 2) uses 16 pieces; default config has 20 -> feasible
+        # Inventory entries: R40_CURVE (index 2) uses 16 pieces; default config has 20 -> feasible
         inv_entries = G[5:]
         assert len(inv_entries) == catalog.n_pieces, (
             f"inventory entries count {len(inv_entries)} != n_pieces {catalog.n_pieces}"

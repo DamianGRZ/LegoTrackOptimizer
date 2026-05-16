@@ -127,6 +127,9 @@ class SwitchPair:
     out_position: int               # main-loop position of the exit switch
     handedness: str = "LEFT"        # "LEFT" or "RIGHT" — siding diverges to this side
     branch_pieces: List[int] = field(default_factory=list)
+    # Per-slot flip for the branch piece sequence. R40_CURVE consults this to
+    # negate dy/dtheta when flip=1; symmetric pieces (straights, switches) ignore.
+    branch_flips: List[int] = field(default_factory=list)
     absorbed_positions: List[int] = field(default_factory=list)
     # Train-frame FK applied at the exit (reversed-install) switch on a branch
     # path. Populated from PassingSidingTemplate.merge_fk at decode time
@@ -144,6 +147,30 @@ class SwitchPair:
     def span(self) -> int:
         """Number of main loop positions between IN and OUT."""
         return self.out_position - self.in_position - 1
+
+
+@dataclass
+class DblCrossover:
+    """A DOUBLE_CROSSOVER physical piece traversed twice by the loop.
+
+    The piece occupies two main-loop slots — pos_1 (with route_1) and pos_2
+    (with route_2) — whose routes together cover all 4 ports {A,B,C,D} so no
+    port dangles. The injection algorithm sets both slots in
+    main_loop_pieces to DOUBLE_CROSSOVER and records the route used at each
+    so the FK chain pulls the correct catalog route at each traversal.
+    """
+
+    slot: int
+    positions: Tuple[int, int]
+    routes: Tuple[int, int]
+    origin: Tuple[float, float, float]  # world pose of port A
+
+    def is_valid(self) -> bool:
+        return (
+            self.positions[0] >= 0
+            and self.positions[1] >= 0
+            and self.positions[0] != self.positions[1]
+        )
 
 
 @dataclass
@@ -168,7 +195,7 @@ class CrossJunction:
     switch_positions: Dict[str, int] = field(default_factory=dict)  # "W"/"E"/"N"/"S" -> position
     # Cross center in main frame (computed from switch positions during inject)
     cross_center: Tuple[float, float] = (0.0, 0.0)
-    cross_idx: int = 4  # CROSS_90 piece index
+    cross_idx: int = 3  # CROSS_90 piece index (post R40 collapse)
 
     def is_valid(self) -> bool:
         return (
@@ -225,6 +252,11 @@ class MultiPathLayout:
     main_loop_pieces: List[int] = field(default_factory=list)
     switch_pairs: List[SwitchPair] = field(default_factory=list)
     cross_junctions: List["CrossJunction"] = field(default_factory=list)
+    dbl_crossovers: List["DblCrossover"] = field(default_factory=list)
+    # Map: main_loop position -> catalog route index (for DOUBLE_CROSSOVER slots
+    # whose train traversal uses a non-default route). Used by _compute_path_fk
+    # to pick the right FK row at each occurrence.
+    main_loop_routes: Dict[int, int] = field(default_factory=dict)
     paths: List[TraversalPath] = field(default_factory=list)
     start_position: Tuple[float, float] = (0.0, 0.0)
     loose_port_count: int = 0
@@ -233,6 +265,10 @@ class MultiPathLayout:
     @property
     def n_cross_junctions(self) -> int:
         return len(self.cross_junctions)
+
+    @property
+    def n_dbl_crossovers(self) -> int:
+        return len(self.dbl_crossovers)
 
     @property
     def n_switch_pairs(self) -> int:

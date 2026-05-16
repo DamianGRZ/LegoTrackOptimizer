@@ -11,6 +11,7 @@ from pathlib import Path
 from src.algorithm import run_optimization, save_results
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
+from src.run_info import append_run_summary, write_run_info_header
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -55,8 +56,10 @@ def main() -> None:
     catalog = TrackCatalog.load("data/track_pieces_v2.yaml")
 
     output_dir = Path(args.output)
+    write_run_info_header(output_dir, args.config, config, quick_test=args.quick_test)
     res = run_optimization(config, catalog, verbose=args.verbose, output_dir=output_dir)
     save_results(res, output_dir, catalog, config)
+    append_run_summary(output_dir, res, catalog, config)
 
     logger.info("Done!")
 

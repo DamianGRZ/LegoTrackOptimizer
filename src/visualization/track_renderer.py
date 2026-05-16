@@ -29,18 +29,17 @@ from src.lego_track_models import (
     offset_path,
 )
 
-# Color palette for piece types (index-based, post-refactor)
-# Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_LEFT, 3=R40_RIGHT,
-#          4=CROSS_90, 5=SWITCH_LEFT, 6=SWITCH_RIGHT, 7=DOUBLE_CROSSOVER
+# Color palette for piece types (index-based, post-R40-collapse)
+# Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE,
+#          3=CROSS_90, 4=SWITCH_LEFT, 5=SWITCH_RIGHT, 6=DOUBLE_CROSSOVER
 PIECE_COLORS = {
     0: "#3498db",  # STRAIGHT_16 - Blue
     1: "#2980b9",  # STRAIGHT_24 - Darker Blue
-    2: "#27ae60",  # R40_LEFT - Green
-    3: "#16a085",  # R40_RIGHT - Teal
-    4: "#9b59b6",  # CROSS_90 - Purple
-    5: "#e74c3c",  # SWITCH_LEFT - Red
-    6: "#e67e22",  # SWITCH_RIGHT - Orange
-    7: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
+    2: "#27ae60",  # R40_CURVE - Green
+    3: "#9b59b6",  # CROSS_90 - Purple
+    4: "#e74c3c",  # SWITCH_LEFT - Red
+    5: "#e67e22",  # SWITCH_RIGHT - Orange
+    6: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
 }
 
 # Fallback colors for unknown pieces
@@ -49,32 +48,29 @@ FALLBACK_COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 
-# Switch piece indices (post-refactor)
-SWITCH_INDICES = {5, 6}
-CROSSING_INDICES = {4, 7}
+SWITCH_INDICES = {4, 5}
+CROSSING_INDICES = {3, 6}
 
 # Shortened names for legend
 PIECE_SHORT_NAMES = {
     0: "STRAIGHT_16",
     1: "STRAIGHT_24",
-    2: "R40_LEFT",
-    3: "R40_RIGHT",
-    4: "CROSS_90",
-    5: "SWITCH_LEFT",
-    6: "SWITCH_RIGHT",
-    7: "DBL_CROSSOVER",
+    2: "R40_CURVE",
+    3: "CROSS_90",
+    4: "SWITCH_LEFT",
+    5: "SWITCH_RIGHT",
+    6: "DBL_CROSSOVER",
 }
 
 
 # Piece type constants for rendering
 PIECE_IDX_STRAIGHT_16 = 0
 PIECE_IDX_STRAIGHT_24 = 1
-PIECE_IDX_R40_LEFT = 2
-PIECE_IDX_R40_RIGHT = 3
-PIECE_IDX_CROSS_90 = 4
-PIECE_IDX_SWITCH_LEFT = 5
-PIECE_IDX_SWITCH_RIGHT = 6
-PIECE_IDX_DBL_CROSSOVER = 7
+PIECE_IDX_R40_CURVE = 2
+PIECE_IDX_CROSS_90 = 3
+PIECE_IDX_SWITCH_LEFT = 4
+PIECE_IDX_SWITCH_RIGHT = 5
+PIECE_IDX_DBL_CROSSOVER = 6
 
 # Piece lengths for straight pieces
 STRAIGHT_LENGTHS = {
@@ -377,20 +373,34 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
         _draw_rails(ax, x_cross2, y_cross2)
 
 
-def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False):
+def _r40_flip_from_dtheta(piece_idx: int, dtheta_deg: float) -> int:
+    """Recover the per-slot flip bit for an R40_CURVE from its FK heading change.
+
+    Heading change in (-180, +180]: positive ≈ +22.5° → flip=0 (LEFT);
+    negative ≈ -22.5° → flip=1 (RIGHT). Non-R40 pieces always return 0.
+    """
+    if piece_idx != PIECE_IDX_R40_CURVE:
+        return 0
+    d = float(dtheta_deg)
+    while d > 180.0:
+        d -= 360.0
+    while d <= -180.0:
+        d += 360.0
+    return 1 if d < 0 else 0
+
+
+def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False, flip=0):
     """Draw a single piece with proper geometry based on piece type.
 
     Args:
         ax: Matplotlib axes.
-        piece_idx: Piece index (post-refactor 0..7).
+        piece_idx: Piece index (post-refactor 0..6).
         x0, y0: Start position (studs).
         theta0: Entry heading (degrees).
         draw_rails_flag: Whether to draw rails.
-        installed_reversed: Only meaningful for switches. When True, the switch
-            is the OUT (return) end of a passing siding pair and is physically
-            installed rotated 180°. The diverge port is on the OPPOSITE
-            lateral side from the catalog's natural orientation, so we flip
-            the visual diverge direction so it points toward the actual siding.
+        installed_reversed: Only meaningful for switches (see prior docstring).
+        flip: For R40_CURVE only — 0 draws a LEFT arc (+22.5°), 1 draws RIGHT
+            (-22.5°). Other piece types ignore this flag.
     """
     color = get_piece_color(piece_idx)
 
@@ -398,10 +408,9 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_r
         _draw_straight_piece(ax, x0, y0, theta0, 16.0, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_STRAIGHT_24:
         _draw_straight_piece(ax, x0, y0, theta0, 24.0, color, draw_rails_flag)
-    elif piece_idx == PIECE_IDX_R40_LEFT:
-        _draw_curve_piece(ax, x0, y0, theta0, R40, CURVE_ANGLE, color, draw_rails_flag)
-    elif piece_idx == PIECE_IDX_R40_RIGHT:
-        _draw_curve_piece(ax, x0, y0, theta0, R40, -CURVE_ANGLE, color, draw_rails_flag)
+    elif piece_idx == PIECE_IDX_R40_CURVE:
+        sweep = CURVE_ANGLE if not flip else -CURVE_ANGLE
+        _draw_curve_piece(ax, x0, y0, theta0, R40, sweep, color, draw_rails_flag)
     elif piece_idx == PIECE_IDX_SWITCH_LEFT:
         color_branch = PIECE_COLORS.get(piece_idx, color)
         _draw_switch_with_install(ax, x0, y0, theta0, 'left', color, color_branch,
@@ -474,8 +483,8 @@ def plot_layout(
         elif piece_idx in CROSSING_INDICES:
             crossing_positions.append(i)
 
-        # Draw piece with proper geometry (arcs for curves, etc.)
-        _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True)
+        flip = _r40_flip_from_dtheta(piece_idx, theta[i + 1] - theta[i]) if i + 1 < len(theta) else 0
+        _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True, flip=flip)
 
         piece_indices_seen.add(piece_idx)
 
@@ -665,8 +674,10 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
     for i in range(len(main_path.piece_sequence)):
         if i < len(x) - 1:
             piece_idx = main_path.piece_sequence[i]
+            flip = _r40_flip_from_dtheta(piece_idx, theta[i + 1] - theta[i])
             _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
-                        draw_rails_flag=True, installed_reversed=(i in out_positions))
+                        draw_rails_flag=True, installed_reversed=(i in out_positions),
+                        flip=flip)
 
     ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
@@ -699,7 +710,9 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
         # at conflicting angles. Just draw the branch INTERNAL pieces.
         for k in range(1, len(pieces) - 1):
             sx, sy, stheta = states[k]
-            _draw_piece(ax, pieces[k], sx, sy, stheta, draw_rails_flag=True)
+            sx_next, sy_next, stheta_next = states[k + 1] if k + 1 < len(states) else (sx, sy, stheta)
+            flip = _r40_flip_from_dtheta(pieces[k], stheta_next - stheta)
+            _draw_piece(ax, pieces[k], sx, sy, stheta, draw_rails_flag=True, flip=flip)
 
         ax.plot(
             states[:, 0], states[:, 1],
@@ -790,8 +803,10 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
             if piece_idx in SWITCH_INDICES:
                 switches_seen += 1
                 installed_reversed = (switches_seen % 2 == 0)
+            flip = _r40_flip_from_dtheta(piece_idx, theta[i + 1] - theta[i])
             _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
-                        draw_rails_flag=True, installed_reversed=installed_reversed)
+                        draw_rails_flag=True, installed_reversed=installed_reversed,
+                        flip=flip)
 
     # Overlay drift trajectory (if any) as a dotted gray polyline
     if drift_start < len(x) - 1:

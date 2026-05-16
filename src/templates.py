@@ -12,7 +12,7 @@ Key insight from Monty's Trains (Track Planning Part 1):
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,34 +32,20 @@ class PassingSidingTemplate:
     RIGHT switch (opposite-handed pair, confirmed by LEGO 9V track-planning
     references). For a siding diverging to side `handedness`:
       - The entry switch matches `handedness` (LEFT siding -> LEFT switch).
-      - The exit switch is opposite handedness, installed REVERSED on main
-        (rotated 180° around its body) so that its port C — naturally on
-        the opposite side — ends up on the same side as the siding.
+      - The exit switch is opposite handedness, installed REVERSED on main.
 
-    Switch piece indices aren't stored here; they're constants in encoding.py
-    (SWITCH_LEFT, SWITCH_RIGHT) and derived from `handedness` at decode time.
-
-    Attributes:
-        name: Human-readable name for the template.
-        handedness: "LEFT" or "RIGHT" — which side the siding diverges to.
-        approach_curve_idx: Curve after the entry switch's diverge to bring
-                            heading back to parallel (0° on parallel section).
-        return_curve_idx: Curve before the exit switch to bend train back
-                          toward main (same handedness as approach so it
-                          bends DOWN to merge, not further away).
-        straight_idx: Straight piece for the parallel section.
-        diverge_fk: (dx, dy, dtheta) catalog A->C displacement for the
-                    entry switch on a branch path.
-        merge_fk: (dx, dy, dtheta) train-frame displacement for the exit
-                  switch's C-from-siding to A-to-main traversal with the
-                  switch installed reversed. Precomputed because reversed
-                  installation can't be expressed by natural catalog routes.
+    R40 curves come from one physical SKU; the per-placement flip bit picks
+    direction at decode time. ``*_curve_flip`` is the flip applied to the
+    catalog FK when generating that curve slot — flip=0 means LEFT (+22.5°),
+    flip=1 means RIGHT (-22.5°).
     """
 
     name: str
     handedness: str
     approach_curve_idx: int
+    approach_curve_flip: int
     return_curve_idx: int
+    return_curve_flip: int
     straight_idx: int
     diverge_fk: Tuple[float, float, float]
     merge_fk: Tuple[float, float, float]
@@ -69,12 +55,11 @@ class PassingSidingTemplate:
 # STANDARD TEMPLATES
 # =============================================================================
 
-# Piece indices from track_pieces.yaml piece_index mapping (post-refactor)
+# Piece indices (must match src/encoding.py PieceIndex enum)
 STRAIGHT_16 = 0
-R40_LEFT = 2
-R40_RIGHT = 3
-R40_SWITCH_LEFT = 5
-R40_SWITCH_RIGHT = 6
+R40_CURVE = 2
+R40_SWITCH_LEFT = 4
+R40_SWITCH_RIGHT = 5
 
 
 def _compute_reversed_out_merge_fk(
@@ -123,11 +108,15 @@ _RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG = 32.75, -13.0, -22.5
 # switch's port C in main frame is at +y (same side as siding) because of the
 # reversal; the merge_fk is computed from RIGHT switch's natural port C
 # (-13 dy in switch frame, flipped by the reversal).
+# LEFT_SIDING (siding above main) historically used R40_RIGHT curves, which
+# now correspond to R40_CURVE with flip=1 (negated dy/dtheta).
 LEFT_SIDING = PassingSidingTemplate(
     name="left_passing_siding",
     handedness="LEFT",
-    approach_curve_idx=R40_RIGHT,
-    return_curve_idx=R40_RIGHT,
+    approach_curve_idx=R40_CURVE,
+    approach_curve_flip=1,
+    return_curve_idx=R40_CURVE,
+    return_curve_flip=1,
     straight_idx=STRAIGHT_16,
     diverge_fk=(_LEFT_C_DX, _LEFT_C_DY, _LEFT_C_DTHETA_DEG),
     merge_fk=_compute_reversed_out_merge_fk(
@@ -135,12 +124,14 @@ LEFT_SIDING = PassingSidingTemplate(
     ),
 )
 
-# Mirror: RIGHT siding (below main).
+# RIGHT_SIDING (siding below main) historically used R40_LEFT curves → flip=0.
 RIGHT_SIDING = PassingSidingTemplate(
     name="right_passing_siding",
     handedness="RIGHT",
-    approach_curve_idx=R40_LEFT,
-    return_curve_idx=R40_LEFT,
+    approach_curve_idx=R40_CURVE,
+    approach_curve_flip=0,
+    return_curve_idx=R40_CURVE,
+    return_curve_flip=0,
     straight_idx=STRAIGHT_16,
     diverge_fk=(_RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG),
     merge_fk=_compute_reversed_out_merge_fk(
@@ -173,9 +164,9 @@ TEMPLATES = {
 # =============================================================================
 # Geometry: cross at origin, 4 switches arranged in 90° rotational symmetry.
 # Each switch's port C connects to one cross port via a single R40 spur curve.
-# All-LEFT configuration: 4 LEFT switches + 4 R40_RIGHT spur curves + 1 CROSS_90.
+# All-LEFT configuration: 4 LEFT switches + 4 R40_CURVE flip=1 spurs + 1 CROSS_90.
 # Geometry validated by spike script — all 4 spurs land exactly on cross ports.
-CROSS_90_PIECE_IDX = 4
+CROSS_90_PIECE_IDX = 3
 
 # Cross ports in cross local frame: (dx, dy, entry_heading_degrees).
 # Entry heading is the train heading when entering the cross at this port.
@@ -205,16 +196,17 @@ class CrossJunctionTemplate:
         name: Human-readable.
         handedness: "LEFT" or "RIGHT" — handedness of all 4 switches.
         switch_idx: catalog piece index of the switches (all same handedness).
-        spur_curve_idx: catalog piece index of the spur curve (1 per arm).
-                        For LEFT switches: R40_RIGHT (curves back to align).
-                        For RIGHT switches: R40_LEFT (mirror).
-        cross_idx: catalog piece index of CROSS_90 (= 4).
+        spur_curve_idx: catalog piece index of the spur curve (R40_CURVE).
+        spur_curve_flip: flip bit for the spur curve. LEFT switches use flip=1
+                         (curves back to align); RIGHT switches use flip=0.
+        cross_idx: catalog piece index of CROSS_90 (= 3 post-refactor).
     """
 
     name: str
     handedness: str
     switch_idx: int
     spur_curve_idx: int
+    spur_curve_flip: int
     cross_idx: int = CROSS_90_PIECE_IDX
 
 
@@ -222,14 +214,16 @@ CROSS_JUNCTION_LEFT = CrossJunctionTemplate(
     name="cross_junction_left",
     handedness="LEFT",
     switch_idx=R40_SWITCH_LEFT,
-    spur_curve_idx=R40_RIGHT,
+    spur_curve_idx=R40_CURVE,
+    spur_curve_flip=1,
 )
 
 CROSS_JUNCTION_RIGHT = CrossJunctionTemplate(
     name="cross_junction_right",
     handedness="RIGHT",
     switch_idx=R40_SWITCH_RIGHT,
-    spur_curve_idx=R40_LEFT,
+    spur_curve_idx=R40_CURVE,
+    spur_curve_flip=0,
 )
 
 CROSS_JUNCTION_TEMPLATES = {
@@ -261,12 +255,12 @@ def switch_position_for_cross_port(
     if template.handedness == "LEFT":
         port_c_local_dy = 13.0
         port_c_dtheta = 22.5
-        spur_local_dy = -3.045  # R40_RIGHT
+        spur_local_dy = -3.045  # R40_CURVE flip=1
         spur_local_dtheta = -22.5
     else:
         port_c_local_dy = -13.0
         port_c_dtheta = -22.5
-        spur_local_dy = 3.045   # R40_LEFT
+        spur_local_dy = 3.045   # R40_CURVE flip=0
         spur_local_dtheta = 22.5
 
     pc_rad = np.radians(switch_heading + port_c_dtheta)
@@ -293,52 +287,169 @@ def get_cross_junction_inventory_requirements(
 
 
 # =============================================================================
+# DOUBLE_CROSSOVER TEMPLATE
+# =============================================================================
+# The piece is 48 stud long (3x straight_16) with two parallel tracks at 16
+# stud lateral separation. Four ports + four routes:
+#
+#   route 0 (track1_through):  A(0, 0)   -> B(48, 0)    — straight on track 1
+#   route 1 (track2_through):  C(0, 16)  -> D(48, 16)   — straight on track 2
+#   route 2 (cross_1_to_2):    A(0, 0)   -> D(48, 16)   — diagonal up
+#   route 3 (cross_2_to_1):    C(0, 16)  -> B(48, 0)    — diagonal down
+#
+# Train-frame FK per route (heading preserved through every route):
+
+DC_PIECE_IDX = 6  # DOUBLE_CROSSOVER catalog index (post R40 collapse)
+DC_LENGTH_STUDS = 48.0
+DC_LATERAL_STUDS = 16.0
+
+# Catalog-route indices (must match yaml order in track_pieces_v2.yaml)
+DC_R_TRACK1_THROUGH = 0
+DC_R_TRACK2_THROUGH = 1
+DC_R_CROSS_1_TO_2 = 2
+DC_R_CROSS_2_TO_1 = 3
+
+# Train-frame FK (dx, dy, dtheta_deg) per route, with entry port as origin and
+# entry heading = 0. dtheta is in DEGREES to match catalog _fk_table convention.
+DC_ROUTE_FK: Dict[int, Tuple[float, float, float]] = {
+    DC_R_TRACK1_THROUGH: (DC_LENGTH_STUDS,  0.0,                0.0),
+    DC_R_TRACK2_THROUGH: (DC_LENGTH_STUDS,  0.0,                0.0),
+    DC_R_CROSS_1_TO_2:   (DC_LENGTH_STUDS,  DC_LATERAL_STUDS,   0.0),
+    DC_R_CROSS_2_TO_1:   (DC_LENGTH_STUDS, -DC_LATERAL_STUDS,   0.0),
+}
+
+# Which port the train enters at for each route.
+DC_ROUTE_ENTRY_PORT: Dict[int, str] = {
+    DC_R_TRACK1_THROUGH: "A",
+    DC_R_TRACK2_THROUGH: "C",
+    DC_R_CROSS_1_TO_2:   "A",
+    DC_R_CROSS_2_TO_1:   "C",
+}
+
+# Port positions in piece-local frame (port_A at origin, piece heading = +x).
+DC_PORT_LOCAL: Dict[str, Tuple[float, float]] = {
+    "A": (0.0,              0.0),
+    "B": (DC_LENGTH_STUDS,  0.0),
+    "C": (0.0,              DC_LATERAL_STUDS),
+    "D": (DC_LENGTH_STUDS,  DC_LATERAL_STUDS),
+}
+
+# Port set covered by each catalog route (0=A, 1=B, 2=C, 3=D).
+DC_PORT_INDEX: Dict[str, int] = {"A": 0, "B": 1, "C": 2, "D": 3}
+DC_ROUTE_PORT_SET: Dict[int, frozenset] = {
+    DC_R_TRACK1_THROUGH: frozenset({0, 1}),
+    DC_R_TRACK2_THROUGH: frozenset({2, 3}),
+    DC_R_CROSS_1_TO_2:   frozenset({0, 3}),
+    DC_R_CROSS_2_TO_1:   frozenset({2, 1}),
+}
+
+# Valid 2-route covers of {A,B,C,D} — these are the only route pairs that
+# leave NO dangling ports on a physical DBL_CROSSOVER.
+DC_VALID_ROUTE_PAIRS: frozenset = frozenset({
+    frozenset({DC_R_TRACK1_THROUGH, DC_R_TRACK2_THROUGH}),  # both-through
+    frozenset({DC_R_CROSS_1_TO_2,   DC_R_CROSS_2_TO_1}),    # both-cross
+})
+
+
+def dbl_crossover_piece_origin(
+    train_pose: Tuple[float, float, float],
+    route: int,
+) -> Tuple[float, float, float]:
+    """World pose of port A given the train pose at its entry port for `route`.
+
+    Train pose is (x, y, theta_deg). Returned tuple is (x_A, y_A, theta_deg)
+    — port A's world coordinates and the piece heading. The piece heading
+    equals the train heading because all routes preserve heading.
+    """
+    x, y, theta_deg = train_pose
+    entry_port = DC_ROUTE_ENTRY_PORT[route]
+    if entry_port == "A":
+        return (x, y, theta_deg)
+    # Entry port is C: port A sits at piece-local (0, 0); port C at (0, 16).
+    # Piece-local +y is the lateral axis; in world, that direction is
+    # rotated by theta. Port A is 16 stud back along that lateral axis.
+    theta_rad = np.radians(theta_deg)
+    return (
+        x + DC_LATERAL_STUDS * np.sin(theta_rad),
+        y - DC_LATERAL_STUDS * np.cos(theta_rad),
+        theta_deg,
+    )
+
+
+def dbl_crossover_routes_cover_all_ports(route_a: int, route_b: int) -> bool:
+    """True iff the two-route pair (route_a, route_b) covers {A,B,C,D}."""
+    return frozenset({route_a, route_b}) in DC_VALID_ROUTE_PAIRS
+
+
+def get_dbl_crossover_inventory_requirements() -> Dict[int, int]:
+    """Pieces consumed by one physical DBL_CROSSOVER instance."""
+    return {DC_PIECE_IDX: 1}
+
+
+# =============================================================================
 # BRANCH PIECE COMPUTATION
 # =============================================================================
 
 
-def compute_branch_pieces(template: PassingSidingTemplate, n_straights: int) -> List[int]:
-    """Generate piece sequence for a passing siding branch.
+def compute_branch_pieces(
+    template: PassingSidingTemplate, n_straights: int,
+) -> Tuple[List[int], List[int]]:
+    """Generate piece sequence + per-slot flips for a passing siding branch.
 
     The branch structure is:
         [approach_curve] + [straight × N] + [return_curve]
 
-    This creates a path that:
-    1. Turns to become parallel to main line (approach_curve)
-    2. Runs parallel for N straights
-    3. Turns back toward main line angle (return_curve)
-
     Args:
-        template: Passing siding template defining piece types.
+        template: Passing siding template defining piece types + flips.
         n_straights: Number of straight pieces in parallel section.
 
     Returns:
-        List of piece indices for the branch (excluding switches).
+        (pieces, flips) — piece indices and matching flip bits. Flips on
+        straights are 0 (irrelevant for symmetric pieces); approach/return
+        curves use the template's per-curve flip.
     """
-    return (
+    pieces = (
         [template.approach_curve_idx]
         + [template.straight_idx] * n_straights
         + [template.return_curve_idx]
     )
+    flips = (
+        [template.approach_curve_flip]
+        + [0] * n_straights
+        + [template.return_curve_flip]
+    )
+    return pieces, flips
 
 
 # =============================================================================
 # GEOMETRY COMPUTATION
 # =============================================================================
 
-# R40 curve FK values (from track_pieces.yaml)
-R40_LEFT_FK = (15.307, 3.045, 22.5)
-R40_RIGHT_FK = (15.307, -3.045, -22.5)
+# R40 curve FK (catalog default — flip=0 = LEFT direction)
+R40_CURVE_FK = (15.307, 3.045, 22.5)
 STRAIGHT_16_FK = (16.0, 0.0, 0.0)
 
-# FK lookup by piece index (default route — switches use through-route here)
+# FK lookup by piece index (default route — switches use through-route here).
+# R40_CURVE entry is the LEFT direction; flip-aware callers use piece_fk(idx, flip).
 PIECE_FK = {
     STRAIGHT_16: STRAIGHT_16_FK,
-    R40_LEFT: R40_LEFT_FK,
-    R40_RIGHT: R40_RIGHT_FK,
+    R40_CURVE: R40_CURVE_FK,
     R40_SWITCH_LEFT: (32.0, 0.0, 0.0),
     R40_SWITCH_RIGHT: (32.0, 0.0, 0.0),
 }
+
+
+def piece_fk(piece_idx: int, flip: int = 0) -> Tuple[float, float, float]:
+    """FK for ``piece_idx`` with optional flip for symmetric pieces.
+
+    R40_CURVE with flip=1 negates dy and dtheta (LEFT → RIGHT). Other pieces
+    ignore the flip bit (they are symmetric or have no useful mirror).
+    """
+    fk = PIECE_FK[piece_idx]
+    if piece_idx == R40_CURVE and flip:
+        dx, dy, dtheta = fk
+        return (dx, -dy, -dtheta)
+    return fk
 
 
 def apply_fk(state: Tuple[float, float, float], fk: Tuple[float, float, float]) -> Tuple[float, float, float]:
@@ -396,18 +507,16 @@ def compute_branch_endpoint(
     # 1. IN switch diverge
     state = apply_fk(state, template.diverge_fk)
 
-    # 2. Approach curve
-    approach_fk = PIECE_FK[template.approach_curve_idx]
-    state = apply_fk(state, approach_fk)
+    # 2. Approach curve (flip-aware: LEFT_SIDING uses flip=1 i.e. -22.5°)
+    state = apply_fk(state, piece_fk(template.approach_curve_idx, template.approach_curve_flip))
 
     # 3. N straights
     straight_fk = PIECE_FK[template.straight_idx]
     for _ in range(n_straights):
         state = apply_fk(state, straight_fk)
 
-    # 4. Return curve
-    return_fk = PIECE_FK[template.return_curve_idx]
-    state = apply_fk(state, return_fk)
+    # 4. Return curve (flip-aware)
+    state = apply_fk(state, piece_fk(template.return_curve_idx, template.return_curve_flip))
 
     return state
 
