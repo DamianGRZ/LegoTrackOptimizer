@@ -1,0 +1,30 @@
+# Smaller-population version of with_double_crossover.yaml for quick verification.
+# Identical inventory + boundary; pop_size and n_gen reduced for fast end-to-end.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_16: 80
+  R40_CURVE: 80
+  DOUBLE_CROSSOVER: 2
+
+boundary:
+  min_x: -150.0
+  max_x: 150.0
+  min_y: -150.0
+  max_y: 150.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 300
+  n_gen: 60
+  heuristic_ratio: 0.30
+  crossover_prob: 0.2
+  mutation_prob: 0.8
+  eliminate_duplicates: true
+  seed: 42
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 32
