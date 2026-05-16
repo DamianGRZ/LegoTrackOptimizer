@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
@@ -48,7 +48,7 @@ class TerminationConfig(BaseModel):
 class AlgorithmConfig(BaseModel):
     """NSGA-II algorithm parameters."""
 
-    name: str = Field(default="NSGA2", description="Algorithm name")
+    name: Literal["NSGA2", "RNSGA2"] = Field(default="NSGA2", description="Algorithm: NSGA2 (Deb's feasibility-first via ConstrRankAndCrowding) or RNSGA2 (preference-guided)")
     pop_size: int = Field(default=1000, ge=10, description="Population size")
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
     heuristic_ratio: float = Field(default=0.20, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")

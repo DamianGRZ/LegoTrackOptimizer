@@ -9,6 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.algorithms.moo.rnsga2 import RNSGA2
 from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
 from pymoo.core.callback import Callback
 from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
@@ -25,6 +26,17 @@ from src.problem import TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.sampling import IntegerSampling
 from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
+
+# R-NSGA-II preference (Deb & Sundar, AAAI 2006). Reference point is the
+# utopian corner (100% utilization, motor-max speed) so the front is pulled
+# toward "everything maximized" rather than any specific trade-off. The
+# weights control how the modified-crowding distance to that corner is
+# measured: putting almost all the mass on F[0] means a solution close to
+# the corner in UTILIZATION is treated as "much closer to the ideal" than
+# one close in speed. Concrete bias: utilization deviation weighs
+# 0.85 / 0.15 ≈ 5.7× more than speed deviation in the niching metric.
+PREFERENCE_WEIGHTS = np.array([0.85, 0.15])  # (utilization, speed)
+PREFERENCE_EPSILON = 0.01                    # niche radius for R-NSGA-II
 
 
 def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
@@ -307,8 +319,15 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
         Phase B (hold_until to perc_eps_until): linear decay to 0
         Phase C (perc_eps_until to end): strict feasibility
 
-    Epsilon_0 auto-initialized from 80th percentile of initial population CVs
-    (Takahama & Sakai 2006).
+    Epsilon_0 auto-initialized from the 10th percentile of infeasible CVs in
+    the initial population, clipped to 30 (see _initialize_advance below).
+    This narrower band targets siding closure errors (~15-30 CV) without
+    letting random garbage (CV > 100) survive selection. Differs from the
+    original Takahama & Sakai (2006) prescription (80th percentile) — adapted
+    to this problem's heavy-tailed CV distribution.
+
+    Note: the class-level default ``perc_eps_until=0.7`` is overridden by
+    callers in :func:`run_optimization`, which passes ``perc_eps_until=0.9``.
     """
 
     def __init__(self, algorithm, hold_until=0.2, perc_eps_until=0.7):
@@ -387,15 +406,39 @@ def run_optimization(
     crossover = PartitionedCrossover(dims, prob=config.algorithm.crossover_prob)
     mutation = PartitionedMutation(dims, prob=config.algorithm.mutation_prob)
 
-    base_algorithm = NSGA2(
-        pop_size=config.algorithm.pop_size,
-        sampling=sampler,
-        crossover=crossover,
-        mutation=mutation,
-        repair=repair,
-        survival=ConstrRankAndCrowding(),
-        eliminate_duplicates=config.algorithm.eliminate_duplicates,
-    )
+    algo_name = config.algorithm.name
+    if algo_name == "RNSGA2":
+        v_motor_max = problem._train_config.v_motor_max
+        ref_points = np.array([[-1.0, -v_motor_max]])
+        base_algorithm = RNSGA2(
+            ref_points=ref_points,
+            weights=PREFERENCE_WEIGHTS,
+            epsilon=PREFERENCE_EPSILON,
+            normalization="ever",
+            pop_size=config.algorithm.pop_size,
+            sampling=sampler,
+            crossover=crossover,
+            mutation=mutation,
+            repair=repair,
+            eliminate_duplicates=config.algorithm.eliminate_duplicates,
+        )
+        logger.info(
+            f"R-NSGA-II preference: ref={ref_points.tolist()}, "
+            f"weights={PREFERENCE_WEIGHTS.tolist()}, epsilon={PREFERENCE_EPSILON}"
+        )
+    elif algo_name == "NSGA2":
+        base_algorithm = NSGA2(
+            pop_size=config.algorithm.pop_size,
+            sampling=sampler,
+            crossover=crossover,
+            mutation=mutation,
+            repair=repair,
+            survival=ConstrRankAndCrowding(),
+            eliminate_duplicates=config.algorithm.eliminate_duplicates,
+        )
+        logger.info("NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)")
+    else:
+        raise ValueError(f"Unknown algorithm name: {algo_name!r} (expected 'NSGA2' or 'RNSGA2')")
 
     # Wrap with adaptive epsilon-constraint handling
     # Allows infeasible sidings to survive and evolve toward feasibility
@@ -422,7 +465,7 @@ def run_optimization(
         chain.append(ProgressCallback(every_n_gen=10, total_inventory=config.total_inventory))
     callback = CallbackChain(*chain)
 
-    logger.info("Starting NSGA-II track optimization...")
+    logger.info(f"Starting {algo_name} track optimization...")
     logger.info(f"Objectives: utilization + speed (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
