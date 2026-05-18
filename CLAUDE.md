@@ -405,7 +405,7 @@ Each row is a symbol or file with no in-code importer/loader. Before deleting an
 - `src/problem.py` method `_compute_inventory_violation()` (superseded by `_compute_per_type_inventory_violation`).
 
 **NOT candidates (correcting earlier pass):**
-- `configs/with_double_crossover{,_narrow,_small}.yaml`, `configs/with_switches_and_crossing.yaml` — CLI inputs to `main.py --config`; `outputs_v1/verify_with_double_crossover*/` and `outputs_v1/verify_with_switches_and_crossing*/` prove they've been run.
+- `configs/with_double_crossover{,_narrow,_small}.yaml`, `configs/with_switches_and_crossing.yaml` — CLI inputs to `main.py --config`; archived milestone runs under `archive/dc/full-verify/` and `outputs/verify_with_switches_and_crossing_4/` confirm they've been used.
 - `BoundaryConfig.width` / `.height` — used at `config.py:36` (inside `.diagonal`), `config.py:108`, `config.py:109` (inside `calculate_max_layout_pieces`, called by `n_var`).
 - `AlgorithmConfig.name = "RNSGA2"` literal — dispatched at `runner.py:410-413` (real `RNSGA2(...)` instantiation).
 
@@ -423,6 +423,6 @@ Each row is a symbol or file with no in-code importer/loader. Before deleting an
 
 ### Untouched (Run Artifacts — Do Not Delete)
 
-`outputs/`, `outputs_v1/` (~37 sub-run dirs + per-run `.log` siblings), `outputs_v1_compare/` are GA run outputs. Treat as build output; clean only on explicit user instruction.
+All GA run output goes under `outputs/` (single gitignored tree). `main.py` writes to `outputs/` root; `run_v1_all_configs.py` writes to `outputs/<config_name>/`. Milestone runs worth keeping live under `archive/{dc,crossing,baselines}/` (also gitignored). Treat both as build output; clean only on explicit user instruction.
 
 ---

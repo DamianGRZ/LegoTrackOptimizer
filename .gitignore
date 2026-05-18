@@ -40,7 +40,7 @@ htmlcov/
 
 # Project specific
 outputs/
-outputs_v2/
+archive/
 docs/PDF/
 *.log
 *.zip

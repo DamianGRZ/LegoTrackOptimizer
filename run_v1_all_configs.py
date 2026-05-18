@@ -26,7 +26,7 @@ def run_one(config_name: str) -> dict:
 
     print(f"\n{'='*70}\nV1 {config_name}: pop={POP_SIZE}, gen={N_GEN}\n{'='*70}")
     catalog = TrackCatalog.load("data/track_pieces_v2.yaml")
-    output_dir = Path(f"outputs_v1/{config_name}")
+    output_dir = Path(f"outputs/{config_name}")
 
     t0 = time.time()
     res = run_optimization(config, catalog, verbose=True, output_dir=output_dir)
