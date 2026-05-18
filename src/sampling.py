@@ -732,8 +732,3 @@ class IntegerSampling(Sampling):
         off_y = max(1, int(h * 0.05))
         x[dims.start_pos_start] = int(rng.integers(-off_x, off_x + 1))
         x[dims.start_pos_start + 1] = int(rng.integers(-off_y, off_y + 1))
-
-
-# Backward-compatible aliases
-MultiSegmentSampling = IntegerSampling
-HeuristicSampling = IntegerSampling
