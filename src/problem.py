@@ -202,32 +202,6 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
-    def _compute_inventory_violation(self, layout) -> int:
-        """Compute total count of pieces used beyond available inventory.
-
-        Deprecated in Stage B: no longer called by _evaluate; kept only as a
-        scalar summary helper for external callers. The per-type version
-        below is the constraint-facing metric.
-        """
-        piece_counts: dict[int, int] = {}
-
-        for piece_idx in layout.main_loop_pieces:
-            if piece_idx >= 0:
-                piece_counts[piece_idx] = piece_counts.get(piece_idx, 0) + 1
-
-        for switch_pair in layout.switch_pairs:
-            for piece_idx in switch_pair.branch_pieces:
-                if piece_idx >= 0:
-                    piece_counts[piece_idx] = piece_counts.get(piece_idx, 0) + 1
-
-        total_violation = 0
-        for piece_idx, used in piece_counts.items():
-            available = self.inventory_by_index.get(piece_idx, 0)
-            if used > available:
-                total_violation += used - available
-
-        return total_violation
-
     def _compute_per_type_inventory_violation(self, layout) -> np.ndarray:
         """Per-catalog-index inventory excess, normalized by max_occ[t].
 

@@ -489,17 +489,3 @@ class PartitionedMutation(Mutation):
                 _MAIN_LOOP_OPS[op_idx](X[i], self.dims, catalog)
 
         return X
-
-
-# =============================================================================
-# Convenience: NoOpCrossover (kept for backward compatibility)
-# =============================================================================
-
-class NoOpCrossover(Crossover):
-    """Identity crossover -- returns parents unchanged."""
-
-    def __init__(self, **kwargs) -> None:
-        super().__init__(n_parents=2, n_offsprings=2, **kwargs)
-
-    def _do(self, problem, X, **kwargs) -> NDArray:
-        return X

@@ -235,7 +235,7 @@ The decoder automatically:
 ```
 track_pieces.yaml -> TrackCatalog (FK tables, speed limits, routes)
 configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
-main.py -> GA/NSGA2 + MultiSegmentSampling -> Problem._evaluate()
+main.py -> GA/NSGA2 + IntegerSampling -> Problem._evaluate()
 chromosome -> decode_chromosome() -> MultiPathLayout
 MultiPathLayout -> compute_speed_profile() -> F[], G[]
 results -> visualization -> outputs/
@@ -268,7 +268,7 @@ results -> visualization -> outputs/
 
 ---
 
-## HeuristicSampling
+## IntegerSampling (Heuristic Seeding)
 
 Seeds 15% of population with inventory-valid closed loop patterns:
 - Simple circles (16 R40 curves)
@@ -345,3 +345,84 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 
 **Status**: Implementation complete, optimization functional
 **Python**: 3.x | **pymoo**: 0.6.1.6
+
+---
+
+## Code Map & Cleanup Findings (Audit 2026-05-18)
+
+Snapshot from a four-agent sweep of `src/`, `tests/`, `configs/`, `data/`, root scripts, and top-level docs. Findings below were re-verified after a self-audit caught several errors in the first pass; treat as point-in-time inventory and re-verify before any actual `rm` / `git rm`. **Note**: configs in `configs/*.yaml` are CLI inputs (`main.py --config <path>`) — they are NOT imported from Python, so "no .py reference" is NOT evidence of being dead.
+
+### Code Map (one-line purpose per module)
+
+**`src/` core**
+- `problem.py` — `TrackOptimizationProblem`, bi-objective NSGA-II (F[0]=−utilization, F[1]=−avg_speed per `problem.py:125`).
+- `decoder/construction.py` + `decoder/types.py` — `decode_chromosome()`, partitioned chromosome → `MultiPathLayout`. Imported by `problem.py:16`, `algorithm/runner.py:22`, `run_info.py:25`, `run_v1_all_configs.py:12`, and tests/viz.
+- `encoding.py` — partitioned-chromosome accessors (`get_main_loop_types`, `get_junction`, `INACTIVE`, `PieceIndex`, `MAIN_LOOP_PIECE_INDICES`); all symbols used.
+- `geometry.py` — `compute_fk_chain`, plus the legacy Phase-1 `Layout` / `build_layout()` shim still consumed by tests, train/, and viz.
+- `intersection.py` — crossing detection + dangling-port counters (`count_segment_crossings`, `count_dangling_cross_ports`, `count_dangling_double_crossover_ports`, `find_crossing_pairs`); all used by `problem.py` / `operators.py`.
+- `repair.py` — `MainLoopClosureRepair`, `JunctionValidityRepair`, `InventoryRepair`, `TrackRepairPipeline` (wired into `algorithm/runner.py`).
+- `templates.py` — passing-siding + cross-junction + double-crossover template tables; consumed by decoder, sampling, operators.
+- `sampling.py` — `IntegerSampling` (heuristic + random seeding); only entry point for pymoo `sampling=`.
+- `operators.py` — `PartitionedCrossover`, `PartitionedMutation`; private `_*` helpers all reach the two public operators.
+- `types.py` — pure dataclasses (`SwitchPair`, `MultiPathLayout`, `TraversalPath`, `PieceClass`, `FKRoute`, `PieceTopology`, `DblCrossover`, `CrossJunction`); all used.
+- `config.py` — Pydantic models `OptimizationConfig` / `BoundaryConfig` / `AlgorithmConfig` / `TerminationConfig`; loaded by `main.py` and `run_v1_all_configs.py`.
+- `run_info.py` — provenance writer (header + summary); called only by `algorithm/runner.py`.
+- `lego_track_models.py` — R40 / rail geometry constants for the renderer.
+
+**`src/catalog/`**
+- `catalog.py` — `TrackCatalog.load()` + vectorized FK/speed/radius/topology lookups; supports v1 fallback and v2 port-centric schema.
+- `loader.py` — `load_catalog_spec()` (ruamel + Pydantic, with file:line error UX).
+- `pieces.py` — `FKDeltas`, `Port`, `TrackPiece` dataclasses.
+- `specs.py` — Pydantic v2 schema (`TrackCatalogSpec`, `TrackPieceSpec`, `PortDef`, `check_schema_version`).
+
+**`src/train/`**
+- `physics.py` — `TrainConfig`, `v_eff_array`, `available_accel`, `DEFAULT_TRAIN_CONFIG`.
+- `scoring.py` — `SpeedProfile`, `compute_speed_profile()` (3-pass forward/backward friction profiler).
+- `evaluation.py` — `PhysicalEvaluation`, `evaluate_layout()` (geometry / stability / kinematics / dynamics / energy in one O(n) pass).
+- Not redundant: `scoring` is a building block, `evaluation` is the orchestrator.
+
+**`src/algorithm/`**
+- `runner.py` — `run_optimization()`, `save_results()`, `ProgressCallback`, `FeasibleEliteCallback`, `SnapshotCallback`, `CallbackChain`, `LegoAdaptiveEpsilon`. `FeasibleEliteCallback` + `ConvergenceMonitorCallback` always attached; `SnapshotCallback` only when `output_dir` is set (`runner.py:456`); `ProgressCallback` only when `verbose` (`runner.py:464`). Both `NSGA2` and `RNSGA2` algorithms are dispatched (`runner.py:410-413`).
+- `monitoring.py` — `ConvergenceMonitorCallback` (HV/IGD/feasibility); confirmed attached at `runner.py:454`.
+
+**`src/visualization/`**
+- `track_renderer.py` — `plot_layout()`, `plot_multi_path_layout()`, `get_piece_color`, `get_piece_short_name` (both renderers called from `runner.save_results()`).
+- `pareto_plot.py` — `plot_pareto_front()`.
+
+### Candidates Needing Review
+
+Each row is a symbol or file with no in-code importer/loader. Before deleting any of them, re-grep — string references (pymoo callback names, log messages) can hide a real consumer.
+
+| Path / symbol | Evidence | Notes |
+|---|---|---|
+| Top-level `Literature-Grounded Audit ... .md` | Reference essay, no code/CLAUDE.md link. | User-authored research; ask before deleting. |
+| Top-level `Structurally Similar Problems ... .md` | Same as above. | Ask before deleting. |
+| `Modular9PartResearchV1/` (10 design docs) | Pre-dates current architecture; nothing in `src/` or `docs/` links in. | Archival; ask before deleting. |
+
+**Deleted on 2026-05-18** (zero callers verified by repo-wide grep; full pytest pre/post deletion identical at `34 failed, 197 passed, 15 errors` — failures are pre-existing and unrelated):
+- `src/sampling.py` end-of-file aliases `MultiSegmentSampling = IntegerSampling`, `HeuristicSampling = IntegerSampling`.
+- `src/operators.py` class `NoOpCrossover` (+ its section-divider comment block).
+- `src/problem.py` method `_compute_inventory_violation()` (superseded by `_compute_per_type_inventory_violation`).
+
+**NOT candidates (correcting earlier pass):**
+- `configs/with_double_crossover{,_narrow,_small}.yaml`, `configs/with_switches_and_crossing.yaml` — CLI inputs to `main.py --config`; `outputs_v1/verify_with_double_crossover*/` and `outputs_v1/verify_with_switches_and_crossing*/` prove they've been run.
+- `BoundaryConfig.width` / `.height` — used at `config.py:36` (inside `.diagonal`), `config.py:108`, `config.py:109` (inside `calculate_max_layout_pieces`, called by `n_var`).
+- `AlgorithmConfig.name = "RNSGA2"` literal — dispatched at `runner.py:410-413` (real `RNSGA2(...)` instantiation).
+
+### Stale / Needs Action (NOT auto-delete)
+
+- **`data/track_pieces.yaml` is missing on disk.** Only `data/track_pieces_v2.yaml` exists. v1 filename is referenced at `tests/test_catalog.py:226`, `tests/test_catalog_parity.py:11`, and `tests/test_catalog_geometry.py:92` (comment). Either the v1-parity tests skip silently when the file is absent, or they're broken. Confirm by running `/test tests/test_catalog_parity.py -v` before changing anything.
+- **Phase-1 `Layout` / `build_layout()` in `src/geometry.py`** — CLAUDE.md calls them legacy but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them. Migration first, deletion second.
+- **`src/problem.py:133-167` multi-path fallback (`hasattr(layout, 'get_main_path')`)** — defensive code path that smells retrofitted; harmless but worth re-reading once Phase-1 `Layout` is retired.
+
+### Test Suite Notes
+
+- 19 test files, **233** `def test_` functions (counted via `grep -c "def test_" tests/test_*.py`). 0 skip/xfail per agent sweep; no stale imports.
+- The 5-way `test_catalog*.py` split (catalog / catalog_geometry / catalog_loader / catalog_parity / catalog_specs) IS justified — distinct scopes (runtime API / reference geometry doc / YAML+errors / v1↔v2 parity / Pydantic schema).
+- All 6 fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`. `tests/baselines/` contains only `.gitkeep`.
+
+### Untouched (Run Artifacts — Do Not Delete)
+
+`outputs/`, `outputs_v1/` (~37 sub-run dirs + per-run `.log` siblings), `outputs_v1_compare/` are GA run outputs. Treat as build output; clean only on explicit user instruction.
+
+---
