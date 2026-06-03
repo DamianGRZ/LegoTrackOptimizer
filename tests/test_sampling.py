@@ -123,10 +123,9 @@ class TestIntegerSampling:
 
 
 class TestCrossJunctionSeeder:
-    """Soft-seed cross-junction patterns: descriptor present, geometry not yet
-    guaranteed to validate. The decoder skips invalid descriptors silently;
-    the active flag enters the gene pool so crossover/mutation can carry it
-    into individuals whose evolved geometry happens to fit."""
+    """Figure-8 CROSS_90 seed: a closed self-crossing loop with one (active,
+    pos_1, pos_2) cross descriptor at the perpendicular crossing slots. The
+    geometry validates immediately, so the decoder places a real CROSS_90."""
 
     def _config_with_cross(self, tmp_path) -> OptimizationConfig:
         """Build a config with switches + spurs + CROSS_90 inventory and a
@@ -152,16 +151,17 @@ class TestCrossJunctionSeeder:
         sampling = IntegerSampling(catalog, cfg)
         patterns = sampling._get_heuristic_patterns(np.random.default_rng())
 
-        with_cross = [p for p in patterns if p[2]]
+        with_cross = [p for p in patterns if p[3]]  # index 3 = cross descriptors
         assert with_cross, "expected at least one pattern with cross-junction descriptors"
 
-        # Each cross-junction pattern carries an ACTIVE descriptor.
+        # Each cross pattern carries an ACTIVE (pos_1, pos_2) descriptor.
         for pat in with_cross:
-            for desc in pat[2]:
-                active, position_w, handedness = desc
+            for desc in pat[3]:
+                active, pos_1, pos_2 = desc
                 assert active == 1
-                assert handedness in (0, 1)
-                assert 0 <= position_w < len(pat[0])
+                assert pos_1 != pos_2
+                assert 0 <= pos_1 < len(pat[0])
+                assert 0 <= pos_2 < len(pat[0])
 
     def test_cross_junction_not_emitted_without_inventory(self, catalog):
         """No cross-junction patterns when CROSS_90 (or switches) absent."""
@@ -179,5 +179,5 @@ class TestCrossJunctionSeeder:
         )
         sampling = IntegerSampling(catalog, cfg)
         patterns = sampling._get_heuristic_patterns(np.random.default_rng())
-        with_cross = [p for p in patterns if p[2]]
+        with_cross = [p for p in patterns if p[3]]
         assert with_cross == []

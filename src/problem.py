@@ -2,7 +2,8 @@
 
 Bi-objective NSGA-II with Deb's constraint handling:
 - F[0] = -utilization (maximize piece usage)
-- F[1] = -avg_speed  (maximize length-independent average speed at safety_margin=0.95)
+- F[1] = -(avg speed of the slowest traversal route) at safety_margin=0.95
+         (maximize the worst route's pace; see _slowest_route_speed)
 - 5 inequality constraints via Deb's CV rules
 """
 
@@ -15,20 +16,64 @@ from .config import OptimizationConfig
 from .catalog import TrackCatalog
 from .decoder import DecoderConfig, decode_chromosome
 from .encoding import compute_dimensions, generate_bounds
-from .train import evaluate_layout
+from .geometry import Layout
+from .train import compute_speed_profile
 from .intersection import (
+    CROSS_90_INDEX,
+    DOUBLE_CROSSOVER_INDEX,
     count_dangling_cross_ports,
     count_dangling_double_crossover_ports,
     count_segment_crossings,
 )
+
+# Operating safety derate applied to every Pass-1 speed cap: the train runs at
+# 95% of each segment's derailment-limited speed. Exposed so tests recomputing
+# a layout's bottleneck independently use the same margin the objective does.
+SPEED_SAFETY_MARGIN = 0.95
+
+
+def _slowest_route_speed(
+    layout,
+    catalog: TrackCatalog,
+    train_config,
+    safety_margin: float = SPEED_SAFETY_MARGIN,
+) -> float:
+    """Average speed of the layout's slowest traversal route.
+
+    A layout with J switch pairs offers 2^J routes (take or skip each siding).
+    Each route is scored independently — a per-route ``Layout`` view fed to the
+    3-pass profiler at ``safety_margin``, which brakes for curves and
+    accelerates on straights, never exceeding the per-segment derailment cap —
+    yielding that route's overall lap pace (``avg_speed``). F[1] uses the
+    SLOWEST route: the most curve-bound one, which the train covers at the
+    lowest overall speed. Scoring every route (not just the through-line) makes
+    branch geometry register; a switchless layout has one route, so this is just
+    that loop's pace.
+
+    Returns 0.0 only for a degenerate layout with no pieces on any route (the
+    caller short-circuits the empty-layout case before reaching here).
+    """
+    route_speeds = [
+        compute_speed_profile(
+            Layout(
+                indices=np.asarray(path.piece_sequence, dtype=np.int32),
+                states=path.states,
+            ),
+            catalog, train_config, safety_margin=safety_margin,
+        ).avg_speed
+        for path in layout.paths
+        if len(path.piece_sequence) > 0
+    ]
+    return float(min(route_speeds)) if route_speeds else 0.0
 
 
 class TrackOptimizationProblem(ElementwiseProblem):
     """Bi-objective track layout optimization with NSGA-II.
 
     Objectives (both minimized for pymoo):
-        F[0] = -utilization  (maximize piece usage)
-        F[1] = lap_time      (minimize lap time at safety_margin=0.95)
+        F[0] = -utilization         (maximize piece usage)
+        F[1] = -slowest_route_speed (maximize the slowest route's avg speed
+                                     at safety_margin=0.95)
 
     Constraints (V2 shape, g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
@@ -74,6 +119,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self.config = config
         self._train_config = config.load_train_config()
         self.total_inventory = sum(config.inventory.values())
+        self.special_piece_weight = config.special_piece_weight
         self.inventory_by_index = self._convert_inventory(config.inventory)
 
         self.decoder_config = DecoderConfig(
@@ -110,19 +156,24 @@ class TrackOptimizationProblem(ElementwiseProblem):
             out["G"] = np.full(self.n_ieq_constr, 1e6)
             return
 
-        # F[0]: -utilization
-        utilization = layout.n_pieces / self.total_inventory
+        # F[0]: -utilization (special pieces weighted so topology is not overhead)
+        utilization = self._weighted_utilization(layout)
 
-        # F[1] = -avg_speed (i.e., maximize average speed) at safety_margin=0.95.
-        # avg_speed = total_distance / lap_time is length-independent: it
-        # measures how fast the train moves, not how long the lap is.
-        # Using lap_time directly would penalize layouts for adding pieces,
-        # conflicting with F[0] = -utilization.
-        phys = evaluate_layout(
-            layout, self.catalog, self._train_config, safety_margin=0.95,
+        # F[1] = -(average speed of the SLOWEST traversal route), at
+        # SPEED_SAFETY_MARGIN. Every route (the 2^J take/skip-siding
+        # combinations) is scored independently; F[1] takes the slowest one —
+        # the most curve-bound route, covered at the lowest overall speed.
+        # Scoring all routes (not just the through-line) makes branch geometry
+        # register: a curve-heavy branch becomes the slowest route and lowers
+        # F[1], creating a real speed-vs-utilization trade-off. Derailment
+        # safety is already enforced inside the profile (per-segment caps), so
+        # this objective shapes throughput, not safety. A switchless layout has
+        # one route, so F[1] reduces to that loop's pace.
+        slowest_route_speed = _slowest_route_speed(
+            layout, self.catalog, self._train_config,
         )
 
-        out["F"] = [-utilization, -phys.speed_profile.avg_speed]
+        out["F"] = [-utilization, -slowest_route_speed]
 
         # Constraints (V2 shape: 5 + n_piece_types inequalities, g <= 0 feasible).
         # G[0..2]: closure split into per-axis inequalities (shim: degrees for theta
@@ -202,23 +253,58 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
+    def _physical_pieces(self, layout) -> int:
+        """Count of physical pieces used.
+
+        CROSS_90 and DOUBLE_CROSSOVER each occupy TWO traversal slots in
+        ``main_loop_pieces`` but are one physical piece, so subtract one per record.
+        """
+        n_paired = len(layout.cross_junctions) + len(getattr(layout, "dbl_crossovers", []))
+        physical_main = len(layout.main_loop_pieces) - n_paired
+        branch = sum(len(sp.branch_pieces) for sp in layout.switch_pairs)
+        return physical_main + branch
+
+    def _weighted_utilization(self, layout) -> float:
+        """Utilization with special pieces weighted by ``special_piece_weight``.
+
+        Each switch pair / crossing / double-crossover counts as W physical pieces
+        toward the score (W>1), so folding multi-path topology into a layout raises
+        utilization rather than being pure overhead the GA would strip.
+        """
+        n_special = (
+            len(layout.switch_pairs)
+            + len(layout.cross_junctions)
+            + len(getattr(layout, "dbl_crossovers", []))
+        )
+        effective = self._physical_pieces(layout) + (self.special_piece_weight - 1.0) * n_special
+        return effective / self.total_inventory
+
     def _compute_per_type_inventory_violation(self, layout) -> np.ndarray:
         """Per-catalog-index inventory excess, normalized by max_occ[t].
 
         Returns array of length self.catalog.n_pieces. Entry t is:
             max(0, census[t] - max_occ[t]) / max(1, max_occ[t])
         where max_occ[t] comes from self.inventory_by_index (0 if absent).
+
+        CROSS_90 / DOUBLE_CROSSOVER are counted as physical pieces (one per decoder
+        record) rather than per traversal slot, so a piece traversed twice is not
+        double-charged against inventory.
         """
         n_types = self.catalog.n_pieces
         census = np.zeros(n_types, dtype=np.int64)
+        paired = (CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX)
 
         for piece_idx in layout.main_loop_pieces:
+            if piece_idx in paired:
+                continue  # counted once per physical-piece record below
             if 0 <= piece_idx < n_types:
                 census[piece_idx] += 1
         for switch_pair in layout.switch_pairs:
             for piece_idx in switch_pair.branch_pieces:
                 if 0 <= piece_idx < n_types:
                     census[piece_idx] += 1
+        census[CROSS_90_INDEX] += len(layout.cross_junctions)
+        census[DOUBLE_CROSSOVER_INDEX] += len(getattr(layout, "dbl_crossovers", []))
 
         result = np.zeros(n_types, dtype=np.float64)
         for t in range(n_types):

@@ -61,6 +61,9 @@ Recurring mistakes that must not repeat:
 | `/diag` | Invoke with Skill tool | Parse outputs/ directory and report fitness, constraints, layout | After any optimization run completes |
 | `/quality` | Invoke with Skill tool | Deep Python & pymoo quality gate — rewrites code to project standards | After implementing new features or refactoring. Use instead of `/review` for deep analysis |
 | `/verify-fix` | Invoke with Skill tool | End-to-end verification loop: full tests + optimizer run + diag, with literal output | After every bug fix. Enforces no-assertion-without-evidence. |
+| `/verify-run` | Invoke with Skill tool | Launch a named `verify_<config>` run in the background, watch to completion, hand off to `/diag` | User asks to run/verify a config or babysit a running optimization |
+| `/inspect-layout` | Invoke with Skill tool | Visually read layout/snapshot PNGs and check geometry invariants; decide viz bug vs real geometry bug | User asks to analyze snapshots or verify a layout image looks correct |
+| `/code-map-audit` | Invoke with Skill tool | Parallel-agent dead-code scan + code map written into CLAUDE.md (re-grep before delete; never auto-rm) | User asks to audit for unused code or refresh the code-map section |
 
 ---
 
@@ -113,7 +116,7 @@ Use with the Task tool for specialized work. **Prefer skills over agents when po
 
 ### Data & Configs
 
-- **`data/track_pieces.yaml`**: Track catalog with FK deltas, physics, ports, piece_index
+- **`data/track_pieces_v2.yaml`**: Track catalog with FK deltas, physics, ports, piece_index (the v1 `track_pieces.yaml` is absent — see Stale / Needs Action)
 - **`configs/*.yaml`**: default, compact, with_switches, with_crossing
 
 ---
@@ -150,18 +153,49 @@ lint-imports                        # Verify layer contracts (import-linter)
 
 ---
 
+## Architecture (Verified 2026-05-30)
+
+Authoritative snapshot from a read of the live NSGA-II pipeline. pymoo class names kept verbatim.
+
+**1. Representation (chromosome).** Fixed-length-per-run `int16` vector; `n_var` is **derived from inventory at runtime — never hardcoded** (`compute_dimensions`, `src/encoding.py`; e.g. 330 for `with_switches`). Partitioned via `PartitionedDimensions` (`*_start/_end` properties):
+- `[0, n_main)` main-loop piece types; alleles `xl/xu = [-1, 2]` (`-1`=INACTIVE, 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE). Switches/crossings are **not** legal alleles here — they enter only via descriptor blocks / decoder repair.
+- `[n_main, 2·n_main)` per-slot R40 flip bits `{0,1}` (handedness).
+- passing-siding descriptors `J×4`, cross-junction `K×3`, double-crossover `D×5`, then 2 start-position genes.
+- Sampling: custom `IntegerSampling(Sampling)` (`src/sampling.py`) — **not** `IntegerRandomSampling`.
+
+**2. Decoder (genotype→phenotype).** `decode_chromosome(x, catalog, inventory, dims, config) -> MultiPathLayout` (`src/decoder/construction.py`). Forward kinematics segment-by-segment via `compute_fk_chain(fk_deltas)` (`src/geometry.py`) accumulating `[x,y,θ]`; R40 handedness applied in `get_fk_with_flip` (negates `dy,dθ`). Catalog inputs: `_fk_table [dx,dy,dθ°]`, `_radius_table`, `_arc_length_table`, `_speed_table` (`TrackCatalog`, `src/catalog/catalog.py`), studs/degrees. Kit is **R40-only** (no R56/R104); R40_CURVE = `[15.307, 3.045, 22.5°]`. Decoder enumerates `2^J` traversal paths and validates siding/cross/DC geometry by construction.
+
+**3. Objectives & constraints.** `TrackOptimizationProblem(ElementwiseProblem)` (`src/problem.py`), `_evaluate(x, out)`. `n_obj=2`, `n_ieq_constr = 5 + catalog.n_pieces`, **no equality constraints (H)**.
+- `F[0] = -(n_pieces / total_inventory)` — maximize inventory utilization.
+- `F[1] = -(avg_speed of the slowest of the 2^J routes)` via `_slowest_route_speed(...)` at `SPEED_SAFETY_MARGIN=0.95`. Speed = 3-pass time-optimal profile `compute_speed_profile` (`src/train/scoring.py`); **Nadal's criterion** is one of the per-segment caps in `_compute_stability` (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
+- **Loop closure is an inequality (G), not H:** `G[0..2] = |dx|/tol−1, |dy|/tol−1, |dθ°|/tol−1`; `G[3]`=boundary; `G[4]`=collisions; `G[5..]`=per-type inventory excess.
+
+**4. Operators.** Custom `PartitionedCrossover(Crossover)` (`__init__(dims, prob=0.9)`, `src/operators.py`) — one-point on the main loop (flip array cut mirrored), uniform per-slot swap on descriptors, DC blocks kept parent-intact (**not** SBX). Custom `PartitionedMutation(Mutation)` (`__init__(dims, prob=0.3)`) — weighted sub-operator portfolio (**not** PM). Selection: `NSGA2` default binary tournament (not set explicitly). Survival: `ConstrRankAndCrowding()` (NSGA2, Deb feasibility-first) or RNSGA2 niching, wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`).
+
+**5. Repair pipeline.** `TrackRepairPipeline(Repair)` (`src/repair.py`) chains **3 stages** in `_do`: `JunctionValidityRepair` (clamp descriptor genes via `np.clip`) → `InventoryRepair` (drop excess pieces) → `MainLoopClosureRepair` (adjust curves for closure; optional via `enable_closure_repair`). **No `RoundingRepair`** (genome is already int16; clamping is manual).
+
+**6. Heuristic sampling.** Hybrid (`IntegerSampling._do`): `heuristic_ratio` (default 0.20) of the population is inventory/boundary-aware closed loops (`_gen_simple_loop` / `_oval` / `_racetrack` / `_oval_with_siding` / `_oval_two_sidings` / `_figure_eight` / `_*_dbl_crossover`); the remainder are random partial-fill chromosomes (`_random_chromosome`).
+
+**7. Config & scale.** `AlgorithmConfig` (`src/config.py`): `default.yaml` = RNSGA2, `pop_size=1000`, `n_gen=200`, `crossover_prob=0.2`, `mutation_prob=0.8`, `heuristic_ratio=0.20`, `seed=null`; `with_switches.yaml` = NSGA2, `n_gen=500`. Termination via `get_termination("n_gen", n_gen)`. Catalog = **7 piece types**; typical solution is tens of pieces (`n_main` up to 160). `seed=null` (non-deterministic); **one run per `main.py` invocation** (no built-in multi-seed loop).
+
+---
+
 ## Implementation Details
 
 ### Chromosome Encoding (Multi-Segment)
 
-Fixed-length array: **N_VAR = 218 genes**
+Fixed-length-per-run `int16` vector; **`n_var` is derived from inventory at runtime — never hardcoded** (`PartitionedDimensions`, `src/encoding.py`). Segment offsets come from `*_start/_end` properties:
 
-| Segment | Range | Length | Purpose |
-|---------|-------|--------|---------|
-| Main Loop | [0, 100) | 100 | Piece indices (-1 = inactive, 0-9 = piece index) |
-| Switch Mask | [100, 200) | 100 | Switch type at each position (-1 = no switch) |
-| Branch Slots | [200, 216) | 16 | 4 slots × 4 genes (IN_pos, handedness, n_straights, active) |
-| Start Position | [216, 218) | 2 | start_x, start_y coordinates |
+| Segment | Range | Purpose |
+|---------|-------|---------|
+| Main-loop types | `[0, n_main)` | piece type per slot; alleles `[-1, 2]` (-1=INACTIVE, 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE) |
+| Main-loop flips | `[n_main, 2·n_main)` | per-slot R40 handedness bit `{0, 1}` |
+| Passing-siding junctions | `J × 4` | (active, position, handedness, n_straights) |
+| Cross-junctions | `K × 3` | (active, position_W, handedness) |
+| Double-crossovers | `D × 5` | (active, pos_1, route_1, pos_2, route_2) |
+| Start position | last 2 | start_x, start_y |
+
+Switches/crossings are NOT main-loop alleles — they enter via the descriptor blocks / decoder repair.
 
 ### Legacy Chromosome Encoding
 
@@ -178,34 +212,32 @@ y_new = y + dx * sin(theta_rad) + dy * cos(theta_rad)
 theta_new = theta + dtheta
 ```
 
-### Problem Classes (problem.py)
+### Problem Class (problem.py)
 
-| Class | Objectives | Constraints | Use Case |
-|-------|------------|-------------|----------|
-| `TrackLayoutProblem` | 2 (utilization, speed) | 5 | Legacy bi-objective NSGA-II |
-| `MultiSegmentProblem` | 1 (pieces × 1000 - penalties) | 4 | Single-objective with multi-path |
-| `SingleObjectiveProblem` | 1 (pieces × 1000) | 5 | Single-objective piece maximization |
+Single class `TrackOptimizationProblem(ElementwiseProblem)` — bi-objective (`n_obj=2`), `n_ieq_constr = 5 + catalog.n_pieces`, no equality constraints.
 
-### Objectives (2, all minimized - legacy mode)
+### Objectives (2, both minimized)
 ```python
-F[0] = -utilization  # Maximize piece usage
-F[1] = -avg_speed    # Maximize speed
+F[0] = -utilization          # Maximize piece usage (n_pieces / total_inventory)
+F[1] = -slowest_route_speed  # Maximize the slowest route's avg speed
+                             #   (_slowest_route_speed, SPEED_SAFETY_MARGIN=0.95)
 ```
 
-### Constraints (5, g <= 0 feasible)
+### Constraints (5 + per-piece-type, g <= 0 feasible)
 ```python
-G[0] = (closure_error - tolerance) / tolerance
-G[1] = (angle_error - tolerance) / tolerance
-G[2] = boundary_violation / diagonal
-G[3] = inventory_excess
-G[4] = loose_port_count  # Switches with unconnected port 2 (decoder-computed)
+G[0..2] = |dx|/closure_tol-1, |dy|/closure_tol-1, |dθ°|/angle_tol-1  # closure (main path)
+G[3]    = (boundary_violation - boundary_tol) / diagonal             # boundary
+G[4]    = collisions   # unresolved crossings/5 + dangling cross/DC ports
+G[5..]  = per-type inventory excess (one per catalog piece index)
 ```
 
 ### Physics Model (from Locomotive_dynamics.md)
 ```python
-# evaluation.py - compute_speed_limit()
-v = SF * sqrt(mu * g * R)   # SF=0.8, mu=0.30
-# Forward-backward pass for time-optimal speed profile
+# train/physics.py - v_eff_array(): per-segment derailment cap
+v_eff = min(v_slide, v_tip, v_nadal, v_motor_max)
+#   v_slide = sqrt(mu_design * g * R)   # mu_design=0.25, v_motor_max=1.10 m/s
+# train/scoring.py - compute_speed_profile(): 3-pass time-optimal profile;
+#   SPEED_SAFETY_MARGIN=0.95 derates every cap.
 ```
 
 ---
@@ -217,23 +249,25 @@ Standard LEGO passing siding pattern:
 [IN_switch] -> [approach_curve] -> [straights×N] -> [return_curve] -> [OUT_switch]
 ```
 
-| Template | IN Switch | OUT Switch | Approach Curve | Return Curve |
-|----------|-----------|------------|----------------|--------------|
-| LEFT_SIDING | R40_SWITCH_LEFT_IN (5) | R40_SWITCH_LEFT_OUT (6) | R40_RIGHT | R40_LEFT |
-| RIGHT_SIDING | R40_SWITCH_RIGHT_IN (7) | R40_SWITCH_RIGHT_OUT (8) | R40_LEFT | R40_RIGHT |
+A siding is an **opposite-handed pair**: 1 LEFT + 1 RIGHT switch (+ 2 R40 curves + N straights). The exit switch is installed **reversed**. Branch curves are `R40_CURVE` with a flip bit — there is no separate `R40_LEFT/RIGHT` piece.
+
+| Template | Entry switch | Exit switch (reversed) | Branch curves |
+|----------|--------------|------------------------|---------------|
+| LEFT_SIDING | R40_SWITCH_LEFT (4) | R40_SWITCH_RIGHT (5) | R40_CURVE flip=1, … , R40_CURVE |
+| RIGHT_SIDING | R40_SWITCH_RIGHT (5) | R40_SWITCH_LEFT (4) | R40_CURVE flip=0, … , R40_CURVE |
 
 The decoder automatically:
-1. Detects IN/OUT switch pairs in the main loop
-2. Computes branch geometry using templates
-3. Enumerates all 2^N traversal paths (N = number of switch pairs)
-4. Tracks loose ports (unconnected switch port 2)
+1. Reads active junction descriptors, sorts by position
+2. Computes branch geometry from templates and validates siding geometry by construction (drops descriptors that don't validate, releasing their inventory)
+3. Injects the switch pair into the main loop (entry at `position`, exit found downstream)
+4. Enumerates all 2^N traversal paths (N = number of switch pairs)
 
 ---
 
 ## Data Flow
 
 ```
-track_pieces.yaml -> TrackCatalog (FK tables, speed limits, routes)
+data/track_pieces_v2.yaml -> TrackCatalog (FK tables, speed limits, routes)
 configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
 main.py -> GA/NSGA2 + IntegerSampling -> Problem._evaluate()
 chromosome -> decode_chromosome() -> MultiPathLayout
@@ -245,7 +279,7 @@ results -> visualization -> outputs/
 
 ## Key Classes
 
-### TrackCatalog (data.py)
+### TrackCatalog (catalog/catalog.py)
 - `_fk_table`: (n, 3) array of [dx, dy, dtheta]
 - `_speed_table`, `_radius_table`, `_arc_length_table`
 - `get_fk(indices)`, `get_fk_route(piece_idx, route_idx)`
@@ -256,13 +290,13 @@ results -> visualization -> outputs/
 - `states`: (n+1, 3) cumulative [x, y, theta]
 - `closure_error`, `angle_error`, `bounding_box`, `is_closed()`
 
-### MultiPathLayout (topology.py)
+### MultiPathLayout (types.py)
 - `main_loop_pieces`: base piece sequence
 - `switch_pairs`: list of matched SwitchPair objects
 - `paths`: list of TraversalPath (2^N paths for N switch pairs)
 - `loose_port_count`: switches with unconnected port 2
 
-### SpeedProfile (evaluation.py)
+### SpeedProfile (train/scoring.py)
 - `speeds`: speed at each segment
 - `avg_speed`, `lap_time`, `total_distance`
 
@@ -270,7 +304,7 @@ results -> visualization -> outputs/
 
 ## IntegerSampling (Heuristic Seeding)
 
-Seeds 15% of population with inventory-valid closed loop patterns:
+Seeds ~20% of population (`heuristic_ratio`, default 0.20) with inventory-valid closed loop patterns:
 - Simple circles (16 R40 curves)
 - Symmetric ovals (R40 curves + straights)
 - Racetracks (4 corners + straights)
@@ -318,7 +352,7 @@ segment of equal length. Decoder applies the flip at FK time
 ## Development Workflows
 
 ### Adding Track Pieces
-1. Add to `data/track_pieces.yaml` with `fk`, `physics`, `ports`, `routes` (for multi-port pieces)
+1. Add to `data/track_pieces_v2.yaml` with `fk`, `physics`, `ports`, `routes` (for multi-port pieces)
 2. Add to `piece_index` mapping with next available index
 3. Update `INDEX_TO_ID` in `src/sampling.py`
 4. If switch: add template to `src/templates.py`

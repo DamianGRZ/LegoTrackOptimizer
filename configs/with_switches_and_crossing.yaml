@@ -27,7 +27,7 @@ boundary:
 #  max_y: 100.0
 
 algorithm:
-  name: RNSGA2
+  name: NSGA2
   pop_size: 1000
   n_gen: 500
   heuristic_ratio: 0.30

@@ -54,7 +54,7 @@ from .templates import (
 # =============================================================================
 
 Junction = Tuple[int, int, int, int]
-CrossJunctionDescriptor = Tuple[int, int, int]      # (active, position_W, handedness)
+CrossJunctionDescriptor = Tuple[int, int, int]      # (active, pos_1, pos_2)
 DblCrossoverDescriptor = Tuple[int, int, int, int, int]  # (active, p1, r1, p2, r2)
 # (main_pieces, main_flips, junctions, cross_junctions, dbl_crossovers)
 Pattern = Tuple[
@@ -459,66 +459,35 @@ def _gen_two_layer_loop_dbl_crossover(
     return []
 
 
-def _gen_oval_with_cross_junction(
+def _gen_figure_eight_cross(
     inv: Dict[int, int], dims: PartitionedDimensions,
 ) -> List[Pattern]:
-    """Soft seed: large oval main loop + 1 active cross-junction descriptor.
+    """Closed figure-8 with one bare CROSS_90 self-crossing at ~90 deg.
 
-    Phase A limitation — geometry won't validate:
-        The decoder's geometric search requires the main loop to pass through
-        the four cross-port positions (-48..+64 stud spread for LEFT cross)
-        within (siding_position_tolerance, siding_angle_tolerance). A simple
-        oval doesn't satisfy that constraint, so _inject_cross_junctions will
-        skip the descriptor on the seed itself. The descriptor is set so the
-        active flag enters the gene pool and crossover/mutation can carry it
-        into chromosomes whose evolved main loop happens to satisfy the
-        geometry. Hard pre-designed cross-junction patterns are deferred
-        until the multi-corner geometric search is implemented.
+    Two opposite-handed lobes (12 R40 curves each) joined by 5-straight runs.
+    The loop crosses itself perpendicular at main-loop slots 2 and 19; verified
+    closed by construction (closure 0.0, angle 0.0, bounding box ~160x160 studs).
+    Consumes 10 STRAIGHT_16 + 24 R40_CURVE + 1 CROSS_90. The descriptor
+    (active, pos_1, pos_2) = (1, 2, 19) is committed by _inject_cross_junctions.
 
-    Emits one variant per (handedness, position_W) combination compatible
-    with available LEFT or RIGHT switch + spur + CROSS_90 inventory.
+    Unlike the retired 4-switch soft seed, this geometry validates immediately —
+    the seed lands a feasible CROSS_90 layout in the initial population.
     """
-    if dims.max_cross_junctions < 1:
+    if dims.max_cross_junctions < 1 or inv.get(CROSS_90, 0) < 1:
         return []
-    if inv.get(CROSS_90, 0) < 1:
+    if inv.get(STRAIGHT_16, 0) < 10 or inv.get(R40_CURVE, 0) < 24:
+        return []
+    w, h = _boundary_wh(dims)
+    if w < 170 or h < 170:  # figure-8 spans ~160 studs each axis
         return []
 
-    variants: List[Pattern] = []
-    n_str = inv.get(STRAIGHT_16, 0)
-    m = _fit_oval_straights_per_section(dims, n_str)
-
-    if inv.get(R40_CURVE, 0) < 16:
-        return variants
-    for hand_idx in (0, 1):
-        if 2 * m > n_str:
-            continue
-        catalog_switch_idx = SWITCH_LEFT if hand_idx == 0 else SWITCH_RIGHT
-        if inv.get(catalog_switch_idx, 0) < 4:
-            continue
-        if inv.get(R40_CURVE, 0) < 4:
-            continue
-
-        main_pieces = (
-            [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
-            + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * m
-        )
-        main_flips = _curve_flips(main_pieces, hand_idx)
-        if not _pieces_fit_inventory(_count_pieces(main_pieces), inv):
-            continue
-
-        section_starts = (8, 16 + m)
-        for sec_start in section_starts:
-            position_w = sec_start + max(0, m // 2)
-            if not 0 <= position_w < len(main_pieces):
-                continue
-            if main_pieces[position_w] != STRAIGHT_16:
-                continue
-            cross_descriptors: List[CrossJunctionDescriptor] = [
-                (1, position_w, hand_idx),
-            ]
-            variants.append((main_pieces, main_flips, None, cross_descriptors, None))
-
-    return variants
+    pieces = (
+        [int(STRAIGHT_16)] * 5 + [int(R40_CURVE)] * 12
+        + [int(STRAIGHT_16)] * 5 + [int(R40_CURVE)] * 12
+    )
+    flips = [0] * 5 + [0] * 12 + [0] * 5 + [1] * 12
+    descriptors: List[CrossJunctionDescriptor] = [(1, 2, 19)]
+    return [(pieces, flips, None, descriptors, None)]
 
 
 def _gen_oval_two_sidings(
@@ -653,7 +622,7 @@ class IntegerSampling(Sampling):
         patterns += _gen_oval_with_siding(inv, dims)
         patterns += _gen_oval_two_sidings(inv, dims)
         patterns += _gen_figure_eight(inv, dims)
-        patterns += _gen_oval_with_cross_junction(inv, dims)
+        patterns += _gen_figure_eight_cross(inv, dims)
         patterns += _gen_figure_eight_dbl_crossover(inv, dims)
         patterns += _gen_two_layer_loop_dbl_crossover(inv, dims)
         rng.shuffle(patterns)

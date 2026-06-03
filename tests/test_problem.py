@@ -99,7 +99,7 @@ class TestTrackOptimizationProblem:
 
         # F[0] = -utilization (negative to maximize)
         assert out["F"][0] < 0
-        # F[1] = -min_speed (negative to maximize, should be nonzero for closed loop)
+        # F[1] = -(slowest route's avg speed): negative for any closed loop.
         assert out["F"][1] < 0
 
     def test_feasible_circle_constraints(self, catalog, default_config):
@@ -137,12 +137,13 @@ class TestTrackOptimizationProblem:
         assert loose.closure_tolerance == 10.0
         assert tight.closure_tolerance == 0.1
 
-    def test_bottleneck_speed_matches_between_circle_and_oval(self, catalog, default_config):
-        """Circle and oval share the same R40 bottleneck under V2 semantics.
+    def test_oval_route_pace_exceeds_circle(self, catalog, default_config):
+        """Adding straights raises the route PACE under the slowest-route objective.
 
-        F[1] = -min_speed (bottleneck). Adding straights doesn't raise the
-        bottleneck — the slowest curve still dictates safe traversal. Both
-        layouts must report the same F[1], bounded by the R40 friction cap.
+        F[1] = -(slowest route's avg speed). The oval accelerates along its
+        straights, so its overall pace exceeds the all-curve circle's. (Under
+        the old per-segment-bottleneck objective the two were equal; under pace
+        semantics they differ.)
         """
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
@@ -162,9 +163,10 @@ class TestTrackOptimizationProblem:
 
         # If oval didn't close (Stage B: G[0]=closure_x, G[1]=closure_y), comparison doesn't apply.
         if out_oval["G"][0] <= 0 and out_oval["G"][1] <= 0:
-            assert abs(out_oval["F"][1] - out_circle["F"][1]) < 1e-9, (
-                f"Bottleneck must match: circle F[1]={out_circle['F'][1]}, "
-                f"oval F[1]={out_oval['F'][1]} (both R40-bound)"
+            # -F[1] is speed; a faster route is a more-negative F[1].
+            assert out_oval["F"][1] < out_circle["F"][1] - 1e-6, (
+                f"oval pace must exceed circle pace: circle F[1]={out_circle['F'][1]}, "
+                f"oval F[1]={out_oval['F'][1]}"
             )
 
 
@@ -215,24 +217,25 @@ class TestInfeasibilitySentinel:
         )
 
 
-class TestF1MinSpeed:
-    """Phase 6 A2: F[1] should be -min_speed (bottleneck), not -avg_speed.
+class TestF1SlowestRoutePace:
+    """F[1] = -(avg speed of the slowest traversal route).
 
-    V2 semantics: the slowest curve dictates safe traversal. avg_speed
-    is a 3-pass harmonic-mean profile that allows fast straights to mask
-    dangerous curves — a safety failure mode we explicitly reject.
+    Per-segment derailment safety is enforced inside the speed profile, so the
+    objective shapes throughput: each route's overall pace (avg_speed), worst
+    route wins. For a single-route layout F[1] is just that loop's pace.
     """
 
-    def test_f1_reflects_min_not_avg(self, catalog, default_config):
-        """F[1] for a valid closed layout equals -min_speed from SpeedProfile.
+    def test_f1_reflects_route_pace_not_bottleneck(self, catalog, default_config):
+        """F[1] for a single-route closed layout equals -avg_speed at the margin.
 
         Uses an oval (curves + straights) so avg_speed and min_speed diverge —
-        the forward-backward pass lets the train accelerate down straights,
-        pulling avg above the curve-bound bottleneck. This is the exact
-        configuration where using avg_speed hides a dangerous curve.
+        the forward-backward pass lets the train accelerate on the straights,
+        pulling the route PACE (avg) above the per-segment bottleneck (min).
+        F[1] must track the pace (avg), proving it is the route speed and not
+        the worst-segment speed.
         """
         import numpy as np
-        from src.problem import TrackOptimizationProblem
+        from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
         from src.train import compute_speed_profile
         from src.decoder import decode_chromosome
         from src.encoding import create_chromosome_from_pieces, PieceIndex
@@ -249,40 +252,35 @@ class TestF1MinSpeed:
         out = {}
         problem._evaluate(x, out)
 
-        # If the chromosome did not decode to a feasible layout, skip this parity
-        # check — we only assert F[1] semantics when both F values are finite.
         if not np.isfinite(out["F"][1]):
             pytest.skip("Test chromosome didn't decode to a non-empty layout")
 
-        # Re-decode to compute min_speed independently
         layout = decode_chromosome(
             x, catalog, default_config.inventory,
             dims=problem.dims, config=problem.decoder_config,
         )
-        profile = compute_speed_profile(layout, catalog, train_config=problem._train_config)
-        # Sanity: on this layout avg and min must actually differ, otherwise
-        # the test doesn't distinguish the two objectives.
+        profile = compute_speed_profile(
+            layout, catalog, train_config=problem._train_config,
+            safety_margin=SPEED_SAFETY_MARGIN,
+        )
+        # Precondition: avg and min differ so the test distinguishes pace from bottleneck.
         assert profile.avg_speed > profile.min_speed + 1e-6, (
             f"Test precondition broken: avg={profile.avg_speed}, min={profile.min_speed} "
-            f"are too close to distinguish min vs avg."
+            f"are too close to distinguish pace vs bottleneck."
         )
-        expected = -profile.min_speed
+        expected = -profile.avg_speed
         assert abs(out["F"][1] - expected) < 1e-9, (
-            f"F[1]={out['F'][1]}, expected -min_speed={expected}. "
-            f"(If -avg_speed is reported: avg={-profile.avg_speed})"
+            f"F[1]={out['F'][1]}, expected -avg_speed={expected} "
+            f"(per-segment min was {-profile.min_speed})."
         )
 
     def test_f1_for_closed_r40_circle_is_friction_bound(self, catalog, default_config):
-        """For an all-R40 layout, min_speed equals the per-curve friction bound.
-
-        For a pure R40 circle the bottleneck dominates end-to-end (no straights
-        to accelerate on), so min_speed and avg_speed coincide — but both must
-        be the friction-limited R40 value (strictly below the straight speed
-        cap of 1.57 m/s). F[1] = -min_speed must therefore land in the
-        curve-bound range, not the straight-bound range.
+        """For an all-R40 circle avg==min (no straights to accelerate on), so
+        F[1] = -avg_speed lands in the curve-bound range, strictly below the
+        1.57 m/s straight speed cap.
         """
         import numpy as np
-        from src.problem import TrackOptimizationProblem
+        from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
         from src.train import compute_speed_profile
         from src.decoder import decode_chromosome
 
@@ -294,21 +292,116 @@ class TestF1MinSpeed:
         if not np.isfinite(out["F"][1]):
             pytest.skip("Test chromosome didn't decode to a non-empty layout")
 
-        # Recompute independently to verify F[1] matches -min_speed (not -avg_speed).
         layout = decode_chromosome(
             x, catalog, default_config.inventory,
             dims=problem.dims, config=problem.decoder_config,
         )
-        profile = compute_speed_profile(layout, catalog, train_config=problem._train_config)
-        assert abs(out["F"][1] - (-profile.min_speed)) < 1e-9, (
-            f"F[1]={out['F'][1]} must equal -min_speed={-profile.min_speed}; "
-            f"avg_speed was {profile.avg_speed}"
+        profile = compute_speed_profile(
+            layout, catalog, train_config=problem._train_config,
+            safety_margin=SPEED_SAFETY_MARGIN,
+        )
+        assert abs(out["F"][1] - (-profile.avg_speed)) < 1e-9, (
+            f"F[1]={out['F'][1]} must equal -avg_speed={-profile.avg_speed}; "
+            f"min_speed was {profile.min_speed}"
         )
         # Friction-bound curves are strictly slower than the straight cap (1.57 m/s).
         assert out["F"][1] > -1.5, (
-            f"F[1]={out['F'][1]}: min_speed on a pure-curve circle cannot "
-            f"approach the straight speed cap."
+            f"F[1]={out['F'][1]}: a pure-curve circle cannot approach the straight cap."
         )
+
+
+class TestF1MultiPathSlowestRoute:
+    """F[1] is the average speed of the layout's SLOWEST traversal route.
+
+    The speed objective must "see" branch geometry: every one of the 2^J routes
+    (take/skip each siding) is scored, and F[1] is the slowest route's overall
+    pace (avg_speed at the operating safety margin). A switchless layout has one
+    route, so F[1] reduces to that loop's pace.
+    """
+
+    def test_f1_equals_slowest_route_pace(self, switches_config, catalog):
+        import numpy as np
+        from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
+        from src.decoder import decode_chromosome
+        from src.geometry import Layout
+        from src.train import compute_speed_profile
+        from src.encoding import create_chromosome_from_pieces
+        from src.sampling import _gen_oval_with_siding
+
+        problem = TrackOptimizationProblem(catalog, switches_config)
+        dims = problem.dims
+
+        inv = {
+            catalog._id_to_index[k]: v
+            for k, v in switches_config.inventory.items()
+            if k in catalog._id_to_index
+        }
+        variants = _gen_oval_with_siding(inv, dims)
+        assert variants, "seeder produced no oval+siding variant for this inventory"
+        pieces, flips, junctions, *_ = variants[0]
+        x = create_chromosome_from_pieces(
+            dims, pieces, main_loop_flips=flips, junctions=junctions,
+        )
+
+        out = {}
+        problem._evaluate(x, out)
+        if not np.isfinite(out["F"][1]):
+            pytest.skip("siding chromosome didn't decode to a non-empty layout")
+
+        layout = decode_chromosome(
+            x, catalog, switches_config.inventory,
+            dims=dims, config=problem.decoder_config,
+        )
+        assert layout.n_switch_pairs >= 1 and layout.n_paths >= 2, (
+            "test needs a genuine multipath layout to distinguish all-routes scoring"
+        )
+
+        # Independently recompute each route's overall pace at the problem's margin.
+        route_paces = []
+        for p in layout.paths:
+            if len(p.piece_sequence) == 0:
+                continue
+            view = Layout(
+                indices=np.asarray(p.piece_sequence, dtype=np.int32),
+                states=p.states,
+            )
+            prof = compute_speed_profile(
+                view, catalog, train_config=problem._train_config,
+                safety_margin=SPEED_SAFETY_MARGIN,
+            )
+            route_paces.append(prof.avg_speed)
+
+        expected = -min(route_paces)
+        assert abs(out["F"][1] - expected) < 1e-9, (
+            f"F[1]={out['F'][1]} must equal -min(per-route avg pace)={expected}; "
+            f"route paces={route_paces}"
+        )
+
+    def test_single_path_reduces_to_its_own_pace(self, switches_config, catalog):
+        """A switchless layout under the slowest-route objective == its own pace."""
+        import numpy as np
+        from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
+        from src.decoder import decode_chromosome
+        from src.train import compute_speed_profile
+        from src.encoding import create_chromosome_from_pieces, PieceIndex
+
+        problem = TrackOptimizationProblem(catalog, switches_config)
+        x = create_chromosome_from_pieces(problem.dims, [PieceIndex.R40_CURVE] * 16)
+        out = {}
+        problem._evaluate(x, out)
+        if not np.isfinite(out["F"][1]):
+            pytest.skip("circle didn't decode to a non-empty layout")
+
+        layout = decode_chromosome(
+            x, catalog, switches_config.inventory,
+            dims=problem.dims, config=problem.decoder_config,
+        )
+        assert layout.n_paths == 1
+        profile = compute_speed_profile(
+            layout, catalog, train_config=problem._train_config,
+            safety_margin=SPEED_SAFETY_MARGIN,
+        )
+        assert abs(out["F"][1] - (-profile.avg_speed)) < 1e-9
 
 
 class TestGShapeV2:

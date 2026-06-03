@@ -36,6 +36,7 @@ from .encoding import (
 )
 from .geometry import compute_fk_chain
 from .intersection import find_crossing_pairs
+from .sampling import _figure_eight_main_loop  # shared, validated figure-8 builder
 
 # Valid main-loop piece types as a sorted array for fast random selection
 _MAIN_LOOP_TYPES = np.array(sorted(MAIN_LOOP_PIECE_INDICES), dtype=np.int16)
@@ -184,6 +185,11 @@ def _activate_position(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> None:
     """Activate a random inactive main-loop slot with a random piece type."""
+    # A DC figure-8 is FK-closure-tuned; a stray activated slot appends a piece
+    # that shifts the loop and drops the DC. Such loops grow only via
+    # _grow_dc_figure_eight, so don't add free pieces when a DC is active.
+    if get_active_double_crossovers(x, dims):
+        return
     protected = _protected_positions(x, dims)
     inactive = [
         i for i in range(dims.n_main)
@@ -408,6 +414,62 @@ def _swap_dc_traversals(x: NDArray, dims: PartitionedDimensions) -> None:
     set_double_crossover(x, dims, slot, active, p2, r2, p1, r1)
 
 
+def _grow_dc_figure_eight(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> None:
+    """Grow an active DOUBLE_CROSSOVER figure-8 by one size step.
+
+    The figure-8 main loop is FK-closure-tuned, so it cannot be edited
+    piecewise (which is why every other operator leaves DC loops alone). This
+    operator instead REGENERATES it one size larger via the validated
+    ``_figure_eight_main_loop`` builder: it confirms the active main loop is a
+    pristine figure-8 of size ``k`` (contiguous, length ``8k+40``, matching the
+    builder exactly), then — if inventory and boundary allow size ``k+1`` —
+    rewrites the main-loop genes and the DC descriptor's second position.
+    Reusing the builder guarantees the grown loop still closes; any
+    non-canonical layout is a safe no-op. This is the ONLY growth path for DC
+    loops, letting them raise utilization instead of being frozen and out-grown.
+    """
+    dcs = get_active_double_crossovers(x, dims)
+    if not dcs:
+        return
+    slot, _active, _p1, r1, _p2, r2 = dcs[0]
+
+    types = x[:dims.n_main]
+    active_idx = np.where(types != INACTIVE)[0]
+    n_active = len(active_idx)
+    # A canonical figure-8 packs contiguously from slot 0 with length 8k+40.
+    if n_active < 40 or (n_active - 40) % 8 != 0:
+        return
+    if not np.array_equal(active_idx, np.arange(n_active)):
+        return
+    k = (n_active - 40) // 8
+    exp_pieces, exp_flips = _figure_eight_main_loop(k)
+    flips = x[dims.main_flips_start:dims.main_flips_start + n_active]
+    if (types[:n_active].tolist() != [int(p) for p in exp_pieces]
+            or flips.tolist() != [int(f) for f in exp_flips]):
+        return  # not the canonical figure-8 — don't risk corrupting it
+
+    new_pieces, new_flips = _figure_eight_main_loop(k + 1)
+    new_len = len(new_pieces)
+    n_straights = sum(1 for p in new_pieces if p == int(STRAIGHT_16))
+    width = dims.boundary_max_x - dims.boundary_min_x
+    height = dims.boundary_max_y - dims.boundary_min_y
+    if (new_len > dims.n_main
+            or n_straights > dims.total_straights
+            or width < 128 + 32 * (k + 1)
+            or height < 200):
+        return
+
+    # Rewrite the main loop cleanly (also heals any stray genes) + bump DC pos_2.
+    types[:] = INACTIVE
+    x[dims.main_flips_start:dims.main_flips_end] = 0
+    for i, (piece, flip) in enumerate(zip(new_pieces, new_flips)):
+        x[i] = piece
+        x[dims.main_flips_start + i] = flip
+    set_double_crossover(x, dims, slot, 1, 0, r1, new_len // 2, r2)
+
+
 # =============================================================================
 # Combined Mutation
 # =============================================================================
@@ -443,6 +505,10 @@ _DBL_CROSSOVER_OPS = [
 ]
 _DBL_CROSSOVER_WEIGHTS = np.array([0.25, 0.25, 0.25, 0.25])
 _DBL_CROSSOVER_WEIGHTS /= _DBL_CROSSOVER_WEIGHTS.sum()
+
+# Probability that a DC-bearing individual grows its figure-8 (vs. passing
+# through unmutated) when it clears the per-individual mutation gate.
+_DC_GROW_PROB = 0.5
 
 
 class PartitionedMutation(Mutation):
@@ -480,6 +546,16 @@ class PartitionedMutation(Mutation):
         junc_thresh = 0.10 if has_junctions else 0.0
 
         for i in range(len(X)):
+            # DC figure-8 chromosomes: every main-loop/flip op would break the
+            # FK-tuned loop and drop the DC. So the ONLY mutation they may
+            # receive is the closure-safe grow (regenerate one size up); with
+            # the remaining probability they pass through unmutated and rely on
+            # crossover (which keeps DC parents intact) for the rest.
+            if get_active_double_crossovers(X[i], self.dims):
+                if np.random.random() < _DC_GROW_PROB:
+                    _grow_dc_figure_eight(X[i], self.dims, catalog)
+                continue
+
             r = np.random.random()
             if r < junc_thresh:
                 op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
