@@ -92,17 +92,20 @@ class ProgressCallback(Callback):
         if F is None:
             return
 
-        best_util = float(-np.min(F[:, 0]))
-        best_speed = float(-np.min(F[:, 1]))
-        pieces = int(best_util * self.total_inventory)
+        utils = -F[:, 0]
+        speeds = -F[:, 1]
+        feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(F), dtype=bool)
+        n_feasible = int(np.sum(feasible_mask))
 
-        n_feasible = 0
-        if G is not None:
-            n_feasible = int(np.sum(np.all(G <= 0, axis=1)))
+        feas_util = float(np.max(utils[feasible_mask])) if n_feasible else 0.0
+        feas_speed = float(np.max(speeds[feasible_mask])) if n_feasible else 0.0
+        infeas_util = float(np.max(utils[~feasible_mask])) if n_feasible < len(F) else 0.0
 
         logger.info(
-            f"Gen {gen:4d} | best_util={best_util:.1%} ({pieces} pcs) | "
-            f"best_speed={best_speed:.2f} m/s | feasible={n_feasible}/{len(pop)}"
+            f"Gen {gen:4d} | "
+            f"best_feas={feas_util:.1%} ({int(feas_util * self.total_inventory)} pcs) {feas_speed:.2f} m/s | "
+            f"best_infeas={infeas_util:.1%} ({int(infeas_util * self.total_inventory)} pcs) | "
+            f"feasible={n_feasible}/{len(pop)}"
         )
 
 

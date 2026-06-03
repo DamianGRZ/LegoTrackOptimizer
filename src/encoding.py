@@ -35,10 +35,13 @@ JUNC_POSITION = 1
 JUNC_HANDEDNESS = 2
 JUNC_N_STRAIGHTS = 3
 
-# Cross-junction descriptor gene offsets
+# Cross-junction descriptor gene offsets. Each active descriptor models ONE
+# physical CROSS_90 traversed twice by the loop (both passes straight, the two
+# passes intersecting at ~90 deg so all four ports are used). pos_1 and pos_2
+# are main-loop positions of the two traversals.
 CJ_ACTIVE = 0
-CJ_POSITION_W = 1   # position of switch_for_W in main_loop_pieces
-CJ_HANDEDNESS = 2   # 0 = LEFT switches, 1 = RIGHT switches
+CJ_POSITION_1 = 1
+CJ_POSITION_2 = 2
 
 # Double-crossover descriptor gene offsets. Each active descriptor models ONE
 # physical DOUBLE_CROSSOVER traversed twice by the loop, with disjoint port
@@ -216,17 +219,10 @@ def compute_dimensions(config, catalog) -> PartitionedDimensions:
     right_count = inv.get("R40_SWITCH_RIGHT", 0)
     max_junctions = min(left_count, right_count)
 
-    # Cross-junctions: each consumes 4 switches (all same handedness, LEFT or
-    # RIGHT) + 4 R40 curves of opposite handedness + 1 CROSS_90.
-    # Max cross junctions per handedness is floor(switch_count / 4) limited
-    # also by CROSS_90 availability and corresponding curve count.
-    cross_count = inv.get("CROSS_90", 0)
-    r40_curve_count = inv.get("R40_CURVE", 0)
-    # Each cross junction needs 4 same-handedness switches + 4 R40 curves (flipped
-    # opposite to the switch family) + 1 CROSS_90. Switch pools are per-handedness
-    # but R40 curves come from one shared pool, so curve supply caps the total.
-    cross_junc_switches = (left_count // 4) + (right_count // 4)
-    max_cross_junctions = min(cross_count, cross_junc_switches, r40_curve_count // 4)
+    # Cross-junctions: each descriptor is one physical CROSS_90 traversed twice
+    # by the loop (both passes straight, intersecting at ~90 deg). One descriptor
+    # per physical CROSS_90, so the slot count is the CROSS_90 inventory directly.
+    max_cross_junctions = inv.get("CROSS_90", 0)
 
     # One descriptor per physical DOUBLE_CROSSOVER. Each descriptor occupies
     # TWO main-loop positions (the two complementary traversals of the same
@@ -283,15 +279,16 @@ def generate_bounds(dims: PartitionedDimensions) -> Tuple[NDArray, NDArray]:
         xl[base + JUNC_N_STRAIGHTS] = 0
         xu[base + JUNC_N_STRAIGHTS] = dims.total_straights
 
-    # Cross-junction descriptors
+    # Cross-junction descriptors: one physical CROSS_90, two main-loop traversal
+    # positions whose FK states must coincide perpendicular (validated in decoder).
     for k in range(dims.max_cross_junctions):
         base = dims.cross_junc_start + k * GENES_PER_CROSS_JUNCTION
         xl[base + CJ_ACTIVE] = 0
         xu[base + CJ_ACTIVE] = 1
-        xl[base + CJ_POSITION_W] = 0
-        xu[base + CJ_POSITION_W] = dims.n_main - 1
-        xl[base + CJ_HANDEDNESS] = 0
-        xu[base + CJ_HANDEDNESS] = 1  # LEFT, RIGHT switch family
+        xl[base + CJ_POSITION_1] = 0
+        xu[base + CJ_POSITION_1] = dims.n_main - 1
+        xl[base + CJ_POSITION_2] = 0
+        xu[base + CJ_POSITION_2] = dims.n_main - 1
 
     # Double-crossover descriptors: one per physical piece, two main-loop
     # traversal positions + their catalog-route choices.
@@ -421,39 +418,39 @@ def get_cross_junction(x: NDArray, dims: PartitionedDimensions,
     """Read a cross-junction descriptor.
 
     Returns:
-        (active, position_W, handedness) tuple.
+        (active, pos_1, pos_2) tuple.
     """
     base = dims.cross_junc_start + slot * GENES_PER_CROSS_JUNCTION
     return (
         int(x[base + CJ_ACTIVE]),
-        int(x[base + CJ_POSITION_W]),
-        int(x[base + CJ_HANDEDNESS]),
+        int(x[base + CJ_POSITION_1]),
+        int(x[base + CJ_POSITION_2]),
     )
 
 
 def set_cross_junction(x: NDArray, dims: PartitionedDimensions, slot: int,
-                       active: int, position_W: int, handedness: int) -> None:
+                       active: int, pos_1: int, pos_2: int) -> None:
     """Write a cross-junction descriptor (in-place)."""
     base = dims.cross_junc_start + slot * GENES_PER_CROSS_JUNCTION
     x[base + CJ_ACTIVE] = active
-    x[base + CJ_POSITION_W] = position_W
-    x[base + CJ_HANDEDNESS] = handedness
+    x[base + CJ_POSITION_1] = pos_1
+    x[base + CJ_POSITION_2] = pos_2
 
 
 def get_active_cross_junctions(
     x: NDArray, dims: PartitionedDimensions,
 ) -> List[Tuple[int, int, int, int]]:
-    """Get active cross-junction descriptors, sorted by position_W.
+    """Get active cross-junction descriptors, sorted by pos_1.
 
     Returns:
-        List of (slot, active, position_W, handedness) tuples.
+        List of (slot, active, pos_1, pos_2) tuples.
     """
     junctions = []
     for k in range(dims.max_cross_junctions):
-        active, position_W, handedness = get_cross_junction(x, dims, k)
+        active, pos_1, pos_2 = get_cross_junction(x, dims, k)
         if active:
-            junctions.append((k, active, position_W, handedness))
-    junctions.sort(key=lambda j: j[2])  # sort by position_W
+            junctions.append((k, active, pos_1, pos_2))
+    junctions.sort(key=lambda j: j[2])  # sort by pos_1
     return junctions
 
 
@@ -531,7 +528,7 @@ def create_empty_chromosome(dims: PartitionedDimensions) -> NDArray:
     for k in range(dims.max_junctions):
         set_junction(x, dims, k, active=0, position=0, handedness=0, n_straights=0)
     for k in range(dims.max_cross_junctions):
-        set_cross_junction(x, dims, k, active=0, position_W=0, handedness=0)
+        set_cross_junction(x, dims, k, active=0, pos_1=0, pos_2=0)
     for k in range(dims.max_double_crossovers):
         set_double_crossover(x, dims, k, active=0,
                              pos_1=0, route_1=0, pos_2=0, route_2=0)
@@ -558,7 +555,7 @@ def create_chromosome_from_pieces(
             Defaults to all-zero (catalog direction).
         junctions: Optional (active, position, handedness, n_straights) tuples
             for passing-siding descriptors.
-        cross_junctions: Optional (active, position_W, handedness) tuples for
+        cross_junctions: Optional (active, pos_1, pos_2) tuples for
             cross-junction descriptors.
         double_crossovers: Optional (active, pos_1, route_1, pos_2, route_2)
             tuples for DOUBLE_CROSSOVER descriptors.

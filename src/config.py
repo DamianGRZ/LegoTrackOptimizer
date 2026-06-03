@@ -67,6 +67,12 @@ class OptimizationConfig(BaseModel):
     closure_tolerance: float = Field(default=4.0, ge=0.1, description="Position closure tolerance in studs")
     angle_tolerance: float = Field(default=5.0, ge=0.5, description="Angle closure tolerance in degrees")
     boundary_tolerance: float = Field(default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs")
+    special_piece_weight: float = Field(
+        default=3.0, ge=1.0,
+        description="Utilization weight per special piece (switch pair / crossing / "
+                    "double-crossover). >1 rewards multi-path topology so the GA does "
+                    "not strip it as overhead.",
+    )
     algorithm: AlgorithmConfig = Field(default_factory=AlgorithmConfig)
     train_config_path: Optional[str] = Field(
         default=None,

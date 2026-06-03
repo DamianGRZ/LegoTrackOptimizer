@@ -154,6 +154,37 @@ def count_segment_crossings(
     return crossings
 
 
+def _cross_midpoint(state: NDArray[np.float64]) -> Tuple[float, float, float]:
+    """World midpoint (8 stud forward) and heading for a 16-stud-FK slot."""
+    x_start, y_start, theta_deg = float(state[0]), float(state[1]), float(state[2])
+    theta_rad = np.radians(theta_deg)
+    return (x_start + 8.0 * np.cos(theta_rad),
+            y_start + 8.0 * np.sin(theta_rad),
+            theta_deg)
+
+
+def cross_pair_perpendicular(
+    states: NDArray[np.float64],
+    i: int,
+    j: int,
+    pos_tol: float = 4.0,
+    ang_tol_deg: float = 15.0,
+) -> bool:
+    """True iff slots i and j share a world midpoint and cross at ~90 deg.
+
+    This is the single definition of "a valid CROSS_90 crossing" used by BOTH
+    the decoder (to validate a cross-junction descriptor before committing) and
+    count_dangling_cross_ports (to confirm a placed CROSS_90 has its partner).
+    Sharing it guarantees a decoder-validated crossing is never counted dangling.
+    """
+    ix, iy, ith = _cross_midpoint(states[i])
+    jx, jy, jth = _cross_midpoint(states[j])
+    if abs(ix - jx) > pos_tol or abs(iy - jy) > pos_tol:
+        return False
+    ang_diff = (jth - ith + 180.0) % 360.0 - 180.0
+    return abs(abs(ang_diff) - 90.0) <= ang_tol_deg
+
+
 def count_dangling_cross_ports(
     states: NDArray[np.float64],
     piece_indices: List[int],
@@ -182,35 +213,15 @@ def count_dangling_cross_ports(
     if len(piece_indices) == 0:
         return 0
 
-    midpoints: List[Tuple[float, float, float]] = []
-    cross_slots: List[int] = []
-    for i, piece_idx in enumerate(piece_indices):
-        x_start, y_start, theta_deg = states[i]
-        # Train midpoint approx (cross center if CROSS_90, segment center
-        # otherwise). 8 stud forward in train direction works for any
-        # 16-stud-FK piece (CROSS_90, STRAIGHT_16, R40 close enough).
-        theta_rad = np.radians(theta_deg)
-        mx = x_start + 8.0 * np.cos(theta_rad)
-        my = y_start + 8.0 * np.sin(theta_rad)
-        midpoints.append((mx, my, theta_deg))
-        if piece_idx == CROSS_90_INDEX:
-            cross_slots.append(i)
+    n_slots = len(piece_indices)
+    cross_slots = [i for i, idx in enumerate(piece_indices) if idx == CROSS_90_INDEX]
 
     dangling = 0
     for ci in cross_slots:
-        cx, cy, ctheta = midpoints[ci]
-        partner_found = False
-        for j, (jx, jy, jtheta) in enumerate(midpoints):
-            if j == ci:
-                continue
-            if abs(jx - cx) > pos_tol or abs(jy - cy) > pos_tol:
-                continue
-            ang_diff = (jtheta - ctheta + 180.0) % 360.0 - 180.0
-            # Partner must be perpendicular: |ang_diff| in (90 - tol, 90 + tol)
-            if abs(abs(ang_diff) - 90.0) > ang_tol_deg:
-                continue
-            partner_found = True
-            break
+        partner_found = any(
+            cross_pair_perpendicular(states, ci, j, pos_tol, ang_tol_deg)
+            for j in range(n_slots) if j != ci
+        )
         if not partner_found:
             dangling += 1
 
