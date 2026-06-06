@@ -72,6 +72,11 @@ PIECE_IDX_SWITCH_LEFT = 4
 PIECE_IDX_SWITCH_RIGHT = 5
 PIECE_IDX_DBL_CROSSOVER = 6
 
+# DOUBLE_CROSSOVER body dimensions (studs): 48 long x 16 wide, port A at
+# piece-local (0, 0) and port C at (0, 16). Mirrors src.templates.DC_*.
+DC_LENGTH_STUDS = 48.0
+DC_LATERAL_STUDS = 16.0
+
 # Piece lengths for straight pieces
 STRAIGHT_LENGTHS = {
     PIECE_IDX_STRAIGHT_16: 16.0,
@@ -315,62 +320,106 @@ def _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
 
 
 def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
-    """Draw a double crossover with two parallel tracks and diagonal crossings.
+    """Draw a double crossover as a clean 4-PORT scissors crossover.
+
+    The piece (4DBrix 210.1, 48x16 studs) has exactly FOUR ports — A,B on
+    track 1 (y=0) and C,D on track 2 (y=16) — with two straight-through routes
+    (A-B, C-D) and two crossover roads (A->D, C->B) meeting at ONE central
+    at-grade crossing (the catalog ``DOUBLE_CROSSOVER`` routes). The two
+    parallel tracks are drawn full-length; the crossover roads are thin
+    diagonals over the central third only, so the piece reads as "2 tracks +
+    1 scissors" instead of a tangle of stub ends. The four ports are marked
+    explicitly.
 
     Args:
         ax: Matplotlib axes.
-        x0, y0: Start position (studs) - entry of track 1.
+        x0, y0: Start position (studs) - entry of track 1 (port A).
         theta0: Entry heading (degrees).
         color: Track bed color.
         draw_rails_flag: Whether to draw rails.
     """
     theta_rad = np.radians(theta0)
-    cos_t = np.cos(theta_rad)
-    sin_t = np.sin(theta_rad)
+    cos_t, sin_t = np.cos(theta_rad), np.sin(theta_rad)
 
-    def transform_point(lx, ly):
-        """Transform local coordinates to world."""
-        return (x0 + lx * cos_t - ly * sin_t,
-                y0 + lx * sin_t + ly * cos_t)
+    def tp(lx, ly):
+        """Local piece coords (studs) -> world."""
+        return (x0 + lx * cos_t - ly * sin_t, y0 + lx * sin_t + ly * cos_t)
 
-    # Track 1 (main): 0 to 48 studs at y=0
-    t1_start = transform_point(0, 0)
-    t1_end = transform_point(48, 0)
-    x_track1 = np.array([t1_start[0], t1_end[0]])
-    y_track1 = np.array([t1_start[1], t1_end[1]])
-    _draw_track_bed(ax, x_track1, y_track1, color)
-    if draw_rails_flag:
-        _draw_rails(ax, x_track1, y_track1)
+    def segment(p_local, q_local, **bed_kw):
+        p, q = tp(*p_local), tp(*q_local)
+        xs, ys = np.array([p[0], q[0]]), np.array([p[1], q[1]])
+        _draw_track_bed(ax, xs, ys, color, **bed_kw)
+        if draw_rails_flag:
+            _draw_rails(ax, xs, ys)
 
-    # Track 2 (parallel): 0 to 48 studs at y=16
-    t2_start = transform_point(0, 16)
-    t2_end = transform_point(48, 16)
-    x_track2 = np.array([t2_start[0], t2_end[0]])
-    y_track2 = np.array([t2_start[1], t2_end[1]])
-    _draw_track_bed(ax, x_track2, y_track2, color)
-    if draw_rails_flag:
-        _draw_rails(ax, x_track2, y_track2)
+    # Two parallel through-tracks: A->B (y=0) and C->D (y=16).
+    segment((0.0, 0.0), (48.0, 0.0))
+    segment((0.0, 16.0), (48.0, 16.0))
 
-    # Diagonal crossovers (X-pattern in the middle section)
-    # Crossover 1: from track 1 to track 2 (going up-right)
-    # Approximate geometry: diagonal from ~(12, 0) to ~(36, 16)
-    c1_start = transform_point(12, 0)
-    c1_end = transform_point(36, 16)
-    x_cross1 = np.array([c1_start[0], c1_end[0]])
-    y_cross1 = np.array([c1_start[1], c1_end[1]])
-    _draw_track_bed(ax, x_cross1, y_cross1, color, width_stud=4.8, alpha=0.7)
-    if draw_rails_flag:
-        _draw_rails(ax, x_cross1, y_cross1)
+    # Central scissors: crossover roads A->D and C->B, thin and confined to the
+    # middle third so they cross once at (24, 8) without stubbing the mainlines.
+    segment((16.0, 0.0), (32.0, 16.0), width_stud=3.6, alpha=0.75)
+    segment((16.0, 16.0), (32.0, 0.0), width_stud=3.6, alpha=0.75)
 
-    # Crossover 2: from track 2 to track 1 (going down-right)
-    # Approximate geometry: diagonal from ~(12, 16) to ~(36, 0)
-    c2_start = transform_point(12, 16)
-    c2_end = transform_point(36, 0)
-    x_cross2 = np.array([c2_start[0], c2_end[0]])
-    y_cross2 = np.array([c2_start[1], c2_end[1]])
-    _draw_track_bed(ax, x_cross2, y_cross2, color, width_stud=4.8, alpha=0.7)
-    if draw_rails_flag:
-        _draw_rails(ax, x_cross2, y_cross2)
+    # Mark the FOUR ports (A, B, C, D) so the piece reads 4-port, not 6.
+    for px, py in ((0.0, 0.0), (48.0, 0.0), (0.0, 16.0), (48.0, 16.0)):
+        wx, wy = tp(px, py)
+        ax.plot(wx, wy, marker='o', ms=4.5, mfc=color, mec='white',
+                mew=0.7, zorder=6)
+
+
+def _dc_body_poses(piece_sequence, states):
+    """Port-A world poses for each PHYSICAL double crossover threaded by a path.
+
+    A DOUBLE_CROSSOVER is one physical piece, but a closed loop covers its four
+    ports by traversing it twice, so index 6 appears at two non-adjacent slots.
+    Drawing the body per-occurrence paints it twice and -- for the traversal that
+    enters at port C -- 16 studs off to the wrong side. We recover port A's pose
+    from each traversal's entry+exit geometry and de-duplicate, so
+    ``_draw_double_crossover_piece`` is called exactly once per physical piece.
+
+    A traversal's lateral exit offset (train frame) identifies the entry port:
+    +16 -> entered port A (cross_1_to_2); -16 -> entered port C (cross_2_to_1),
+    so port A sits 16 studs back along the piece-local +y axis. Through routes
+    (offset 0) enter at port A by convention; the both-through cover is emitted
+    by no current seed, so its port-C twin is not separately disambiguated.
+
+    Args:
+        piece_sequence: Per-slot catalog indices for the path.
+        states: (n+1, 3) cumulative [x, y, theta_deg] for the path.
+
+    Returns:
+        List of unique (x, y, theta_deg) port-A poses, one per physical DC.
+    """
+    poses = []
+    seen = set()
+    for i, piece_idx in enumerate(piece_sequence):
+        if piece_idx != PIECE_IDX_DBL_CROSSOVER or i + 1 >= len(states):
+            continue
+        ex, ey, eth = float(states[i][0]), float(states[i][1]), float(states[i][2])
+        th = np.radians(eth)
+        dx, dy = states[i + 1][0] - ex, states[i + 1][1] - ey
+        lateral = -np.sin(th) * dx + np.cos(th) * dy
+        if lateral < -1.0:  # entered port C: port A is 16 stud back along +y
+            ax_ = ex + DC_LATERAL_STUDS * np.sin(th)
+            ay_ = ey - DC_LATERAL_STUDS * np.cos(th)
+        else:               # entered port A (cross_1_to_2 or a through route)
+            ax_, ay_ = ex, ey
+        # Round before the modulo so an FK-drifted 359.9999 deg wraps to 0, not
+        # 360 -- otherwise the two traversals of one piece key differently.
+        key = (round(ax_, 1), round(ay_, 1), round(round(eth, 1) % 360.0, 1))
+        if key in seen:
+            continue
+        seen.add(key)
+        poses.append((float(ax_), float(ay_), eth))
+    return poses
+
+
+def _draw_dc_bodies(ax, piece_sequence, states):
+    """Draw every physical double crossover threaded by a path exactly once."""
+    color = get_piece_color(PIECE_IDX_DBL_CROSSOVER)
+    for dcx, dcy, dcth in _dc_body_poses(piece_sequence, states):
+        _draw_double_crossover_piece(ax, dcx, dcy, dcth, color)
 
 
 def _r40_flip_from_dtheta(piece_idx: int, dtheta_deg: float) -> int:
@@ -476,17 +525,23 @@ def plot_layout(
     # Plot each piece with proper geometry
     for i in range(layout.n_pieces):
         piece_idx = int(layout.indices[i])
+        piece_indices_seen.add(piece_idx)
 
         # Track special positions
         if piece_idx in SWITCH_INDICES:
             switch_positions.append(i)
-        elif piece_idx in CROSSING_INDICES:
+        elif piece_idx == PIECE_IDX_CROSS_90:
             crossing_positions.append(i)
+
+        # A DOUBLE_CROSSOVER is one physical piece threaded twice; its body is
+        # drawn once below (anchored at port A), not per traversal here.
+        if piece_idx == PIECE_IDX_DBL_CROSSOVER:
+            continue
 
         flip = _r40_flip_from_dtheta(piece_idx, theta[i + 1] - theta[i]) if i + 1 < len(theta) else 0
         _draw_piece(ax, piece_idx, x[i], y[i], theta[i], draw_rails_flag=True, flip=flip)
 
-        piece_indices_seen.add(piece_idx)
+    _draw_dc_bodies(ax, [int(v) for v in layout.indices], layout.states)
 
     # Mark switch positions with diamond markers
     for i in switch_positions:
@@ -674,10 +729,14 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, catalog, boundary, title):
     for i in range(len(main_path.piece_sequence)):
         if i < len(x) - 1:
             piece_idx = main_path.piece_sequence[i]
+            if piece_idx == PIECE_IDX_DBL_CROSSOVER:
+                continue  # one physical DC, drawn once below (not per traversal)
             flip = _r40_flip_from_dtheta(piece_idx, theta[i + 1] - theta[i])
             _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
                         draw_rails_flag=True, installed_reversed=(i in out_positions),
                         flip=flip)
+
+    _draw_dc_bodies(ax, main_path.piece_sequence, main_path.states)
 
     ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
@@ -796,9 +855,12 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
     # its exit switch); the 2nd, 4th, ... switches are OUTs and were installed
     # reversed, so the renderer flips their visual diverge direction.
     switches_seen = 0
-    for i in range(min(drift_start, len(path.piece_sequence))):
+    n_solid = min(drift_start, len(path.piece_sequence))
+    for i in range(n_solid):
         if i < len(x) - 1:
             piece_idx = path.piece_sequence[i]
+            if piece_idx == PIECE_IDX_DBL_CROSSOVER:
+                continue  # one physical DC, drawn once below (not per traversal)
             installed_reversed = False
             if piece_idx in SWITCH_INDICES:
                 switches_seen += 1
@@ -807,6 +869,8 @@ def _plot_single_path(ax, path, catalog, boundary, path_idx):
             _draw_piece(ax, piece_idx, x[i], y[i], theta[i],
                         draw_rails_flag=True, installed_reversed=installed_reversed,
                         flip=flip)
+
+    _draw_dc_bodies(ax, path.piece_sequence[:n_solid], path.states)
 
     # Overlay drift trajectory (if any) as a dotted gray polyline
     if drift_start < len(x) - 1:

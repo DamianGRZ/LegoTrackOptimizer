@@ -1,0 +1,73 @@
+<h2>Three buildable closed loops (R40 turns only, rounded everywhere)</h2>
+<p class="subtitle">Pick the one to pursue. Blue = track, green Y = switch, red ✕ = CROSS_90, orange ▭ = DOUBLE_CROSSOVER. All are single closed circuits.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="spiral" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 460 210" width="100%" height="210">
+        <rect x="1" y="1" width="458" height="208" fill="#0d1117" stroke="#30363d"/>
+        <!-- 3 concentric rounded rings, each broken at bottom-center, connected by S-bend steps -->
+        <path d="M230 30 L60 30 Q30 30 30 60 L30 150 Q30 180 60 180 L210 180" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M230 30 L400 30 Q430 30 430 60 L430 150 Q430 180 400 180 L250 180" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M232 58 L92 58 Q62 58 62 82 L62 128 Q62 152 92 152 L212 152" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M232 58 L372 58 Q398 58 398 82 L398 128 Q398 152 372 152 L252 152" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M234 86 L120 86 Q92 86 92 106 L92 110 Q92 128 120 128 L214 128" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M234 86 L344 86 Q368 86 368 106 L368 128 Q368 128 344 128 L254 128" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <!-- S-bend steps between rings at bottom center -->
+        <path d="M210 180 q20 -10 22 -28" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <path d="M212 152 q18 -8 22 -26" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <path d="M250 180 q-20 -10 -18 -28" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <path d="M252 152 q-16 -8 -18 -26" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <text x="230" y="200" fill="#3fb950" font-size="9" text-anchor="middle">S-bends step inward ~8 studs/ring → tracks pack tight</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>A · Concentric spiral (S-bend steps) ★ densest</h3>
+      <p>One path spirals inward, each lap stepping ~8 studs closer via an S-bend (no U-turn, so it packs tight). Corners are R40 quarter-arcs. ~5 rings use all 80 R40 + most straights → ~85–95%. Closes planar — <b>no crossing needed</b>. The one tricky bit is linking the innermost lap back out to the outer (a short ramp, or 1 CROSS_90 cutting straight out).</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="snake" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 460 210" width="100%" height="210">
+        <rect x="1" y="1" width="458" height="208" fill="#0d1117" stroke="#30363d"/>
+        <!-- snake of 3 wide lanes, U-turns alt sides, 80-stud spacing -->
+        <path d="M90 45 L330 45 Q370 45 370 85 Q370 125 330 125 L120 125 Q80 125 80 165 Q80 185 110 185 L330 185"
+              fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <!-- return spine cutting across via CROSS_90 -->
+        <path d="M90 45 L90 185" fill="none" stroke="#f85149" stroke-width="3"/>
+        <g stroke="#f85149" stroke-width="2"><path d="M83 125 l14 0"/><path d="M83 118 l14 14"/></g>
+        <text x="90" y="118" fill="#f85149" font-size="10" text-anchor="middle">✕</text>
+        <text x="250" y="103" fill="#d29922" font-size="9" text-anchor="middle">↕ U-turns force 80-stud lane gap (sparse)</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>B · Serpentine + CROSS_90 return</h3>
+      <p>Horizontal lanes snaked together; the return spine cuts straight back across the lanes at 90° (CROSS_90). But the R40 U-turns force lanes <b>80 studs apart</b>, so only ~5 lanes fit and density is ~65–75% — and the return crosses ≤2 lanes (only 2 CROSS_90). Uses crossings, but pays for it in sparseness.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="stacked" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 460 210" width="100%" height="210">
+        <rect x="1" y="1" width="458" height="208" fill="#0d1117" stroke="#30363d"/>
+        <!-- two stacked ovals joined by a DOUBLE_CROSSOVER weave -->
+        <path d="M120 40 L340 40 Q380 40 380 70 Q380 100 340 100 L210 100" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M120 40 Q80 40 80 70 Q80 100 120 100 L250 100" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M120 150 L340 150 Q380 150 380 120 Q380 110 340 110 L250 110" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <path d="M120 150 Q80 150 80 120 Q80 110 120 110 L210 110" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <rect x="205" y="98" width="50" height="14" fill="none" stroke="#d29922" stroke-width="2"/>
+        <text x="230" y="93" fill="#d29922" font-size="10" text-anchor="middle">▭ DOUBLE_CROSSOVER</text>
+        <text x="230" y="175" fill="#8b949e" font-size="9" text-anchor="middle">two loops woven into one circuit</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>C · Stacked loops + DOUBLE_CROSSOVER</h3>
+      <p>Two (or three) parallel oval loops; a DOUBLE_CROSSOVER weaves them into one circuit — exactly what the DC piece is for. Cleanest closure and the most natural crossing use, but only 2–3 loops stack, so ~65–80%. Less dense than A, but geometrically the safest and it actually consumes the DC.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:12px">Honest read: <b>A (spiral)</b> wins on raw density and is what gets you toward 90%; crossings there are optional polish. <b>B</b> and <b>C</b> guarantee the crossing pieces get used but cap lower. Since the goal is max utilization, I lean A — and we bolt a small DC/CROSS weave onto it later for the last couple %. Which do you want?</p>

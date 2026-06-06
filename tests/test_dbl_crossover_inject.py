@@ -55,8 +55,7 @@ def dims() -> PartitionedDimensions:
 _FULL_INV = {
     "STRAIGHT_16": 40,
     "STRAIGHT_24": 0,
-    "R40_CURVE": 20,
-    "R40_CURVE": 20,
+    "R40_CURVE": 40,
     "CROSS_90": 0,
     "R40_SWITCH_LEFT": 0,
     "R40_SWITCH_RIGHT": 0,

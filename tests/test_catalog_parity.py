@@ -11,6 +11,13 @@ from src.catalog import TrackCatalog
 V1_PATH = Path("data") / "track_pieces.yaml"
 V2_PATH = Path("data") / "track_pieces_v2.yaml"
 
+# The v1 catalog was removed (v1 deprecated; only track_pieces_v2.yaml ships).
+# v1<->v2 parity is obsolete, so skip the whole module when v1 is absent.
+pytestmark = pytest.mark.skipif(
+    not V1_PATH.exists(),
+    reason="v1 catalog (data/track_pieces.yaml) removed; v1<->v2 parity obsolete",
+)
+
 
 @pytest.fixture
 def v1_catalog():

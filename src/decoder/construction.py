@@ -474,6 +474,8 @@ def _inject_double_crossovers(
     n_main = len(main_pieces)
     if n_main < 2:
         return [], {}
+    if main_flips is None:
+        main_flips = [0] * n_main
 
     pos_tol = config.siding_position_tolerance
     ang_tol_deg = config.siding_angle_tolerance

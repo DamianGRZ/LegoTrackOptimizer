@@ -421,7 +421,12 @@ def _gen_figure_eight_dbl_crossover(
     # Each k increment widens the bounding box by 32 stud (16 stud per side);
     # base width at k=0 is 128 stud, base height ~176 stud.
     k_fit_w = max(0, int((w - 128) // 32))
-    k_max = max(0, min(k_inv, k_fit_w, 6))
+    # Scale purely from inventory + boundary (project invariant: no hardcoded size
+    # caps). The old hardcoded `6` capped the figure-8 at ~88 pieces (42% util);
+    # uncapped it reaches the boundary-limited k (~11 -> 128 pieces, ~61%), giving
+    # the GA a DC-bearing seed that competes with the racetrack instead of being
+    # bred out as too small. Each variant is still oracle-feasible by construction.
+    k_max = max(0, min(k_inv, k_fit_w))
 
     variants: List[Pattern] = []
     for k in sorted({k_max, k_max // 2, 0}, reverse=True):
@@ -560,6 +565,7 @@ class IntegerSampling(Sampling):
         catalog: TrackCatalog,
         config: OptimizationConfig,
         heuristic_ratio: float = 0.20,
+        seed: Optional[int] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -567,6 +573,7 @@ class IntegerSampling(Sampling):
         self.config = config
         self.dims = compute_dimensions(config, catalog)
         self.heuristic_ratio = heuristic_ratio
+        self._seed = seed
 
         self.inventory_by_index: Dict[int, int] = {}
         for piece_id, count in config.inventory.items():
@@ -579,7 +586,7 @@ class IntegerSampling(Sampling):
     def _do(self, problem, n_samples, **kwargs) -> NDArray:
         """Generate initial population."""
         dims = self.dims
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(self._seed)
         X = np.full((n_samples, dims.n_var), INACTIVE, dtype=np.int16)
 
         n_heuristic = max(1, int(n_samples * self.heuristic_ratio))
