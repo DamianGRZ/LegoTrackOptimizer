@@ -43,13 +43,13 @@ class TestTrackCatalog:
 
     def test_curves_have_nonzero_dtheta(self, catalog: TrackCatalog):
         """Curves have correct angle deltas."""
-        r40_left = catalog[2]
-        r40_right = catalog[3]
+        r40_curve = catalog[2]
 
-        assert r40_left is not None
-        assert r40_right is not None
-        assert r40_left.fk.dtheta == pytest.approx(22.5, abs=0.1)
-        assert r40_right.fk.dtheta == pytest.approx(-22.5, abs=0.1)
+        assert r40_curve is not None
+        # R40 is ONE piece (+22.5°); the -22.5° RIGHT handedness is applied via the
+        # per-slot flip bit at FK time, not stored as a separate piece. (catalog[3]
+        # is now CROSS_90, not a right-hand curve.)
+        assert r40_curve.fk.dtheta == pytest.approx(22.5, abs=0.1)
 
     def test_all_pieces_have_index(self, catalog: TrackCatalog):
         """All registered pieces have valid indices."""
@@ -155,21 +155,21 @@ class TestTopologyAndRoutes:
 
     def test_crossing_has_multiple_routes(self, catalog: TrackCatalog):
         """Crossing pieces have multiple routes."""
-        topo = catalog.get_topology(4)  # CROSS_90
+        topo = catalog.get_topology(3)  # CROSS_90
         assert topo is not None
         assert topo.piece_class == PieceClass.CROSSING_4PORT
         assert len(topo.routes) >= 2  # West-east and south-north
 
     def test_double_crossover_has_four_routes(self, catalog: TrackCatalog):
         """DOUBLE_CROSSOVER has 4 routes."""
-        topo = catalog.get_topology(7)  # DOUBLE_CROSSOVER (post-refactor index)
+        topo = catalog.get_topology(6)  # DOUBLE_CROSSOVER
         assert topo is not None
         assert len(topo.routes) == 4
 
     def test_get_fk_route(self, catalog: TrackCatalog):
         """Can get FK for specific route."""
         # CROSS_90 route 0 should be west-east (dx=16)
-        fk = catalog.get_fk_route(4, 0)
+        fk = catalog.get_fk_route(3, 0)
         assert fk[0] == pytest.approx(16.0)
 
     def test_get_fk_with_routes(self, catalog: TrackCatalog):
@@ -191,7 +191,7 @@ class TestPieceClassification:
         classified = catalog.classify_pieces()
 
         assert PieceClass.SIMPLE_2PORT in classified
-        assert len(classified[PieceClass.SIMPLE_2PORT]) >= 4  # Straights + curves
+        assert len(classified[PieceClass.SIMPLE_2PORT]) >= 3  # STRAIGHT_16, STRAIGHT_24, R40_CURVE
 
     def test_get_simple_pieces(self, catalog: TrackCatalog):
         """Can get simple (2-port) pieces."""
@@ -202,8 +202,8 @@ class TestPieceClassification:
     def test_get_switch_pieces(self, catalog: TrackCatalog):
         """Can get switch pieces."""
         switches = catalog.get_switch_pieces()
-        assert 5 in switches  # R40_SWITCH_LEFT
-        assert 6 in switches  # R40_SWITCH_RIGHT
+        assert 4 in switches  # R40_SWITCH_LEFT
+        assert 5 in switches  # R40_SWITCH_RIGHT
 
 
 class TestStudMm:

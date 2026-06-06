@@ -1,0 +1,53 @@
+<h2>Refinements: ring-to-ring via switches, and a 2-cross weave</h2>
+<p class="subtitle">Green Y = switch, orange ▭ = DOUBLE_CROSSOVER, red ✕ = CROSS_90. Tell me if the connections match how these really fit.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="switch-spiral" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 460 220" width="100%" height="220">
+        <rect x="1" y="1" width="458" height="218" fill="#0d1117" stroke="#30363d"/>
+        <!-- outer ring -->
+        <path d="M205 30 L70 30 Q40 30 40 60 L40 160 Q40 190 70 190 L390 190 Q420 190 420 160 L420 60 Q420 30 390 30 L255 30"
+              fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <!-- inner ring -->
+        <path d="M205 64 L104 64 Q78 64 78 88 L78 132 Q78 156 104 156 L356 156 Q382 156 382 132 L382 88 Q382 64 356 64 L255 64"
+              fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <!-- crossover: 2 switches linking outer(top gap) to inner(top gap) -->
+        <path d="M205 30 q14 16 0 34" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <path d="M255 30 q-14 16 0 34" fill="none" stroke="#3fb950" stroke-width="3"/>
+        <text x="205" y="26" fill="#3fb950" font-size="11" text-anchor="middle">Y</text>
+        <text x="255" y="26" fill="#3fb950" font-size="11" text-anchor="middle">Y</text>
+        <text x="230" y="120" fill="#8b949e" font-size="9" text-anchor="middle">switch on outer + switch on inner = 1-way crossover; train threads ring→ring</text>
+        <text x="230" y="210" fill="#8b949e" font-size="9" text-anchor="middle">add more rings, one crossover each (6 switches → up to ~4 rings)</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>A′ · Concentric rings joined by 2-switch crossovers</h3>
+      <p>Each ring-to-ring hop is a switch on the outer loop + a switch on the inner loop (your "DC-but-simpler"). Rings stay tight (8-stud step), corners are R40. 6 switches → ~3–4 joined rings. Threads into one circuit; densest of the crossing-using options.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="two-cross" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 460 220" width="100%" height="220">
+        <rect x="1" y="1" width="458" height="218" fill="#0d1117" stroke="#30363d"/>
+        <!-- three lobes in a row woven by a single stroke crossing twice -->
+        <ellipse cx="115" cy="110" rx="70" ry="60" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <ellipse cx="345" cy="110" rx="70" ry="60" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <ellipse cx="230" cy="110" rx="78" ry="42" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <!-- mark the two crossing points -->
+        <text x="170" y="116" fill="#f85149" font-size="14" text-anchor="middle">✕</text>
+        <text x="290" y="116" fill="#f85149" font-size="14" text-anchor="middle">✕</text>
+        <text x="230" y="210" fill="#8b949e" font-size="9" text-anchor="middle">middle lobe overlaps both side lobes; track crosses itself at 2 points = 2× CROSS_90</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>D · Two-CROSS_90 weave (triple lobe)</h3>
+      <p>A single closed loop with three lobes; the middle lobe overlaps the two outer lobes and the track crosses itself perpendicular at <b>both</b> overlaps → uses both CROSS_90. Denser than a single figure-8, and consumes the crossing pieces directly. Caps lower than A′ but is the natural home for the 2 crosses.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:12px"><b>C still stands</b> (stacked ovals + DOUBLE_CROSSOVER). So we'd have three crossing-using dense families: A′ (switch-crossover rings), C (DC weave), D (2× CROSS_90). For max utilization A′ leads; C and D guarantee the crossing pieces get used. Does A′'s crossover and D's double-cross match real geometry — and do you want all three as seed families, or just one?</p>

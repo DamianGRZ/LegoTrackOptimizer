@@ -100,8 +100,8 @@ class TestIntegerSampling:
             np.random.default_rng()
         )
         assert any(
-            p[1] is not None
-            and sum(1 for junc in p[1] if junc[0] == 1) == 2
+            p[2] is not None
+            and sum(1 for junc in p[2] if junc[0] == 1) == 2
             for p in patterns
         )
 

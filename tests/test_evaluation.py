@@ -13,7 +13,6 @@ from src.train.evaluation import PhysicalEvaluation, evaluate_layout
 # Piece indices from src/encoding.py
 STRAIGHT_16 = 0
 R40_CURVE = 2
-R40_CURVE = 3
 
 
 def _make_layout(piece_indices: list[int], catalog: TrackCatalog) -> Layout:
@@ -204,7 +203,11 @@ class TestProblemIntegration:
         from src.problem import TrackOptimizationProblem
         from src.sampling import IntegerSampling
         problem = TrackOptimizationProblem(catalog=catalog, config=switches_config)
-        sampler = IntegerSampling(catalog=catalog, config=switches_config)
+        # seed=0 makes sampling deterministic AND yields a switch-free (single-route)
+        # layout, so F[1] (= -slowest-route speed) reduces to -avg_speed of that one
+        # route. Without a seed this was flaky: a random switched layout makes F[1]
+        # the slowest route, which differs from the main-path avg_speed asserted below.
+        sampler = IntegerSampling(catalog=catalog, config=switches_config, seed=0)
         pop = sampler.do(problem, 1)
         x = pop[0].X
         out: dict = {}

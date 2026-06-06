@@ -67,7 +67,7 @@ class TestBranchPieceComputation:
 
     def test_zero_straights_has_two_curves(self):
         """Branch with 0 straights should have approach and return curves only."""
-        pieces = compute_branch_pieces(LEFT_SIDING, n_straights=0)
+        pieces, _flips = compute_branch_pieces(LEFT_SIDING, n_straights=0)
         assert len(pieces) == 2
         assert pieces[0] == LEFT_SIDING.approach_curve_idx
         assert pieces[1] == LEFT_SIDING.return_curve_idx
@@ -75,7 +75,7 @@ class TestBranchPieceComputation:
     def test_n_straights_adds_correct_count(self):
         """Branch should include n_straights STRAIGHT_16 pieces."""
         for n in range(1, 6):
-            pieces = compute_branch_pieces(LEFT_SIDING, n_straights=n)
+            pieces, _flips = compute_branch_pieces(LEFT_SIDING, n_straights=n)
             assert len(pieces) == n + 2  # n straights + 2 curves
             assert pieces[0] == LEFT_SIDING.approach_curve_idx
             for i in range(1, n + 1):
@@ -85,7 +85,7 @@ class TestBranchPieceComputation:
     def test_piece_count_formula(self):
         """Branch piece count = 2 + n_straights (approach + straights + return)."""
         for n in range(0, 8):
-            pieces = compute_branch_pieces(LEFT_SIDING, n_straights=n)
+            pieces, _flips = compute_branch_pieces(LEFT_SIDING, n_straights=n)
             assert len(pieces) == 2 + n
 
 

@@ -1,16 +1,22 @@
 # LEGO Track Optimizer - Configuration with 90-Degree Crossing
-# Includes one CROSS_90 for figure-8 and self-intersecting layouts
+# Adds CROSS_90 for figure-8 / self-intersecting layouts. No switches/DC here —
+# use with_switches_and_crossing for switches+crossing, all_pieces for the full kit.
 
 train_config_path: trains/default.yaml
 
 inventory:
   # Straights
-  # STRAIGHT_24: 8
-  STRAIGHT_16: 40
-  # R40 curves (one physical piece; handedness via per-slot flip bit).
-  R40_CURVE: 40
+  #STRAIGHT_24: 8
+  STRAIGHT_16: 120
+  # R40 curves
+  R40_CURVE: 80
   # 90-degree crossing (allows track to cross itself)
-  CROSS_90: 20
+  CROSS_90: 2
+boundary:
+  min_x: -250.0
+  max_x: 250.0
+  min_y: -250.0
+  max_y: 250.0
 
 #boundary:
 #  min_x: -100.0
@@ -18,19 +24,13 @@ inventory:
 #  min_y: -100.0
 #  max_y: 100.0
 
-boundary:
-  min_x: -200.0
-  max_x: 200.0
-  min_y: -200.0
-  max_y: 200.0
-
 algorithm:
   name: NSGA2
   pop_size: 1000
-  n_gen: 500
+  n_gen: 300
   heuristic_ratio: 0.20
-  crossover_prob: 0.9
-  mutation_prob: 0.1
+  crossover_prob: 0.95
+  mutation_prob: 0.05
   eliminate_duplicates: true
   seed: null
   termination:
@@ -40,4 +40,4 @@ algorithm:
 closure_tolerance: 4.0
 angle_tolerance: 5.0
 boundary_tolerance: 2.0
-n_workers: 1
+n_workers: 16  # Enable parallel evaluation

@@ -1,0 +1,62 @@
+<h2>Three ways to pack track densely into the 500×500 box</h2>
+<p class="subtitle">Key physical fact: the only curve is R40 = <b>40-stud radius</b>. A 180° U-turn (8×R40) is therefore <b>80 studs wide</b>. That single number makes or breaks each shape. Click the one you want to pursue.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="nested" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 240 170" width="100%" height="170">
+        <rect x="2" y="2" width="236" height="166" fill="#0d1117" stroke="#30363d"/>
+        <rect x="20" y="18" width="200" height="134" rx="34" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <rect x="36" y="32" width="168" height="106" rx="28" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <rect x="52" y="46" width="136" height="78" rx="22" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <rect x="68" y="60" width="104" height="50" rx="16" fill="none" stroke="#58a6ff" stroke-width="3"/>
+        <circle cx="120" cy="18" r="6" fill="#f85149"/>
+        <line x1="120" y1="18" x2="120" y2="60" stroke="#f85149" stroke-width="2" stroke-dasharray="3"/>
+        <text x="128" y="14" fill="#f85149" font-size="9">crossing hops ring→ring</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>A · Nested loops → one spiral circuit ★ recommended</h3>
+      <p>~5 concentric racetracks, 8–11 studs apart. The corners are R40, the straights pack tight. A crossing (or switch) joins ring to ring into a single circuit. <b>Densest:</b> uses all 80 R40 (16/ring) + most straights → ~85–95%. Crossings earn their keep as ring connectors.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="serpentine" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 240 170" width="100%" height="170">
+        <rect x="2" y="2" width="236" height="166" fill="#0d1117" stroke="#30363d"/>
+        <g fill="none" stroke="#d29922" stroke-width="3">
+          <line x1="40" y1="35" x2="180" y2="35"/>
+          <path d="M180 35 a40 40 0 0 1 0 50"/>
+          <line x1="180" y1="85" x2="40" y2="85"/>
+          <path d="M40 85 a40 40 0 0 0 0 50"/>
+          <line x1="40" y1="135" x2="180" y2="135"/>
+        </g>
+        <text x="120" y="62" fill="#d29922" font-size="9" text-anchor="middle">↕ 80 studs forced gap</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>B · Boustrophedon serpentine — the trap</h3>
+      <p>Looks densest, isn't. The R40 U-turns force rows <b>80 studs apart</b>, so only ~6 rows fit in 500 → ~70–76%, and it still needs a long return path to close. Intuitive but the fixed radius fights you.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="spiral" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 240 170" width="100%" height="170">
+        <rect x="2" y="2" width="236" height="166" fill="#0d1117" stroke="#30363d"/>
+        <path d="M120 85 m0 0 a14 14 0 1 1 -0.1 0 M120 85 a28 28 0 1 0 0.1 0 M120 85 a42 42 0 1 1 -0.1 0 M120 85 a56 56 0 1 0 0.1 0"
+              fill="none" stroke="#3fb950" stroke-width="3"/>
+        <text x="120" y="160" fill="#3fb950" font-size="9" text-anchor="middle">in then back out, nested</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>C · Double spiral (in-and-out)</h3>
+      <p>Closes by construction without any crossing. Dense (~80–90%), but fixed-radius R40 can't make a smooth spiral — it collapses into "nested loops" anyway, just harder to parameterize. Effectively a clumsier version of A that ignores the crossing pieces.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">My recommendation: <b>A</b>. It's the densest, the corners use exactly the R40 inventory, and it's the natural home for CROSS_90/DOUBLE_CROSSOVER — which raises F[0] directly. B is the cautionary "obvious but sparse" option; C achieves density but wastes the crossings.</p>

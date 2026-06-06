@@ -48,3 +48,6 @@ docs/PDF/
 # OS
 .DS_Store
 Thumbs.db
+
+# Superpowers brainstorm artifacts
+.superpowers/

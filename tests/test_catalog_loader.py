@@ -86,14 +86,6 @@ class TestV2YamlCurves:
         assert abs(b.dy - 3.045) < 1e-3
         assert abs(b.dtheta - 0.39269908) < 1e-7
 
-    def test_r40_right_has_negative_dy_and_dtheta(self):
-        from src.catalog.loader import load_catalog_spec
-        cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
-        curve = cat.by_id["R40_CURVE"]
-        b = curve.ports["B"]
-        assert b.dy < 0
-        assert b.dtheta < 0
-
 
 class TestV2YamlSwitches:
     @pytest.mark.parametrize("piece_id,port_c_dx,port_c_dy,port_c_dtheta", [

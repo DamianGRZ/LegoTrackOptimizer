@@ -1,0 +1,55 @@
+2026-06-04 10:33:11 - __main__ - INFO - Loading configuration from configs/all_pieces.yaml
+2026-06-04 10:33:11 - __main__ - INFO - Loading track catalog from data/track_pieces_v2.yaml
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Starting NSGA2 track optimization...
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Objectives: utilization + speed (bi-objective)
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Population: 1000
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Generations: 300
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Chromosome: 438 genes (main=204, junctions=3)
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Total inventory: 210 pieces
+2026-06-04 10:33:11 - src.algorithm.runner - INFO - Heuristic seeding: 20%
+2026-06-04 10:33:18 - src.algorithm.runner - INFO - Epsilon-constraint: epsilon_0=30.000
+2026-06-04 10:34:08 - src.algorithm.runner - INFO - Gen   10 | best_feas=57.1% (120 pcs) 1.00 m/s | best_infeas=78.1% (164 pcs) | feasible=1/1000
+2026-06-04 10:36:55 - src.algorithm.runner - INFO - Gen   20 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=78.1% (164 pcs) | feasible=13/1000
+2026-06-04 10:39:48 - src.algorithm.runner - INFO - Gen   30 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=78.1% (164 pcs) | feasible=1/1000
+2026-06-04 10:42:49 - src.algorithm.runner - INFO - Gen   40 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=2/1000
+2026-06-04 10:45:47 - src.algorithm.runner - INFO - Gen   50 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=20/1000
+2026-06-04 10:48:43 - src.algorithm.runner - INFO - Gen   60 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=69.0% (145 pcs) | feasible=1/1000
+2026-06-04 10:51:43 - src.algorithm.runner - INFO - Gen   70 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 10:54:43 - src.algorithm.runner - INFO - Gen   80 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 10:57:44 - src.algorithm.runner - INFO - Gen   90 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 11:00:43 - src.algorithm.runner - INFO - Gen  100 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=69.0% (145 pcs) | feasible=1/1000
+2026-06-04 11:03:42 - src.algorithm.runner - INFO - Gen  110 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 11:06:44 - src.algorithm.runner - INFO - Gen  120 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 11:09:42 - src.algorithm.runner - INFO - Gen  130 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=69.0% (145 pcs) | feasible=1/1000
+2026-06-04 11:12:41 - src.algorithm.runner - INFO - Gen  140 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 11:15:43 - src.algorithm.runner - INFO - Gen  150 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=72.4% (152 pcs) | feasible=1/1000
+2026-06-04 11:18:43 - src.algorithm.runner - INFO - Gen  160 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=8/1000
+2026-06-04 11:21:41 - src.algorithm.runner - INFO - Gen  170 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=32/1000
+2026-06-04 11:24:43 - src.algorithm.runner - INFO - Gen  180 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=4/1000
+2026-06-04 11:27:42 - src.algorithm.runner - INFO - Gen  190 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=6/1000
+2026-06-04 11:30:40 - src.algorithm.runner - INFO - Gen  200 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=14/1000
+2026-06-04 11:33:20 - src.algorithm.runner - INFO - Gen  210 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=72.4% (152 pcs) | feasible=19/1000
+2026-06-04 11:35:15 - src.algorithm.runner - INFO - Gen  220 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=69.0% (145 pcs) | feasible=1/1000
+2026-06-04 11:37:31 - src.algorithm.runner - INFO - Gen  230 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=69.0% (145 pcs) | feasible=13/1000
+2026-06-04 11:40:29 - src.algorithm.runner - INFO - Gen  240 | best_feas=61.4% (129 pcs) 0.99 m/s | best_infeas=69.0% (145 pcs) | feasible=3/1000
+2026-06-04 11:43:26 - src.algorithm.runner - INFO - Gen  250 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=69.0% (145 pcs) | feasible=21/1000
+2026-06-04 11:46:16 - src.algorithm.runner - INFO - Gen  260 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=69.0% (145 pcs) | feasible=198/1000
+2026-06-04 11:48:31 - src.algorithm.runner - INFO - Gen  270 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=61.4% (129 pcs) | feasible=995/1000
+2026-06-04 11:50:34 - src.algorithm.runner - INFO - Gen  280 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=0.0% (0 pcs) | feasible=1000/1000
+2026-06-04 11:53:01 - src.algorithm.runner - INFO - Gen  290 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=0.0% (0 pcs) | feasible=1000/1000
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Gen  300 | best_feas=61.4% (129 pcs) 1.00 m/s | best_infeas=0.0% (0 pcs) | feasible=1000/1000
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Optimization complete!
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Feasible solutions: 1000/1000
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Best feasible: 125 pieces, util=61.4%, speed=0.99 m/s, switches=2
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Piece usage:
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   CROSS_90: 0/2
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   DOUBLE_CROSSOVER: 0/2
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   R40_CURVE: 20/80
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   R40_SWITCH_LEFT: 2/3
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   R40_SWITCH_RIGHT: 2/3
+2026-06-04 11:56:26 - src.algorithm.runner - INFO -   STRAIGHT_16: 101/120
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Pareto front saved to pareto_front.png
+2026-06-04 11:56:26 - src.algorithm.runner - INFO - Best overall: 125 pieces, util=61.4%, speed=0.99 m/s, switches=2, CV=0.00 (FEASIBLE)
+2026-06-04 11:56:28 - src.algorithm.runner - INFO - Results saved to outputs_v1\verify_crossing_seeds_1
+2026-06-04 11:56:29 - __main__ - INFO - Done!
