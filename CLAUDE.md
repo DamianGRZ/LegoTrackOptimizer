@@ -382,6 +382,48 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 
 ---
 
+## Code Map & Cleanup Findings (Audit 2026-06-09)
+
+Snapshot from a four-agent parallel sweep (`src/`, `tests/`, `configs/`+`data/`, root scripts+docs). Point-in-time inventory — **re-grep before any `rm` / `git rm`**. A self-audit pass caught two false "dead config" claims (both are live test fixtures — see corrections). `configs/*.yaml` are CLI inputs (`main.py --config <path>`), never Python imports: "no `.py` reference" is **NOT** evidence of deadness.
+
+### Confirmed dead-code candidate (re-grepped 2026-06-09)
+
+| Path / symbol | Evidence (bare-name grep) | Notes |
+|---|---|---|
+| `src/catalog/catalog.py:484` `load_inventory(path)` | Only the `def` at `catalog.py:484`; **0 other hits** repo-wide. | Inventory is loaded from `OptimizationConfig.inventory`, not this function. Superseded loader. Safe to remove pending user OK. |
+
+### Unused declared dependencies (re-grepped 2026-06-09)
+
+| Dependency | Evidence | Notes |
+|---|---|---|
+| `scipy>=1.10.0` (requirements.txt) | **0** `import scipy` / `from scipy` hits in `src/`, `tests/`, root. | Likely transitive of numpy/pymoo. Verify with `pip check` before removing the line. |
+| `networkx>=3.0` (requirements.txt) | **0** `networkx` hits anywhere. | Legacy holdover from a graph-based design phase. Verify with `pip check` before removing. |
+
+### Stale / broken test — needs action (NOT dead code)
+
+- **`tests/test_catalog.py:226` `TestV1Deprecation.test_loading_v1_yaml_warns`** calls `TrackCatalog.load("data/track_pieces.yaml")` (the v1 file), which is **missing on disk** (only `track_pieces_v2.yaml` exists) and has **no `skipif` guard** → raises `FileNotFoundError` (one of the suite's pre-existing errors). Compare with `tests/test_catalog_parity.py:16-19`, which IS guarded by `pytest.mark.skipif(not V1_PATH.exists(), ...)`. Fix: add the same skipif guard, or delete the test class if v1 deprecation is no longer a contract. `test_catalog_geometry.py:92` only mentions the v1 path in a comment (harmless).
+
+### Self-audit corrections (agents were WRONG — these are NOT dead)
+
+- **`configs/trains/measured_consist.yaml`** — claimed unreferenced; actually loaded by `tests/conftest.py:28` (`measured_train_config` fixture) and consumed by `tests/test_evaluation.py:58`. **Live.**
+- **`configs/compact.yaml`** — claimed no callers; actually loaded by `tests/conftest.py:53` (`compact_config` fixture) and parametrized in `tests/test_problem.py:479`. **Live.**
+
+### Uncertain configs (CLI inputs — keep, do NOT flag dead)
+
+- `configs/all_pieces_150x150.yaml`, `configs/all_pieces_350x350.yaml` — no matching run folder in `outputs_v1/` and not in `run_v1_all_configs.py`'s CONFIGS list, but they are valid `--config` inputs (boundary-variant studies). Weak evidence only; leave in place.
+- `configs/with_double_crossover{,_narrow,_small}.yaml`, `configs/with_switches_and_crossing.yaml` — DC/combined research family; archived milestone runs confirm use (see prior audit). Keep.
+
+### Test-suite metrics (2026-06-09)
+
+- **257** `def test_` functions across `tests/test_*.py` (up from 233 at the 2026-05-18 snapshot). All 6 `tests/fixtures/*.yaml` referenced by `test_catalog_loader.py`; `tests/baselines/` holds only `.gitkeep`.
+- Skips: 1 module-level `skipif` (`test_catalog_parity.py`, v1 absent) + 4 conditional `pytest.skip()` in `test_problem.py` (decode-failure guards). No `xfail`.
+
+### Sole active catalog
+
+- Code loads **only** `data/track_pieces_v2.yaml` (`main.py:56`, `run_v1_all_configs.py:28`, `tests/conftest.py`). The v1 `data/track_pieces.yaml` is absent on disk (see broken-test note above).
+
+---
+
 ## Code Map & Cleanup Findings (Audit 2026-05-18)
 
 Snapshot from a four-agent sweep of `src/`, `tests/`, `configs/`, `data/`, root scripts, and top-level docs. Findings below were re-verified after a self-audit caught several errors in the first pass; treat as point-in-time inventory and re-verify before any actual `rm` / `git rm`. **Note**: configs in `configs/*.yaml` are CLI inputs (`main.py --config <path>`) — they are NOT imported from Python, so "no .py reference" is NOT evidence of being dead.
