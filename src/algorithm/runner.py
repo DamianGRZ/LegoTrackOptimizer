@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import copy
 import logging
+from multiprocessing import Pool
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import matplotlib
+
+# Headless pipeline: PNGs only. The interactive Tk backend crashes when its
+# objects are garbage-collected from a multiprocessing.Pool result-handler
+# thread (Tcl_AsyncDelete: async handler deleted by the wrong thread).
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.algorithms.moo.rnsga2 import RNSGA2
@@ -14,7 +21,8 @@ from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
 from pymoo.core.callback import Callback
 from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
 from pymoo.optimize import minimize
-from pymoo.termination import get_termination
+from pymoo.parallelization.starmap import StarmapParallelization
+from pymoo.termination.default import DefaultMultiObjectiveTermination
 
 from src.algorithm.monitoring import ConvergenceMonitorCallback
 from src.catalog import TrackCatalog
@@ -310,6 +318,67 @@ class CallbackChain(Callback):
 # Adaptive Epsilon-Constraint Handling (Takahama & Sakai 2006)
 # =============================================================================
 
+# Closure (G[0:3]) and boundary (G[3]) are SOFT: a near-closed / near-fitting loop
+# can evolve toward satisfying them, so the epsilon schedule may relax them.
+# Collisions (G[4]) and per-type inventory (G[5:]) are HARD: structurally
+# unbuildable, never relaxed. See docs/superpowers/specs/
+# 2026-06-07-selective-epsilon-hard-collisions-design.md.
+SOFT_CONSTRAINT_COUNT = 4
+
+# Collisions + inventory are weighted this far above the epsilon cap (max_cv is
+# capped at 30) so the schedule can never relax them: >= 30 / 0.2 (smallest real
+# hard violation) = 150; 1000 leaves ample margin. Weighting (not per-constraint
+# eps) keeps CV independent of the schedule, so pymoo's tournament feasible/
+# infeasible routing -- which reads raw CV -- stays stable generation to
+# generation. Per-constraint eps would make a relaxed individual's CV flip to 0
+# and reach the crowding comparison with crowding=None -> tournament crash.
+HARD_CONSTRAINT_WEIGHT = 1000.0
+
+
+def _epsilon_alpha(t: float, hold_until: float, perc_eps_until: float) -> float:
+    """Three-phase epsilon multiplier over run progress ``t`` in [0, 1].
+
+    Phase A (t < hold_until): 1.0 — full epsilon, broad exploration.
+    Phase B (hold_until <= t < perc_eps_until): linear decay 1.0 -> 0.0.
+    Phase C (t >= perc_eps_until): 0.0 — strict feasibility.
+    """
+    if t < hold_until:
+        return 1.0
+    if t < perc_eps_until:
+        return 1.0 - (t - hold_until) / (perc_eps_until - hold_until)
+    return 0.0
+
+
+def _build_elementwise_runner(n_workers: int):
+    """(elementwise_runner, pool) for parallel evaluation, or (None, None).
+
+    ``n_workers > 1`` builds a process pool (real parallelism — evaluation is
+    CPU-bound Python) wrapped in pymoo's ``StarmapParallelization``. The caller
+    owns the pool and must close it after ``minimize`` returns.
+    """
+    if n_workers <= 1:
+        return None, None
+    pool = Pool(n_workers)
+    return StarmapParallelization(pool.starmap), pool
+
+
+def _build_termination(config: OptimizationConfig) -> DefaultMultiObjectiveTermination:
+    """Improvement-aware termination from ``TerminationConfig``.
+
+    Stops at ``algorithm.n_gen`` (capped further by ``termination.n_max_gen``)
+    OR earlier when the feasible objective space stops improving by ``ftol``
+    over a ``period``-generation window — converged runs no longer grind out
+    the full generation budget.
+    """
+    t = config.algorithm.termination
+    return DefaultMultiObjectiveTermination(
+        xtol=t.xtol,
+        ftol=t.ftol,
+        period=t.period,
+        n_max_gen=min(config.algorithm.n_gen, t.n_max_gen),
+    )
+
+
 class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
     """Three-phase epsilon schedule for constraint relaxation.
 
@@ -333,10 +402,26 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
     callers in :func:`run_optimization`, which passes ``perc_eps_until=0.9``.
     """
 
-    def __init__(self, algorithm, hold_until=0.2, perc_eps_until=0.7):
+    def __init__(self, algorithm, n_ieq_constr, hold_until=0.2,
+                 perc_eps_until=0.7, n_soft=SOFT_CONSTRAINT_COUNT,
+                 n_gen_planned=None):
         super().__init__(algorithm, perc_eps_until=perc_eps_until)
         self.hold_until = hold_until
+        self.n_ieq_constr = int(n_ieq_constr)
+        self.n_soft = int(n_soft)
+        # Schedule driver: planned generation count. With the improvement-aware
+        # termination, termination.perc is max(ftol-window, n_gen, ...) progress
+        # and jumps nonlinearly; the epsilon schedule must keep tracking the
+        # generation fraction (identical to the old behaviour under a pure
+        # n_gen termination). None falls back to termination.perc.
+        self.n_gen_planned = int(n_gen_planned) if n_gen_planned else None
         self._logger = logging.getLogger(__name__)
+
+    def _progress(self) -> float:
+        """Run progress in [0, 1] driving the epsilon schedule."""
+        if self.n_gen_planned:
+            return min(1.0, (self.n_gen or 0) / self.n_gen_planned)
+        return self.termination.perc
 
     def _initialize_advance(self, infills=None, **kwargs):
         # Target: cover siding closure errors (~15-30 CV) without letting
@@ -362,14 +447,21 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
         return super(AdaptiveEpsilonConstraintHandling, self)._initialize_advance(infills, **kwargs)
 
     def _adapt_constraint_handling(self, config, **kwargs):
-        t = self.termination.perc
-        if t < self.hold_until:
-            alpha = 1.0
-        elif t < self.perc_eps_until:
-            alpha = 1.0 - (t - self.hold_until) / (self.perc_eps_until - self.hold_until)
-        else:
-            alpha = 0.0
+        alpha = _epsilon_alpha(self._progress(), self.hold_until, self.perc_eps_until)
+        # Relax ONLY the soft constraints (closure + boundary): the scheduled
+        # epsilon is the scalar FEAS threshold (CV <= cv_eps), as in the original
+        # design. Used by the feasibility-first survival, not the tournament.
         config["cv_eps"] = alpha * self.max_cv
+
+        # Keep collisions + inventory HARD by weighting them >> the epsilon cap,
+        # so the smallest real hard violation already exceeds any cv_eps and can
+        # never be relaxed. Soft constraints keep weight 1. CV is therefore a
+        # fixed (schedule-independent) function of G, so a closed self-crosser
+        # has CV > cv_eps at every phase and is dropped by the survival, while
+        # the tournament's raw-CV routing is unchanged. See HARD_CONSTRAINT_WEIGHT.
+        scale = np.ones(self.n_ieq_constr, dtype=float)
+        scale[self.n_soft:] = 1.0 / HARD_CONSTRAINT_WEIGHT
+        config["cv_ieq"] = dict(scale=scale, eps=0.0, pow=None, func=np.sum)
 
 
 # =============================================================================
@@ -390,7 +482,12 @@ def run_optimization(
     """
     logger = logging.getLogger(__name__)
 
-    problem = TrackOptimizationProblem(catalog, config)
+    # Parallel elementwise evaluation (config.n_workers). The pool is owned
+    # here and released after minimize() — decode/eval is CPU-bound Python,
+    # so a process pool gives real parallelism.
+    eval_runner, eval_pool = _build_elementwise_runner(config.n_workers)
+    problem_kwargs = {"elementwise_runner": eval_runner} if eval_runner is not None else {}
+    problem = TrackOptimizationProblem(catalog, config, **problem_kwargs)
     dims = problem.dims
 
     sampler = IntegerSampling(
@@ -404,6 +501,7 @@ def run_optimization(
         inventory_by_index=inventory_by_index,
         catalog_fk_table=catalog._fk_table,
         enable_closure_repair=True,
+        enable_boundary_repair=True,
     )
 
     crossover = PartitionedCrossover(dims, prob=config.algorithm.crossover_prob)
@@ -447,11 +545,13 @@ def run_optimization(
     # Allows infeasible sidings to survive and evolve toward feasibility
     algorithm = LegoAdaptiveEpsilon(
         base_algorithm,
+        n_ieq_constr=problem.n_ieq_constr,
         hold_until=0.2,
         perc_eps_until=0.9,
+        n_gen_planned=config.algorithm.n_gen,
     )
 
-    termination = get_termination("n_gen", config.algorithm.n_gen)
+    termination = _build_termination(config)
 
     elite_callback = FeasibleEliteCallback()
     monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55))
@@ -476,11 +576,23 @@ def run_optimization(
     logger.info(f"Total inventory: {config.total_inventory} pieces")
     logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
 
+    if eval_pool is not None:
+        logger.info(f"Parallel evaluation: {config.n_workers} workers")
+
     minimize_kwargs = dict(verbose=False, save_history=False)
     if callback is not None:
         minimize_kwargs["callback"] = callback
 
-    res = minimize(problem, algorithm, termination, **minimize_kwargs)
+    try:
+        res = minimize(problem, algorithm, termination, **minimize_kwargs)
+    finally:
+        if eval_pool is not None:
+            # terminate(), not close()+join(): after a KeyboardInterrupt the
+            # workers sit interrupted on the task-queue semaphore and join()
+            # blocks the terminal forever. On normal completion no tasks are
+            # in flight, so a hard stop is equivalent and instant.
+            eval_pool.terminate()
+            eval_pool.join()
 
     res.monitor = monitor
     res.monitor_data = monitor.data

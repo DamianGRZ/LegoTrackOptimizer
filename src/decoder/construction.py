@@ -549,20 +549,17 @@ def _state_at_position_with_routes(
     parallel ``flips`` array for R40_CURVE handedness."""
     if position <= 0:
         return (0.0, 0.0, 0.0)
-    x = y = theta_deg = 0.0
+    deltas = np.empty((position, 3), dtype=np.float64)
     for i in range(position):
         piece = pieces[i]
         if i in route_map:
-            fk = catalog.get_fk_route(piece, route_map[i])
-            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
+            deltas[i] = catalog.get_fk_route(piece, route_map[i])
         else:
-            fk = get_fk_with_flip(catalog, piece, flips[i] if i < len(flips) else 0)
-            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
-        c, s = np.cos(np.radians(theta_deg)), np.sin(np.radians(theta_deg))
-        x += dx * c - dy * s
-        y += dx * s + dy * c
-        theta_deg += dtheta
-    return (float(x), float(y), float(theta_deg))
+            deltas[i] = get_fk_with_flip(
+                catalog, piece, flips[i] if i < len(flips) else 0,
+            )
+    final = compute_fk_chain(deltas)[-1]
+    return (float(final[0]), float(final[1]), float(final[2]))
 
 
 def _piece_origins_match(
@@ -892,32 +889,27 @@ def _compute_path_fk(
     if not piece_sequence:
         return np.zeros((1, 3), dtype=np.float64)
 
+    # Gather per-piece local deltas (cheap dict/route lookups), then run the
+    # vectorized FK accumulation once.
     n = len(piece_sequence)
-    states = np.zeros((n + 1, 3), dtype=np.float64)
+    deltas = np.empty((n, 3), dtype=np.float64)
 
     for i in range(n):
         if fk_overrides is not None and i in fk_overrides:
-            dx, dy, dtheta = fk_overrides[i]
-        else:
-            piece = piece_sequence[i]
-            route_idx = route_indices[i]
-            fk = catalog.get_fk_route(piece, route_idx)
-            dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
-            # Apply per-slot flip for R40_CURVE. Other piece types are
-            # symmetric / multi-route and ignore the flip bit.
-            if flips is not None and i < len(flips) and flips[i] and piece == int(R40_CURVE):
-                dy = -dy
-                dtheta = -dtheta
+            deltas[i] = fk_overrides[i]
+            continue
+        piece = piece_sequence[i]
+        route_idx = route_indices[i]
+        fk = catalog.get_fk_route(piece, route_idx)
+        dx, dy, dtheta = float(fk[0]), float(fk[1]), float(fk[2])
+        # Apply per-slot flip for R40_CURVE. Other piece types are
+        # symmetric / multi-route and ignore the flip bit.
+        if flips is not None and i < len(flips) and flips[i] and piece == int(R40_CURVE):
+            dy = -dy
+            dtheta = -dtheta
+        deltas[i] = (dx, dy, dtheta)
 
-        theta_rad = np.radians(states[i, 2])
-        cos_t = np.cos(theta_rad)
-        sin_t = np.sin(theta_rad)
-
-        states[i + 1, 0] = states[i, 0] + dx * cos_t - dy * sin_t
-        states[i + 1, 1] = states[i, 1] + dx * sin_t + dy * cos_t
-        states[i + 1, 2] = states[i, 2] + dtheta
-
-    return states
+    return compute_fk_chain(deltas)
 
 
 # =============================================================================

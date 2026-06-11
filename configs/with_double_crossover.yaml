@@ -20,12 +20,12 @@ boundary:
 
 algorithm:
   name: NSGA2
-  pop_size: 1000
-  n_gen: 500
+  pop_size: 500
+  n_gen: 200
   heuristic_ratio: 0.20
-  crossover_prob: 0.2
-  mutation_prob: 0.8
-  eliminate_duplicates: true
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  eliminate_duplicates: false
   seed: null
   termination:
     n_max_gen: 1000
