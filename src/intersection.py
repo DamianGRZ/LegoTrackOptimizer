@@ -40,6 +40,67 @@ def _exempt_positions(piece_indices: Optional[List[int]]) -> set:
     return {i for i, idx in enumerate(piece_indices) if idx in _EXEMPT_PIECE_INDICES}
 
 
+def _proper_crossing_pairs(
+    states: NDArray[np.float64],
+    min_separation: int,
+    exempt: set,
+) -> Tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Index arrays (ii, jj) of segment pairs that properly cross.
+
+    Two-stage vectorized scan:
+      1. Cheap (n, n) candidate mask: index band (j >= i + min_separation),
+         exemptions, and bounding-box overlap — the same prefilter the scalar
+         loop used.
+      2. Strict orientation sign test evaluated only on the (typically sparse)
+         candidate pairs. Endpoint touches do not count, matching the original
+         scalar test exactly.
+
+    Pairs are returned in (i, j)-lexicographic order.
+    """
+    n = len(states) - 1
+    x = states[:, 0]
+    y = states[:, 1]
+
+    # Per-segment bounding boxes.
+    x_lo = np.minimum(x[:-1], x[1:])
+    x_hi = np.maximum(x[:-1], x[1:])
+    y_lo = np.minimum(y[:-1], y[1:])
+    y_hi = np.maximum(y[:-1], y[1:])
+
+    idx = np.arange(n)
+    candidates = (idx[None, :] - idx[:, None]) >= min_separation
+    candidates &= (x_hi[:, None] >= x_lo[None, :]) & (x_hi[None, :] >= x_lo[:, None])
+    candidates &= (y_hi[:, None] >= y_lo[None, :]) & (y_hi[None, :] >= y_lo[:, None])
+
+    if exempt:
+        ex = np.fromiter(exempt, dtype=np.int64)
+        ex = ex[ex < n]
+        candidates[ex, :] = False
+        candidates[:, ex] = False
+
+    ii, jj = np.nonzero(candidates)  # row-major == (i, j)-lexicographic
+    if len(ii) == 0:
+        return ii, jj
+
+    ax, ay = x[ii], y[ii]
+    bx, by = x[ii + 1], y[ii + 1]
+    cx, cy = x[jj], y[jj]
+    dx, dy = x[jj + 1], y[jj + 1]
+
+    cd_x, cd_y = dx - cx, dy - cy
+    ab_x, ab_y = bx - ax, by - ay
+    d1 = cd_x * (ay - cy) - cd_y * (ax - cx)
+    d2 = cd_x * (by - cy) - cd_y * (bx - cx)
+    d3 = ab_x * (cy - ay) - ab_y * (cx - ax)
+    d4 = ab_x * (dy - ay) - ab_y * (dx - ax)
+
+    proper = (
+        (((d1 > 0) & (d2 < 0)) | ((d1 < 0) & (d2 > 0)))
+        & (((d3 > 0) & (d4 < 0)) | ((d3 < 0) & (d4 > 0)))
+    )
+    return ii[proper], jj[proper]
+
+
 def find_crossing_pairs(
     states: NDArray[np.float64],
     piece_indices: Optional[List[int]] = None,
@@ -60,47 +121,25 @@ def find_crossing_pairs(
     Returns:
         List of (pos_i, pos_j, angle_diff) sorted by proximity to 90 deg.
         angle_diff is in [0, 90] — how close the crossing is to perpendicular.
+        Ties keep (i, j)-lexicographic order (stable sort), matching the
+        original scan order.
     """
     n = len(states) - 1
     if n < min_separation + 1:
         return []
 
-    cross_positions = _exempt_positions(piece_indices)
+    ii, jj = _proper_crossing_pairs(
+        states, min_separation, _exempt_positions(piece_indices),
+    )
+    if len(ii) == 0:
+        return []
 
-    x = states[:, 0]
-    y = states[:, 1]
     theta = states[:, 2]
-    pairs = []
+    raw_diff = np.abs(theta[ii] - theta[jj]) % 180.0
+    angle_diff = np.minimum(raw_diff, 180.0 - raw_diff)
 
-    for i in range(n - min_separation):
-        if i in cross_positions:
-            continue
-        ax, ay = x[i], y[i]
-        bx, by = x[i + 1], y[i + 1]
-        i_min_x, i_max_x = min(ax, bx), max(ax, bx)
-        i_min_y, i_max_y = min(ay, by), max(ay, by)
-
-        for j in range(i + min_separation, n):
-            if j in cross_positions:
-                continue
-            cx, cy = x[j], y[j]
-            dx, dy = x[j + 1], y[j + 1]
-
-            j_min_x, j_max_x = min(cx, dx), max(cx, dx)
-            j_min_y, j_max_y = min(cy, dy), max(cy, dy)
-
-            if i_max_x < j_min_x or j_max_x < i_min_x:
-                continue
-            if i_max_y < j_min_y or j_max_y < i_min_y:
-                continue
-
-            if _segments_intersect(ax, ay, bx, by, cx, cy, dx, dy):
-                raw_diff = abs(theta[i] - theta[j]) % 180
-                angle_diff = min(raw_diff, 180 - raw_diff)
-                pairs.append((i, j, angle_diff))
-
-    pairs.sort(key=lambda t: abs(t[2] - 90.0))
-    return pairs
+    order = np.argsort(np.abs(angle_diff - 90.0), kind="stable")
+    return [(int(ii[k]), int(jj[k]), float(angle_diff[k])) for k in order]
 
 
 def count_segment_crossings(
@@ -122,36 +161,10 @@ def count_segment_crossings(
     if n < min_separation + 1:
         return 0
 
-    cross_positions = _exempt_positions(piece_indices)
-
-    x = states[:, 0]
-    y = states[:, 1]
-    crossings = 0
-
-    for i in range(n - min_separation):
-        ax, ay = x[i], y[i]
-        bx, by = x[i + 1], y[i + 1]
-        i_min_x, i_max_x = min(ax, bx), max(ax, bx)
-        i_min_y, i_max_y = min(ay, by), max(ay, by)
-
-        for j in range(i + min_separation, n):
-            cx, cy = x[j], y[j]
-            dx, dy = x[j + 1], y[j + 1]
-
-            j_min_x, j_max_x = min(cx, dx), max(cx, dx)
-            j_min_y, j_max_y = min(cy, dy), max(cy, dy)
-
-            if i_max_x < j_min_x or j_max_x < i_min_x:
-                continue
-            if i_max_y < j_min_y or j_max_y < i_min_y:
-                continue
-
-            if _segments_intersect(ax, ay, bx, by, cx, cy, dx, dy):
-                if i in cross_positions or j in cross_positions:
-                    continue
-                crossings += 1
-
-    return crossings
+    ii, _jj = _proper_crossing_pairs(
+        states, min_separation, _exempt_positions(piece_indices),
+    )
+    return int(len(ii))
 
 
 def _cross_midpoint(state: NDArray[np.float64]) -> Tuple[float, float, float]:
@@ -275,21 +288,3 @@ def count_dangling_double_crossover_ports(
     return dangling
 
 
-def _segments_intersect(
-    ax: float, ay: float, bx: float, by: float,
-    cx: float, cy: float, dx: float, dy: float,
-) -> bool:
-    """Check if segment (a,b) intersects segment (c,d) using cross products."""
-    def cross(ox, oy, px, py, qx, qy):
-        return (px - ox) * (qy - oy) - (py - oy) * (qx - ox)
-
-    d1 = cross(cx, cy, dx, dy, ax, ay)
-    d2 = cross(cx, cy, dx, dy, bx, by)
-    d3 = cross(ax, ay, bx, by, cx, cy)
-    d4 = cross(ax, ay, bx, by, dx, dy)
-
-    if ((d1 > 0 and d2 < 0) or (d1 < 0 and d2 > 0)) and \
-       ((d3 > 0 and d4 < 0) or (d3 < 0 and d4 > 0)):
-        return True
-
-    return False

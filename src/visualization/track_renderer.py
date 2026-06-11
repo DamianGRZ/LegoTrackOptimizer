@@ -3,7 +3,11 @@
 from pathlib import Path
 from typing import Optional, Union
 
-import matplotlib.pyplot as plt
+import matplotlib
+
+# Headless pipeline: PNGs only (Tk + Pool result-handler threads crash Tcl).
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch, Polygon

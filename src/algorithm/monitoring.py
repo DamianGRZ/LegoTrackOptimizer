@@ -94,5 +94,10 @@ class ConvergenceMonitorCallback(Callback):
             combined = F_new
         else:
             combined = np.vstack([self._best_F, F_new])
+        # Deduplicate BEFORE sorting: identical F rows are mutually
+        # non-dominating, so without this the archive accumulates every
+        # generation's repeated points and the NDS below grows quadratically
+        # over the run (the runaway per-generation slowdown).
+        combined = np.unique(combined, axis=0)
         idx = NonDominatedSorting().do(combined, only_non_dominated_front=True)
         return combined[idx]

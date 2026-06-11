@@ -4,14 +4,17 @@ Operates on the three-ingredient chromosome layout:
   [Main Loop: N genes] [Junction Descriptors: J×4 genes] [Start Position: 2 genes]
 
 Operators:
-- MainLoopClosureRepair: Adjust R40 curves to approach 360° angular closure
+- MainLoopClosureRepair: R40 curves -> 360° angular closure, then drop straights
+  to shrink the residual dx/dy positional gap
 - JunctionValidityRepair: Clamp junction genes to valid ranges
 - InventoryRepair: Enforce piece inventory limits across main loop and junctions
+- BoundaryAwareRepair: Re-center or shrink layouts that exceed the boundary box
 - TrackRepairPipeline: Chains all repairs in correct order
 """
 
+import math
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -31,6 +34,7 @@ from .encoding import (
     set_junction,
     set_main_loop_type,
 )
+from .geometry import compute_fk_chain
 
 R40_CURVE = int(PieceIndex.R40_CURVE)
 STRAIGHT_16 = int(PieceIndex.STRAIGHT_16)
@@ -41,17 +45,87 @@ R40_ANGLE = 22.5
 TARGET_ANGLE = 360.0
 CLOSURE_TOLERANCE = 1.0  # degrees
 
+SIDING_MARGIN = 16.0  # conservative per-side reach of an active passing siding (studs)
+
+
+def _main_loop_states(x: NDArray, dims: PartitionedDimensions,
+                      fk_table: NDArray) -> NDArray:
+    """FK states (origin-based) of the active main-loop pieces, flips applied."""
+    types = x[:dims.n_main]
+    flips = x[dims.main_flips_start:dims.main_flips_end]
+    mask = types != INACTIVE
+    active_types = types[mask].astype(int)
+    active_flips = flips[mask].astype(int)
+    if active_types.size == 0:
+        return np.zeros((1, 3), dtype=np.float64)
+    deltas = fk_table[active_types].copy()
+    negate = (active_types == R40_CURVE) & (active_flips == 1)
+    deltas[negate, 1] *= -1.0
+    deltas[negate, 2] *= -1.0
+    return compute_fk_chain(deltas)
+
+
+_STRAIGHT_TYPES = (STRAIGHT_16, STRAIGHT_24)
+# Axis -> the two anti-parallel headings (degrees) we shrink along.
+_AXIS_HEADINGS = {"x": (0.0, 180.0), "y": (90.0, 270.0)}
+_HEADING_TOL = 1.0  # deg; headings are exact multiples of 22.5
+
+
+def _active_straight_headings(
+    x: NDArray, dims: PartitionedDimensions, fk_table: NDArray,
+) -> List[Tuple[int, int, float]]:
+    """List of (slot, piece_type, world_heading_deg) for each active straight."""
+    types = x[:dims.n_main]
+    flips = x[dims.main_flips_start:dims.main_flips_end]
+    out: List[Tuple[int, int, float]] = []
+    heading = 0.0
+    for slot in range(dims.n_main):
+        pt = int(types[slot])
+        if pt == INACTIVE:
+            continue
+        if pt in _STRAIGHT_TYPES:
+            out.append((slot, pt, heading))
+        dtheta = float(fk_table[pt, 2])
+        if pt == R40_CURVE and int(flips[slot]) == 1:
+            dtheta = -dtheta
+        heading += dtheta
+    return out
+
+
+def _find_antiparallel_pairs(
+    headings: List[Tuple[int, int, float]], axis: str,
+) -> List[Tuple[int, int]]:
+    """Pairs (slot_a, slot_b) of SAME-type straights on opposite headings of `axis`."""
+    h_lo, h_hi = _AXIS_HEADINGS[axis]
+    side_a, side_b = {}, {}  # piece_type -> [slots]
+    for slot, pt, h in headings:
+        hm = h % 360.0
+        if abs((hm - h_lo + 180) % 360 - 180) <= _HEADING_TOL:
+            side_a.setdefault(pt, []).append(slot)
+        elif abs((hm - h_hi + 180) % 360 - 180) <= _HEADING_TOL:
+            side_b.setdefault(pt, []).append(slot)
+    pairs = []
+    for pt in set(side_a) & set(side_b):
+        for a, b in zip(side_a[pt], side_b[pt]):  # same-type, equal length
+            pairs.append((a, b))
+    return pairs
+
 
 # =============================================================================
 # Main Loop Closure Repair
 # =============================================================================
 
 class MainLoopClosureRepair(Repair):
-    """Adjust R40 curves in the main loop to approach 360 degree closure.
+    """Close the main loop in two stages: angular, then translational.
 
-    Computes total angle from active main loop pieces using the FK table.
-    If angle deficit exists, appends R40_CURVE curves into empty slots.
-    If angle excess exists, removes R40 curves from the end.
+    Stage 1 (angle): sum the signed dtheta of active main-loop pieces. On an
+    angle deficit, append R40_CURVE curves into empty slots; on an excess,
+    remove R40 curves from the end — driving the heading sum toward 360 degrees.
+
+    Stage 2 (position): once the loop is angularly closed, drop straights to
+    shrink the residual dx/dy gap between the loop's tail and its start. A
+    straight turns by 0 degrees, so removing it translates the tail without
+    disturbing the 360-degree sum (see ``_close_translation``).
     """
 
     def __init__(
@@ -81,20 +155,24 @@ class MainLoopClosureRepair(Repair):
         if not np.any(active_mask):
             return
 
-        active_types = types[active_mask]
-        active_flips = flips[active_mask]
-        total_angle = self._compute_total_angle(active_types, active_flips)
+        total_angle = self._compute_total_angle(types[active_mask], flips[active_mask])
         deficit = TARGET_ANGLE - total_angle
 
-        if abs(deficit) < CLOSURE_TOLERANCE:
-            return
+        # Stage 1: angular closure — add/remove R40 curves to reach 360 degrees.
+        if abs(deficit) >= CLOSURE_TOLERANCE:
+            usage = Counter(int(t) for t in types[active_mask])
+            if deficit > R40_ANGLE:
+                self._add_curves(x, types, flips, usage, deficit)
+            elif deficit < -R40_ANGLE:
+                self._remove_curves(x, types, flips, deficit)
+            active_mask = types != INACTIVE
+            total_angle = self._compute_total_angle(types[active_mask], flips[active_mask])
 
-        usage = Counter(int(t) for t in active_types)
-
-        if deficit > R40_ANGLE:
-            self._add_curves(x, types, flips, usage, deficit)
-        elif deficit < -R40_ANGLE:
-            self._remove_curves(x, types, flips, deficit)
+        # Stage 2: translational closure — only meaningful on an angularly closed
+        # loop. Straights carry dtheta=0, so dropping one shifts the tail by exactly
+        # its world displacement without disturbing the 360-degree sum.
+        if abs(TARGET_ANGLE - total_angle) < CLOSURE_TOLERANCE:
+            self._close_translation(x)
 
     def _compute_total_angle(self, active_types: NDArray, active_flips: NDArray) -> float:
         """Sum signed dtheta across active pieces, honoring R40_CURVE flips."""
@@ -167,6 +245,41 @@ class MainLoopClosureRepair(Repair):
                 flips[pos] = 0
                 removed += 1
 
+    def _close_translation(self, x: NDArray) -> None:
+        """Drop straights so the positional gap (dx, dy) shrinks toward closure.
+
+        A straight at world heading ``h`` displaces the loop tail by
+        ``L*(cos h, sin h)`` and turns by 0 degrees, so removing it subtracts
+        exactly that vector from the closure gap and leaves every other piece's
+        heading — and the 360-degree angular sum — untouched. Greedily drop the
+        straight whose removal most reduces ``|gap|``, up to ``max_corrections``.
+        """
+        gap = _main_loop_states(x, self.dims, self.fk_table)[-1, :2].astype(np.float64)
+
+        # World-displacement vector of each active straight.
+        candidates = [
+            (slot, np.array([math.cos(math.radians(h)), math.sin(math.radians(h))],
+                            dtype=np.float64) * float(self.fk_table[ptype, 0]))
+            for slot, ptype, h in _active_straight_headings(x, self.dims, self.fk_table)
+        ]
+
+        removed = 0
+        while removed < self.max_corrections and candidates:
+            gap_norm = float(np.hypot(*gap))
+            best_i, best_reduction = -1, 1e-6
+            for i, (_, disp) in enumerate(candidates):
+                reduction = gap_norm - float(np.hypot(*(gap - disp)))
+                if reduction > best_reduction:
+                    best_i, best_reduction = i, reduction
+            if best_i < 0:
+                break  # no straight brings the tail closer to the start
+
+            slot, disp = candidates.pop(best_i)
+            set_main_loop_type(x, self.dims, slot, INACTIVE)
+            set_flip(x, self.dims, slot, 0)
+            gap -= disp
+            removed += 1
+
 
 # =============================================================================
 # Junction Validity Repair
@@ -194,6 +307,10 @@ class JunctionValidityRepair(Repair):
         for i in range(len(X)):
             self._repair_chromosome(X[i])
         return X
+
+    def repair_chromosome(self, x: NDArray) -> None:
+        """Public single-chromosome clamp, for downstream operators to re-run."""
+        self._repair_chromosome(x)
 
     def _repair_chromosome(self, x: NDArray) -> None:
         if self.dims.max_junctions == 0:
@@ -363,17 +480,128 @@ class InventoryRepair(Repair):
 
 
 # =============================================================================
+# Boundary-Aware Repair
+# =============================================================================
+
+class BoundaryAwareRepair(Repair):
+    """Rescue out-of-bounds layouts: re-center if they fit, else symmetric shrink.
+
+    Branch 1 (translate): if the main-loop span fits the box, zero start_x/start_y
+        so the decoder's _auto_center places the loop at box center (max margin).
+    Branch 2 (shrink): if an axis is genuinely too big, deactivate same-type
+        anti-parallel straight pairs (closure- and angle-preserving), then translate.
+    """
+
+    def __init__(
+        self,
+        dims: PartitionedDimensions,
+        catalog_fk_table: NDArray,
+        *,
+        siding_margin: float = SIDING_MARGIN,
+        boundary_tolerance: float = 0.0,
+        junction_repair: Optional["JunctionValidityRepair"] = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.dims = dims
+        self.fk_table = catalog_fk_table
+        self.siding_margin = siding_margin
+        self.boundary_tolerance = boundary_tolerance
+        self.junction_repair = junction_repair  # re-clamp after shrink (set by pipeline)
+
+    def _do(self, problem, X, **kwargs):
+        for i in range(len(X)):
+            self._repair_chromosome(X[i])
+        return X
+
+    def _box_dims(self) -> Tuple[float, float]:
+        return (self.dims.boundary_max_x - self.dims.boundary_min_x,
+                self.dims.boundary_max_y - self.dims.boundary_min_y)
+
+    def _effective_box(self, x: NDArray) -> Tuple[float, float]:
+        box_w, box_h = self._box_dims()
+        # If any siding junction is active, reserve a conservative margin.
+        margin = 0.0
+        for k in range(self.dims.max_junctions):
+            if int(get_junction(x, self.dims, k)[0]) == 1:
+                margin = self.siding_margin
+                break
+        return max(0.0, box_w - 2 * margin), max(0.0, box_h - 2 * margin)
+
+    def _repair_chromosome(self, x: NDArray) -> None:
+        states = _main_loop_states(x, self.dims, self.fk_table)
+        if states.shape[0] <= 1:
+            return
+        w = float(states[:, 0].max() - states[:, 0].min())
+        h = float(states[:, 1].max() - states[:, 1].min())
+        box_w_eff, box_h_eff = self._effective_box(x)
+
+        start_x = float(x[self.dims.start_pos_start])
+        start_y = float(x[self.dims.start_pos_start + 1])
+        slack_x = (box_w_eff - w) / 2.0
+        slack_y = (box_h_eff - h) / 2.0
+        tol = self.boundary_tolerance
+
+        x_too_big = w > box_w_eff
+        y_too_big = h > box_h_eff
+        x_offset_out = abs(start_x) > slack_x + tol
+        y_offset_out = abs(start_y) > slack_y + tol
+
+        if not (x_too_big or y_too_big or x_offset_out or y_offset_out):
+            return  # already in bounds
+
+        # A genuinely-too-big axis must shrink; a fitting loop only needs centering.
+        # (Diversity guard via seeded sampling can be reintroduced here if the
+        # feasibility/diversity collapse worsens empirically — see Task 6.)
+        shrank = self._shrink(x, w, h, box_w_eff, box_h_eff) if (x_too_big or y_too_big) else False
+
+        # Translate: zero the fine-tuning offset so _auto_center fully centers.
+        x[self.dims.start_pos_start] = 0
+        x[self.dims.start_pos_start + 1] = 0
+
+        if shrank and self.junction_repair is not None:
+            # Deactivating straights shifted active-piece indices: re-clamp junctions.
+            self.junction_repair.repair_chromosome(x)
+
+    def _shrink(self, x: NDArray, w: float, h: float,
+                box_w_eff: float, box_h_eff: float) -> bool:
+        headings = _active_straight_headings(x, self.dims, self.fk_table)
+        removed_any = False
+        for axis, span, box in (("x", w, box_w_eff), ("y", h, box_h_eff)):
+            deficit = span - box
+            if deficit <= 0:
+                continue
+            pairs = _find_antiparallel_pairs(headings, axis)
+            if not pairs:
+                continue  # decline gracefully — never break closure
+            # Length L = dx of the straight type in the first pair.
+            a, b = pairs[0]
+            ptype = int(x[a])
+            length = float(self.fk_table[ptype, 0])
+            n_pairs = min(len(pairs), math.ceil(deficit / max(length, 1e-6)))
+            for a, b in pairs[:n_pairs]:
+                set_main_loop_type(x, self.dims, a, INACTIVE)
+                set_flip(x, self.dims, a, 0)
+                set_main_loop_type(x, self.dims, b, INACTIVE)
+                set_flip(x, self.dims, b, 0)
+                removed_any = True
+        return removed_any
+
+
+# =============================================================================
 # Combined Pipeline
 # =============================================================================
 
 class TrackRepairPipeline(Repair):
-    """Chains repair operators: JunctionValidity -> Inventory -> MainLoopClosure.
+    """Chains: JunctionValidity -> Inventory -> MainLoopClosure -> BoundaryAware.
 
     Order rationale:
     1. JunctionValidityRepair first — clamps junction genes so downstream
        inventory counting is accurate.
     2. InventoryRepair — removes excess pieces, affecting angle totals.
-    3. MainLoopClosureRepair last — adjusts curves based on final piece set.
+    3. MainLoopClosureRepair — adjusts curves based on final piece set.
+    4. BoundaryAwareRepair last — re-centers or shrinks the layout once the
+       piece set is finalised.
     """
 
     def __init__(
@@ -382,16 +610,20 @@ class TrackRepairPipeline(Repair):
         inventory_by_index: Dict[int, int],
         catalog_fk_table: NDArray,
         enable_closure_repair: bool = True,
+        enable_boundary_repair: bool = True,
         **kwargs,
     ):
         super().__init__(**kwargs)
-
         self.junction_repair = JunctionValidityRepair(dims, inventory_by_index)
         self.inventory_repair = InventoryRepair(dims, inventory_by_index)
         self.closure_repair = (
             MainLoopClosureRepair(dims, catalog_fk_table, inventory_by_index)
-            if enable_closure_repair
-            else None
+            if enable_closure_repair else None
+        )
+        self.boundary_repair = (
+            BoundaryAwareRepair(dims, catalog_fk_table,
+                                junction_repair=self.junction_repair)
+            if enable_boundary_repair else None
         )
 
     def _do(self, problem, X, **kwargs):
@@ -399,4 +631,6 @@ class TrackRepairPipeline(Repair):
         X = self.inventory_repair._do(problem, X, **kwargs)
         if self.closure_repair is not None:
             X = self.closure_repair._do(problem, X, **kwargs)
+        if self.boundary_repair is not None:
+            X = self.boundary_repair._do(problem, X, **kwargs)
         return X

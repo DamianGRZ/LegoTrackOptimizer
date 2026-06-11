@@ -14,6 +14,12 @@ from .catalog import TrackCatalog
 def compute_fk_chain(fk_deltas: NDArray[np.float64]) -> NDArray[np.float64]:
     """Compute cumulative forward kinematics chain from piece deltas.
 
+    Vectorized: the heading entering piece i depends only on the cumulative
+    sum of preceding dtheta values, so all headings are computed in one
+    ``cumsum``, the local->world rotation in one trig batch, and the positions
+    in two more cumsums. Matches the sequential loop bit-for-bit (cumsum
+    accumulates in the same order).
+
     Args:
         fk_deltas: (n, 3) array of [dx, dy, dtheta] for each piece.
 
@@ -21,20 +27,24 @@ def compute_fk_chain(fk_deltas: NDArray[np.float64]) -> NDArray[np.float64]:
         (n+1, 3) array of cumulative states [x, y, theta].
         State 0 is origin [0, 0, 0], state i+1 is after piece i.
     """
+    fk_deltas = np.asarray(fk_deltas, dtype=np.float64)
     n = len(fk_deltas)
     states = np.zeros((n + 1, 3), dtype=np.float64)
+    if n == 0:
+        return states
 
-    for i in range(n):
-        dx, dy, dtheta = fk_deltas[i]
-        theta_rad = np.radians(states[i, 2])
-        cos_t = np.cos(theta_rad)
-        sin_t = np.sin(theta_rad)
+    theta = np.cumsum(fk_deltas[:, 2])
+    theta_entering = np.radians(np.concatenate(([0.0], theta[:-1])))
+    cos_t = np.cos(theta_entering)
+    sin_t = np.sin(theta_entering)
 
-        # Transform local displacement to world coordinates
-        states[i + 1, 0] = states[i, 0] + dx * cos_t - dy * sin_t
-        states[i + 1, 1] = states[i, 1] + dx * sin_t + dy * cos_t
-        states[i + 1, 2] = states[i, 2] + dtheta
+    # Local displacement rotated into world coordinates, then accumulated.
+    world_dx = fk_deltas[:, 0] * cos_t - fk_deltas[:, 1] * sin_t
+    world_dy = fk_deltas[:, 0] * sin_t + fk_deltas[:, 1] * cos_t
 
+    states[1:, 0] = np.cumsum(world_dx)
+    states[1:, 1] = np.cumsum(world_dy)
+    states[1:, 2] = theta
     return states
 
 

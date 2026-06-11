@@ -32,8 +32,8 @@ algorithm:
   pop_size: 1000
   n_gen: 300
   heuristic_ratio: 0.20
-  crossover_prob: 0.95
-  mutation_prob: 0.05
+  crossover_prob: 0.9
+  mutation_prob: 0.1
   eliminate_duplicates: true
   seed: null
   termination:
