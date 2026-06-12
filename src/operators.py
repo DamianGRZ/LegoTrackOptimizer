@@ -12,6 +12,7 @@ Mutation:
 from __future__ import annotations
 
 import math
+from collections import Counter
 from typing import List, Optional
 
 import numpy as np
@@ -367,20 +368,23 @@ def _write_main_loop(x: NDArray, dims: PartitionedDimensions, types, flips) -> N
 def _compensated_pair_grow(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
 ) -> bool:
-    """Grow the loop by an anti-parallel STRAIGHT_16 pair, if the box has room.
+    """Grow the loop by an anti-parallel pair of equal straights, if the box has room.
 
     The two straights' displacements cancel and their turning is zero, so
     closure and the angular sum are preserved EXACTLY — the one edit class
     that lets closed loops (plain, cross- or DC-bearing) gain pieces without
-    being destroyed. Grow-only by design: shrinking is BoundaryAwareRepair's
-    corrective job, so the two mechanisms never overlap.
+    being destroyed. Compensation needs equal opposite displacement, not a
+    specific piece type: STRAIGHT_16 is preferred (finer step), with a
+    STRAIGHT_24 pair as fallback once the 16s are exhausted. Grow-only by
+    design: shrinking is BoundaryAwareRepair's corrective job, so the two
+    mechanisms never overlap.
 
-    Slack-aware: the pair's heading must have box room for the ~16-stud growth
-    along both axis projections (raw main-loop span; an approximation for DC
-    genomes, whose routed geometry differs — their mutants are still validated
-    by G downstream). Descriptor pairs (cross/DC) must not be separated by the
-    moved segment; descriptor positions are index-shifted to keep pointing at
-    the same pieces.
+    Slack-aware: the pair's heading must have box room for one straight-length
+    of growth along both axis projections (raw main-loop span; an approximation
+    for DC genomes, whose routed geometry differs — their mutants are still
+    validated by G downstream). Descriptor pairs (cross/DC) must not be
+    separated by the moved segment; descriptor positions are index-shifted to
+    keep pointing at the same pieces.
     """
     if catalog is None:
         _mutate_piece_type(x, dims)
@@ -390,9 +394,17 @@ def _compensated_pair_grow(
     n = len(types)
     if n < 4 or n + 2 > dims.n_main:
         return False
-    n_straights = sum(1 for t in types if t in (int(STRAIGHT_16), int(STRAIGHT_24)))
-    n_straights += sum(j[4] for j in get_active_junctions(x, dims))
-    if n_straights + 2 > dims.total_straights:
+
+    # Per-type budget: sidings consume STRAIGHT_16 (templates.straight_idx),
+    # so their straights charge the 16-stud pool.
+    usage = Counter(types)
+    used_16 = usage[int(STRAIGHT_16)] + sum(j[4] for j in get_active_junctions(x, dims))
+    used_24 = usage[int(STRAIGHT_24)]
+    if used_16 + 2 <= dims.n_straights_16:
+        insert = int(STRAIGHT_16)
+    elif used_24 + 2 <= dims.n_straights_24:
+        insert = int(STRAIGHT_24)
+    else:
         return False
 
     states = compute_fk_chain(_fk_deltas(types, flips, catalog))
@@ -401,7 +413,7 @@ def _compensated_pair_grow(
     slack_y = (dims.boundary_max_y - dims.boundary_min_y) - float(
         states[:, 1].max() - states[:, 1].min())
 
-    length = float(catalog._fk_table[int(STRAIGHT_16), 0])
+    length = float(catalog._fk_table[insert, 0])
     # Gap g sits before active piece g; entering heading = cumulative theta.
     groups: dict = {}
     for gap in range(n + 1):
@@ -431,7 +443,7 @@ def _compensated_pair_grow(
             new_types, new_flips = [], []
             for i in range(n + 1):
                 if i == lo or i == hi:
-                    new_types.append(int(STRAIGHT_16))
+                    new_types.append(insert)
                     new_flips.append(0)
                 if i < n:
                     new_types.append(types[i])

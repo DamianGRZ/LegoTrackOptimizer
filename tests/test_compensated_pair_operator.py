@@ -1,9 +1,12 @@
 """Slack-aware compensated-pair GROW mutation.
 
-The one genotype edit that preserves closure EXACTLY: insert two STRAIGHT_16
-at loop gaps whose entering headings are anti-parallel — displacements cancel,
-turning sum untouched. Grow-only by design: shrinking is BoundaryAwareRepair's
-job (corrective, box-conditioned), so the two mechanisms never overlap.
+The one genotype edit that preserves closure EXACTLY: insert two equal
+straights at loop gaps whose entering headings are anti-parallel —
+displacements cancel, turning sum untouched. STRAIGHT_16 preferred, a
+STRAIGHT_24 pair once the 16s are exhausted (equal opposite displacement is
+what compensates, not the piece type). Grow-only by design: shrinking is
+BoundaryAwareRepair's job (corrective, box-conditioned), so the two
+mechanisms never overlap.
 Slack-aware: a pair is only inserted when the box has room for the growth
 along that heading's axis, so no doomed over-the-box mutants are produced.
 """
@@ -132,3 +135,57 @@ class TestGrowDescriptorGenomes:
         sizes = {int(np.sum(row[:dims.n_main] != INACTIVE)) for row in X}
         assert any(s > before for s in sizes), \
             "across 40 mutated DC genomes at least one must grow"
+
+
+class TestPerTypeStraightBudget:
+    """The straight budget is per type, not the combined S16+S24 total.
+
+    Compensation needs equal opposite displacement, not identical pieces:
+    an anti-parallel STRAIGHT_24 pair preserves closure exactly too. The
+    operator prefers STRAIGHT_16 (finer step) and falls back to a
+    STRAIGHT_24 pair when the 16s are exhausted; with no free pair of
+    either type it declines instead of inserting pieces the inventory
+    cannot supply.
+    """
+
+    BOUNDARY = {"min_x": -250.0, "max_x": 250.0,
+                "min_y": -250.0, "max_y": 250.0}
+    # Closed square racetrack: 4 corners of 4 R40 + runs of 2 S16.
+    RACETRACK = ([2] * 4 + [0] * 2) * 4
+
+    def _setup(self, cat, s16, s24):
+        cfg = OptimizationConfig(
+            inventory={"STRAIGHT_16": s16, "STRAIGHT_24": s24,
+                       "R40_CURVE": 16},
+            boundary=dict(self.BOUNDARY),
+        )
+        dims = compute_dimensions(cfg, cat)
+        x = create_chromosome_from_pieces(dims, list(self.RACETRACK))
+        return cfg, dims, x
+
+    def _straight_counts(self, x, dims):
+        main = np.asarray(x[:dims.n_main])
+        return int(np.sum(main == 0)), int(np.sum(main == 1))
+
+    def test_exhausted_16s_fall_back_to_a_straight_24_pair(self, cat):
+        np.random.seed(17)
+        cfg, dims, x = self._setup(cat, s16=8, s24=4)  # all 8 S16 in use
+        assert _compensated_pair_grow(x, dims, cat)
+        n16, n24 = self._straight_counts(x, dims)
+        assert (n16, n24) == (8, 2), "pair must be STRAIGHT_24 — no spare 16s"
+        lay = _decode(x, cfg, cat, dims)
+        assert lay.paths[0].closure_error < cfg.closure_tolerance
+
+    def test_no_free_pair_of_either_type_is_a_noop(self, cat):
+        np.random.seed(19)
+        cfg, dims, x = self._setup(cat, s16=9, s24=1)  # 1 spare of each type
+        before = x.copy()
+        assert not _compensated_pair_grow(x, dims, cat)
+        np.testing.assert_array_equal(x, before)
+
+    def test_prefers_straight_16_when_both_types_have_room(self, cat):
+        np.random.seed(23)
+        cfg, dims, x = self._setup(cat, s16=12, s24=4)
+        assert _compensated_pair_grow(x, dims, cat)
+        n16, n24 = self._straight_counts(x, dims)
+        assert (n16, n24) == (10, 0)

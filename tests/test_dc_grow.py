@@ -37,7 +37,7 @@ def dc_dims() -> PartitionedDimensions:
         max_junctions=0,
         max_cross_junctions=0,
         max_double_crossovers=1,
-        total_straights=120,
+        n_straights_16=120, n_straights_24=0,
         boundary_min_x=-250.0,
         boundary_max_x=250.0,
         boundary_min_y=-250.0,
@@ -103,7 +103,7 @@ class TestGrowDcFigureEight:
         """When the next size won't fit the boundary, grow is a safe no-op."""
         tight = PartitionedDimensions(
             n_main=120, max_junctions=0, max_cross_junctions=0, max_double_crossovers=1,
-            total_straights=120,
+            n_straights_16=120, n_straights_24=0,
             boundary_min_x=-70.0, boundary_max_x=70.0,   # width 140: fits k=0 (128) not k=1 (160)
             boundary_min_y=-110.0, boundary_max_y=110.0,  # height 220 >= 200
         )

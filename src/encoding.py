@@ -146,11 +146,17 @@ class PartitionedDimensions:
     max_junctions: int       # Max passing-siding junction slots
     max_cross_junctions: int # Max cross-junction slots (from CROSS_90 inventory)
     max_double_crossovers: int  # Max DOUBLE_CROSSOVER pieces (from inventory)
-    total_straights: int     # Total straight pieces in inventory
+    n_straights_16: int      # STRAIGHT_16 pieces in inventory
+    n_straights_24: int      # STRAIGHT_24 pieces in inventory
     boundary_min_x: float
     boundary_max_x: float
     boundary_min_y: float
     boundary_max_y: float
+
+    @property
+    def total_straights(self) -> int:
+        """Combined straight inventory (both lengths)."""
+        return self.n_straights_16 + self.n_straights_24
 
     @property
     def main_flips_start(self) -> int:
@@ -230,15 +236,13 @@ def compute_dimensions(config, catalog) -> PartitionedDimensions:
     # the descriptor's two routes union to {A,B,C,D}.
     max_double_crossovers = inv.get("DOUBLE_CROSSOVER", 0)
 
-    # Straights available for branches
-    total_straights = inv.get("STRAIGHT_16", 0) + inv.get("STRAIGHT_24", 0)
-
     return PartitionedDimensions(
         n_main=n_main,
         max_junctions=max_junctions,
         max_cross_junctions=max_cross_junctions,
         max_double_crossovers=max_double_crossovers,
-        total_straights=total_straights,
+        n_straights_16=inv.get("STRAIGHT_16", 0),
+        n_straights_24=inv.get("STRAIGHT_24", 0),
         boundary_min_x=config.boundary.min_x,
         boundary_max_x=config.boundary.max_x,
         boundary_min_y=config.boundary.min_y,

@@ -28,7 +28,7 @@ def make_dims(n_main=24, max_junctions=0, box=250.0):
     return PartitionedDimensions(
         n_main=n_main, max_junctions=max_junctions,
         max_cross_junctions=0, max_double_crossovers=0,
-        total_straights=n_main,
+        n_straights_16=n_main, n_straights_24=0,
         boundary_min_x=-box, boundary_max_x=box,
         boundary_min_y=-box, boundary_max_y=box,
     )
