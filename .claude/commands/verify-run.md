@@ -48,22 +48,29 @@ numeric suffix (`verify_with_switches_2`) — match whatever the user intends.
 ### 2. Build the command
 
 ```bash
-.venv/Scripts/python.exe main.py \
+.venv/Scripts/python.exe -u main.py \
     --config configs/<config>.yaml \
     --output outputs/verify_<config> \
     [--quick-test] \
-    --verbose
+    --verbose 2>&1 | tee outputs/verify_<config>_console.log
 ```
 
-Always pass `--verbose` so the log shows per-generation progress.
+Always pass `--verbose` so the log shows per-generation progress, `-u` so the
+lines stream unbuffered, and `| tee` so they reach BOTH the task's Output
+panel and a persistent log file.
+
+**Never redirect with `> file 2>&1` instead of tee** — that starves the task
+Output panel ("No output available") and the user cannot watch the run.
 
 ### 3. Launch
 
 - Default: launch with the Bash tool using `run_in_background: true`. The harness
   re-invokes you when the process exits — **do not poll in a sleep loop**. If you
-  must surface mid-run progress, tail the captured output once, then wait for the
+  must surface mid-run progress, tail the tee'd log once, then wait for the
   completion notification.
 - `--fg` / `--quick`: run in the foreground and block on the result.
+- User wants to watch gen-by-gen truly live in their terminal: suggest they run
+  the same command themselves with the `!` prefix instead of you launching it.
 
 ### 4. On completion
 
