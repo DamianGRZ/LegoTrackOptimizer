@@ -35,7 +35,7 @@ algorithm:
   seed: null
   termination:
     n_max_gen: 1000
-    period: 0  # Early stop if no improvement for 100 generations
+    period: 0  # 0 = no improvement-based early stop; run the full generation budget
 
 closure_tolerance: 4.0
 angle_tolerance: 5.0
