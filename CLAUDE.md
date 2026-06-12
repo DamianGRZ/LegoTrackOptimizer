@@ -63,6 +63,8 @@ Recurring mistakes that must not repeat:
 | `/verify-fix` | Invoke with Skill tool | End-to-end verification loop: full tests + optimizer run + diag, with literal output | After every bug fix. Enforces no-assertion-without-evidence. |
 | `/verify-run` | Invoke with Skill tool | Launch a named `verify_<config>` run in the background, watch to completion, hand off to `/diag` | User asks to run/verify a config or babysit a running optimization |
 | `/inspect-layout` | Invoke with Skill tool | Visually read layout/snapshot PNGs and check geometry invariants; decide viz bug vs real geometry bug | User asks to analyze snapshots or verify a layout image looks correct |
+| `/inspect-genome` | Invoke with Skill tool | Decode chromosomes from a run and cross-check phenotype vs out-keys/PNG titles/reports | A layout image and a report disagree (e.g. crossing visible but counted 0); auditing piece usage |
+| `/commit-slices` | Invoke with Skill tool | Slice a mixed working tree into logical, individually-green commits (no stash; worktree-verified) | User asks to split session work into commits |
 | `/code-map-audit` | Invoke with Skill tool | Parallel-agent dead-code scan + code map written into CLAUDE.md (re-grep before delete; never auto-rm) | User asks to audit for unused code or refresh the code-map section |
 
 ---

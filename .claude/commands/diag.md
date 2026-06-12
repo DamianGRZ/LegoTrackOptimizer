@@ -28,26 +28,43 @@ List files in `outputs/` (or custom dir). If missing, report "No output director
 
 ### 2. Parse fitness.csv
 
-- Load the file (single column = single-objective, two columns = bi-objective)
-- Compute: count, min, max, mean of each objective column
-- For single-objective: utilization = `-min(F[:,0])`
-- For bi-objective: utilization = `-min(F[:,0])`, speed = `-min(F[:,1])`
+- Two columns: `[-utilization_score, -avg_speed]` (both maximized, stored negated)
+- Best score = `-min(F[:,0])`, best speed = `-min(F[:,1])`
+- **The score is WEIGHTED** (`special_piece_weight` per switch pair / crossing /
+  double-crossover) — never present it as a raw inventory fraction
+- Count DISTINCT F rows and their multiplicities
+  (`np.unique(np.round(F, 6), axis=0, return_counts=True)`): a terminal
+  population is typically a monoculture (hundreds of copies of the champion
+  plus injected category elites) — report the multiplicity, it is normal
 
 ### 3. Parse constraints.csv
 
-- 5 columns: `[closure, angle, boundary, inventory, loose_ports]`
-- Count feasible solutions: rows where ALL columns <= 0
-- For infeasible solutions, report which constraint is most commonly violated
-- Show worst violation per constraint type
+- `5 + n_piece_types` columns: `G[0..2]` per-axis closure (|dx|, |dy|, |dθ|),
+  `G[3]` boundary, `G[4]` collisions, `G[5..]` per-type inventory excess
+- Feasible = ALL columns <= 0; report violations-per-column and worst value
+  for the infeasible rows
 
 ### 4. Parse chromosomes.csv (best feasible)
 
-- Find the row index of the best feasible solution (lowest F value among feasible)
-- Read that row from chromosomes.csv
-- Report chromosome summary:
-  - Total genes, how many piece keys are active (> RK_INACTIVE_THRESHOLD ~0.07)
-  - Whether branch slots appear active (genes [200-216], check if active_key > 0.5)
-  - Start position keys (genes [216-218])
+- int16 partitioned genome (NOT random keys): main-loop piece types in
+  `[0, n_main)` with `-1` = INACTIVE (0=STRAIGHT_16, 1=STRAIGHT_24,
+  2=R40_CURVE; 3+ enter via descriptors/decoder), parallel flip bits,
+  descriptor blocks, last 2 genes = start position
+- `n_main` comes from `compute_dimensions(config, catalog)` — **never
+  hardcode gene ranges**, they scale with inventory
+- Best feasible row = lowest F[:,0] among feasible; report active-slot count
+  and per-type census (`!= -1` mask)
+- For a full phenotype decode and mismatch hunting, hand off to
+  `/inspect-genome <dir>`
+
+### 4b. Check run artifacts beyond the basics
+
+- `category_report.md` — all three sections (switch / cross / dc) present?
+  Which categories have a feasible elite, and how far below the global best?
+- `pareto_archive.csv` — run-cumulative feasible front (distinct trade-off
+  points discovered across ALL generations); if absent, the run predates it
+- `pareto_front.png` — distinct points carry ×N multiplicity labels;
+  `best_with_*.png` titles show `N/total pcs` and `score X%`
 
 ### 5. Check best_layout.png
 
@@ -66,20 +83,21 @@ List files in `outputs/` (or custom dir). If missing, report "No output director
 **Files found**: fitness.csv, constraints.csv, chromosomes.csv, best_layout.png
 
 ### Fitness
-- **Mode**: Single-objective / Bi-objective
-- **Best utilization**: XX.X%
-- **Best speed**: X.XX m/s (if bi-objective)
-- **Population size**: N solutions
+- **Best score**: XX.X% (weighted) | **Best speed**: X.XX m/s
+- **Population**: N solutions, K distinct F points (top multiplicity ×M)
 
 ### Feasibility
 - **Feasible**: N / M (XX%)
-- **Most violated constraint**: closure (N violations, worst: X.XX)
-- **Constraint breakdown**: closure=N, angle=N, boundary=N, inventory=N, loose_ports=N
+- **Most violated**: closure_x/closure_y/closure_theta/boundary/collisions/
+  inventory[type] (N violations, worst: X.XX)
 
 ### Best Chromosome
-- **Active pieces**: N / 100 slots
-- **Branch slots active**: N / 4
-- **Start position**: (X.XX, Y.XX)
+- **Active main slots**: N / n_main, census {S16: a, S24: b, R40: c, ...}
+- **Start position**: (X, Y)
+
+### Categories & Front
+- **Category elites**: switch X% / cross Y% / dc Z% (or "missing")
+- **Run front (pareto_archive.csv)**: K points
 
 ### Layout Visual
 - **Closed**: Yes/No
