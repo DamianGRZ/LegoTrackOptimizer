@@ -42,7 +42,12 @@ class TerminationConfig(BaseModel):
     n_max_gen: int = Field(default=1000, ge=1, description="Maximum generations")
     ftol: float = Field(default=1e-6, ge=0, description="Objective tolerance")
     xtol: float = Field(default=1e-6, ge=0, description="Variable tolerance")
-    period: int = Field(default=100, ge=1, description="Check improvement every N generations")
+    period: int = Field(
+        default=0, ge=0,
+        description="Stagnation window (generations) for improvement-based early "
+                    "stop; 0 (default) disables it — the run uses the full n_gen "
+                    "budget. Set >0 to stop after that many stagnant generations.",
+    )
 
 
 class AlgorithmConfig(BaseModel):

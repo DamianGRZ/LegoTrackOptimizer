@@ -33,6 +33,21 @@ class TestIntegerSampling:
         assert np.all(X >= problem.xl)
         assert np.all(X <= problem.xu)
 
+    def test_zero_heuristic_ratio_means_no_seeds(self, catalog, default_config):
+        """ratio=0 must mean a PURE random population — with elite archives in
+        play, even a single smuggled seed can win the whole run and confound
+        any seeded-vs-unseeded experiment."""
+        sampling = IntegerSampling(catalog, default_config, heuristic_ratio=0.0)
+        assert sampling._n_heuristic(1000) == 0
+
+    def test_positive_ratio_guarantees_at_least_one_seed(self, catalog, default_config):
+        sampling = IntegerSampling(catalog, default_config, heuristic_ratio=0.001)
+        assert sampling._n_heuristic(100) == 1
+
+    def test_ratio_scales_seed_count(self, catalog, default_config):
+        sampling = IntegerSampling(catalog, default_config, heuristic_ratio=0.2)
+        assert sampling._n_heuristic(1000) == 200
+
     def test_heuristic_ratio_respected(self, catalog, default_config):
         """Some samples come from heuristic patterns."""
         sampling = IntegerSampling(

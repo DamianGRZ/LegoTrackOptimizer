@@ -467,32 +467,68 @@ def _gen_two_layer_loop_dbl_crossover(
 def _gen_figure_eight_cross(
     inv: Dict[int, int], dims: PartitionedDimensions,
 ) -> List[Pattern]:
-    """Closed figure-8 with one bare CROSS_90 self-crossing at ~90 deg.
+    """Closed figure-8 with one CROSS_90, scaled by compensated straight pairs.
 
-    Two opposite-handed lobes (12 R40 curves each) joined by 5-straight runs.
-    The loop crosses itself perpendicular at main-loop slots 2 and 19; verified
-    closed by construction (closure 0.0, angle 0.0, bounding box ~160x160 studs).
-    Consumes 10 STRAIGHT_16 + 24 R40_CURVE + 1 CROSS_90. The descriptor
-    (active, pos_1, pos_2) = (1, 2, 19) is committed by _inject_cross_junctions.
+    Two opposite-handed lobes (12 R40 curves each) joined by two perpendicular
+    runs through the crossing. Naively lengthening a run breaks closure — the
+    runs are perpendicular, so nothing cancels the added displacement. Each
+    size step therefore inserts a COMPENSATED PAIR per axis: one straight
+    appended to the run plus one anti-parallel straight inserted mid-lobe,
+    where the heading is exactly opposite (after 8 of the 12 arcs). The pair's
+    displacements cancel, the turning sum stays 0, closure is preserved
+    exactly; the lobe stretches from a circle into a stadium.
 
-    Unlike the retired 4-switch soft seed, this geometry validates immediately —
-    the seed lands a feasible CROSS_90 layout in the initial population.
+    ``k`` pairs scale the east-west axis, ``m`` the north-south axis — both
+    derived from boundary and inventory at runtime. Bounding box is
+    (160 + 16k) x (160 + 16m); each pair costs 2 STRAIGHT_16. The crossing
+    sits at main-loop slots ``(2, 19 + 2k)``; with k = m = 0 this reduces to
+    the verified 34-piece base (descriptor (1, 2, 19)).
     """
     if dims.max_cross_junctions < 1 or inv.get(CROSS_90, 0) < 1:
         return []
-    if inv.get(STRAIGHT_16, 0) < 10 or inv.get(R40_CURVE, 0) < 24:
+    n_str = inv.get(STRAIGHT_16, 0)
+    if n_str < 10 or inv.get(R40_CURVE, 0) < 24:
         return []
     w, h = _boundary_wh(dims)
-    if w < 170 or h < 170:  # figure-8 spans ~160 studs each axis
+    if w < 170 or h < 170:  # base figure-8 spans ~160 studs each axis
         return []
 
-    pieces = (
-        [int(STRAIGHT_16)] * 5 + [int(R40_CURVE)] * 12
-        + [int(STRAIGHT_16)] * 5 + [int(R40_CURVE)] * 12
-    )
-    flips = [0] * 5 + [0] * 12 + [0] * 5 + [1] * 12
-    descriptors: List[CrossJunctionDescriptor] = [(1, 2, 19)]
-    return [(pieces, flips, None, descriptors, None)]
+    k_fit = max(0, int((w - 160) // _PIECE_LEN))
+    m_fit = max(0, int((h - 160) // _PIECE_LEN))
+    pair_budget = max(0, (n_str - 10) // 2)
+
+    variants: List[Pattern] = []
+    seen: set = set()
+    for scale in (1.0, 0.5, 0.0):
+        k = int(k_fit * scale)
+        m = int(m_fit * scale)
+        # Trim the larger axis first until the shared straight budget fits.
+        while k + m > pair_budget:
+            if k >= m and k > 0:
+                k -= 1
+            elif m > 0:
+                m -= 1
+            else:
+                break
+        if (k, m) in seen:
+            continue
+        seen.add((k, m))
+
+        pieces = (
+            [int(STRAIGHT_16)] * (5 + k) + [int(R40_CURVE)] * 8
+            + [int(STRAIGHT_16)] * k + [int(R40_CURVE)] * 4
+            + [int(STRAIGHT_16)] * (5 + m) + [int(R40_CURVE)] * 8
+            + [int(STRAIGHT_16)] * m + [int(R40_CURVE)] * 4
+        )
+        if not _pieces_fit_inventory(_count_pieces(pieces), inv):
+            continue
+        flips = (
+            [0] * (5 + k) + [0] * 8 + [0] * k + [0] * 4
+            + [0] * (5 + m) + [1] * 8 + [0] * m + [1] * 4
+        )
+        descriptors: List[CrossJunctionDescriptor] = [(1, 2, 19 + 2 * k)]
+        variants.append((pieces, flips, None, descriptors, None))
+    return variants
 
 
 def _gen_oval_two_sidings(
@@ -583,13 +619,24 @@ class IntegerSampling(Sampling):
                     self.inventory_by_index.get(idx, 0) + count
                 )
 
+    def _n_heuristic(self, n_samples: int) -> int:
+        """Heuristic-seed count for a population of ``n_samples``.
+
+        A ratio of 0 means NONE — a pure random population. Any positive
+        ratio guarantees at least one seed so tiny populations still get a
+        heuristic anchor.
+        """
+        if self.heuristic_ratio <= 0:
+            return 0
+        return max(1, int(n_samples * self.heuristic_ratio))
+
     def _do(self, problem, n_samples, **kwargs) -> NDArray:
         """Generate initial population."""
         dims = self.dims
         rng = np.random.default_rng(self._seed)
         X = np.full((n_samples, dims.n_var), INACTIVE, dtype=np.int16)
 
-        n_heuristic = max(1, int(n_samples * self.heuristic_ratio))
+        n_heuristic = self._n_heuristic(n_samples)
         patterns = self._get_heuristic_patterns(rng)
 
         for i in range(n_heuristic):

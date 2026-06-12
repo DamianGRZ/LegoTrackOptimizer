@@ -11,6 +11,7 @@ Mutation:
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import numpy as np
@@ -29,10 +30,15 @@ from .encoding import (
     MAX_MAIN_LOOP_PIECE,
     R40_CURVE,
     STRAIGHT_16,
+    STRAIGHT_24,
     PartitionedDimensions,
+    get_active_cross_junctions,
     get_active_double_crossovers,
+    get_active_junctions,
     get_double_crossover,
+    set_cross_junction,
     set_double_crossover,
+    set_junction,
 )
 from .geometry import compute_fk_chain
 from .intersection import find_crossing_pairs
@@ -305,6 +311,141 @@ def _straighten_near_unresolved_crossing(
 
 
 # =============================================================================
+# Compensated-Pair Grow (closure-exact, slack-aware)
+# =============================================================================
+
+def _active_view(x: NDArray, dims: PartitionedDimensions):
+    """(types, flips) lists of the active main-loop pieces, in loop order."""
+    types, flips = [], []
+    for slot in range(dims.n_main):
+        pt = int(x[slot])
+        if pt == INACTIVE:
+            continue
+        types.append(pt)
+        flips.append(int(x[dims.main_flips_start + slot]))
+    return types, flips
+
+
+def _fk_deltas(types, flips, catalog) -> NDArray:
+    """FK rows for an active list, with R40 flips applied."""
+    deltas = catalog._fk_table[np.asarray(types, dtype=np.int32)].copy()
+    negate = (np.asarray(types) == int(R40_CURVE)) & (np.asarray(flips) == 1)
+    if negate.any():
+        deltas[negate, 1] *= -1.0
+        deltas[negate, 2] *= -1.0
+    return deltas
+
+
+def _descriptor_spans(x: NDArray, dims: PartitionedDimensions):
+    """(lo, hi) active-index spans of committed-pair descriptors (cross + DC)."""
+    spans = [(min(p1, p2), max(p1, p2))
+             for _s, _a, p1, p2 in get_active_cross_junctions(x, dims)]
+    spans += [(min(p1, p2), max(p1, p2))
+              for _s, _a, p1, _r1, p2, _r2 in get_active_double_crossovers(x, dims)]
+    return spans
+
+
+def _shift_descriptor_positions(x: NDArray, dims: PartitionedDimensions, shift) -> None:
+    """Apply ``shift(pos) -> pos`` to every active descriptor position gene."""
+    for slot, active, pos, hand, n_str in get_active_junctions(x, dims):
+        set_junction(x, dims, slot, active, shift(pos), hand, n_str)
+    for slot, active, p1, p2 in get_active_cross_junctions(x, dims):
+        set_cross_junction(x, dims, slot, active, shift(p1), shift(p2))
+    for slot, active, p1, r1, p2, r2 in get_active_double_crossovers(x, dims):
+        set_double_crossover(x, dims, slot, active, shift(p1), r1, shift(p2), r2)
+
+
+def _write_main_loop(x: NDArray, dims: PartitionedDimensions, types, flips) -> None:
+    """Write the active list back compactly from slot 0 (flips in parallel)."""
+    x[:dims.n_main] = INACTIVE
+    x[dims.main_flips_start:dims.main_flips_end] = 0
+    for i, (pt, flip) in enumerate(zip(types, flips)):
+        x[i] = pt
+        x[dims.main_flips_start + i] = flip
+
+
+def _compensated_pair_grow(
+    x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
+) -> bool:
+    """Grow the loop by an anti-parallel STRAIGHT_16 pair, if the box has room.
+
+    The two straights' displacements cancel and their turning is zero, so
+    closure and the angular sum are preserved EXACTLY — the one edit class
+    that lets closed loops (plain, cross- or DC-bearing) gain pieces without
+    being destroyed. Grow-only by design: shrinking is BoundaryAwareRepair's
+    corrective job, so the two mechanisms never overlap.
+
+    Slack-aware: the pair's heading must have box room for the ~16-stud growth
+    along both axis projections (raw main-loop span; an approximation for DC
+    genomes, whose routed geometry differs — their mutants are still validated
+    by G downstream). Descriptor pairs (cross/DC) must not be separated by the
+    moved segment; descriptor positions are index-shifted to keep pointing at
+    the same pieces.
+    """
+    if catalog is None:
+        _mutate_piece_type(x, dims)
+        return False
+
+    types, flips = _active_view(x, dims)
+    n = len(types)
+    if n < 4 or n + 2 > dims.n_main:
+        return False
+    n_straights = sum(1 for t in types if t in (int(STRAIGHT_16), int(STRAIGHT_24)))
+    n_straights += sum(j[4] for j in get_active_junctions(x, dims))
+    if n_straights + 2 > dims.total_straights:
+        return False
+
+    states = compute_fk_chain(_fk_deltas(types, flips, catalog))
+    slack_x = (dims.boundary_max_x - dims.boundary_min_x) - float(
+        states[:, 0].max() - states[:, 0].min())
+    slack_y = (dims.boundary_max_y - dims.boundary_min_y) - float(
+        states[:, 1].max() - states[:, 1].min())
+
+    length = float(catalog._fk_table[int(STRAIGHT_16), 0])
+    # Gap g sits before active piece g; entering heading = cumulative theta.
+    groups: dict = {}
+    for gap in range(n + 1):
+        h = round(float(states[gap, 2]) % 360.0, 3)
+        rad = math.radians(h)
+        if (abs(math.cos(rad)) * length <= slack_x + 1e-9
+                and abs(math.sin(rad)) * length <= slack_y + 1e-9):
+            groups.setdefault(h, []).append(gap)
+
+    spans = _descriptor_spans(x, dims)
+    keys = list(groups)
+    np.random.shuffle(keys)
+    for h in keys:
+        opposite = round((h + 180.0) % 360.0, 3)
+        if opposite not in groups:
+            continue
+        for _ in range(4):
+            a = groups[h][np.random.randint(len(groups[h]))]
+            b = groups[opposite][np.random.randint(len(groups[opposite]))]
+            if a == b:
+                continue
+            lo, hi = (a, b) if a < b else (b, a)
+            # The pair shifts segment [lo, hi) in space: it must not separate
+            # any committed-pair descriptor's two slots.
+            if any((lo <= p < hi) != (lo <= q < hi) for p, q in spans):
+                continue
+            new_types, new_flips = [], []
+            for i in range(n + 1):
+                if i == lo or i == hi:
+                    new_types.append(int(STRAIGHT_16))
+                    new_flips.append(0)
+                if i < n:
+                    new_types.append(types[i])
+                    new_flips.append(flips[i])
+            _write_main_loop(x, dims, new_types, new_flips)
+            _shift_descriptor_positions(
+                x, dims,
+                lambda p: p + (1 if p >= lo else 0) + (1 if p >= hi else 0),
+            )
+            return True
+    return False
+
+
+# =============================================================================
 # Mutation Sub-operators (Junction)
 # =============================================================================
 
@@ -485,10 +626,13 @@ _MAIN_LOOP_OPS = [
     _swap_positions,
     _flip_position,
     _straighten_near_unresolved_crossing,
+    _compensated_pair_grow,
 ]
-# _flip_position carries 0.10 — it's the only operator that explores R40 handedness,
-# so giving it < 10% would leave LEFT/RIGHT diversity entirely to the initial seeds.
-_MAIN_LOOP_WEIGHTS = np.array([0.25, 0.22, 0.18, 0.20, 0.10, 0.05])
+# _flip_position carries 0.08 — it's the only operator that explores R40 handedness,
+# so starving it would leave LEFT/RIGHT diversity entirely to the initial seeds.
+# _compensated_pair_grow carries 0.20 — the only closure-exact growth path, so
+# closed loops can gain pieces without being destroyed and re-repaired.
+_MAIN_LOOP_WEIGHTS = np.array([0.20, 0.18, 0.14, 0.16, 0.08, 0.04, 0.20])
 _MAIN_LOOP_WEIGHTS /= _MAIN_LOOP_WEIGHTS.sum()
 
 # Junction sub-operators with equal weights
@@ -552,7 +696,10 @@ class PartitionedMutation(Mutation):
             # the remaining probability they pass through unmutated and rely on
             # crossover (which keeps DC parents intact) for the rest.
             if get_active_double_crossovers(X[i], self.dims):
-                if np.random.random() < _DC_GROW_PROB:
+                r = np.random.random()
+                if r < _DC_GROW_PROB:
+                    _compensated_pair_grow(X[i], self.dims, catalog)
+                elif r < _DC_GROW_PROB + 0.25:
                     _grow_dc_figure_eight(X[i], self.dims, catalog)
                 continue
 

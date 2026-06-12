@@ -256,6 +256,9 @@ class MultiPathLayout:
     start_position: Tuple[float, float] = (0.0, 0.0)
     loose_port_count: int = 0
     secondary_closure_error: float = 0.0
+    # Human-readable reasons for descriptors the decoder skipped (empty when
+    # everything committed). Consumed by the per-category run report.
+    drop_log: List[str] = field(default_factory=list)
 
     @property
     def n_cross_junctions(self) -> int:

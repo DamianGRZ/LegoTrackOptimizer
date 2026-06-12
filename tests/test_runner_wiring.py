@@ -10,6 +10,7 @@ Covers the two config blocks that used to be parsed-but-ignored:
 import pytest
 from pymoo.parallelization.starmap import StarmapParallelization
 from pymoo.termination.default import DefaultMultiObjectiveTermination
+from pymoo.termination.max_gen import MaximumGenerationTermination
 
 from src.algorithm.runner import (
     _build_elementwise_runner,
@@ -65,6 +66,22 @@ class TestEpsilonAlpha:
 # =============================================================================
 
 class TestBuildTermination:
+    """period > 0: improvement-window early stop. period = 0 (default): run
+    the full generation budget — no early stop."""
+
+    def test_period_zero_runs_full_budget_no_early_stop(self):
+        term = _build_termination(_config(period=0))
+        assert isinstance(term, MaximumGenerationTermination)
+        assert not isinstance(term, DefaultMultiObjectiveTermination)
+        assert term.n_max_gen == 200
+
+    def test_period_zero_is_the_config_default(self):
+        cfg = OptimizationConfig(inventory={"STRAIGHT_16": 8})
+        assert cfg.algorithm.termination.period == 0
+
+    def test_period_zero_still_capped_by_termination_n_max_gen(self):
+        term = _build_termination(_config(n_gen=500, n_max_gen=300, period=0))
+        assert term.n_max_gen == 300
 
     def test_returns_default_multi_objective_termination(self):
         term = _build_termination(_config())
