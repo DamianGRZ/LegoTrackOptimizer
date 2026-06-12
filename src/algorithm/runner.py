@@ -218,18 +218,20 @@ class CategoryEliteArchive(Callback):
         pop = algorithm.pop
         if pop is None:
             return
-        F = pop.get("F")
-        G = pop.get("G")
-        if F is None or G is None:
-            return
-
-        feas_mask = np.all(G <= 0, axis=1)
         used_slots: set = set()
 
         for category, key in CATEGORY_KEYS.items():
             counts = pop.get(key)
             if counts is None:
                 return  # population evaluated without category keys
+            # Re-fetched per category: an earlier category's injection has
+            # already replaced individuals, and bookkeeping against a stale
+            # snapshot pins the wrong utilization to an archived individual.
+            F = pop.get("F")
+            G = pop.get("G")
+            if F is None or G is None:
+                return
+            feas_mask = np.all(G <= 0, axis=1)
             has_element = np.asarray(counts, dtype=float) > 0
 
             self._update(self.feasible, category, pop, F, has_element & feas_mask)
@@ -806,7 +808,7 @@ def _write_category_report(res, output_dir, catalog, config, dims,
             util = elite["util"]
             n_element = {
                 "switch": layout.n_switch_pairs,
-                "cross": layout.n_cross_junctions,
+                "cross": layout.n_cross_pieces,
                 "dc": layout.n_dbl_crossovers,
             }[category]
             gap = (f"{(best_util - util) * 100:.1f}pp below global best"

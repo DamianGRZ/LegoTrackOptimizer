@@ -180,10 +180,11 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         # Committed-element census as custom out-keys: the Evaluator copies
         # them onto the Population, so the category-elite archive reads them
-        # via pop.get() without an extra decode. Counted from the decoded
-        # layout, so emergent CROSS_90 placements are included.
+        # via pop.get() without an extra decode. n_cross_pieces counts
+        # physical CROSS_90s, so emergent (self-intersection repair)
+        # placements are included alongside descriptor commits.
         out["n_sw_pairs"] = len(layout.switch_pairs)
-        out["n_cross_comm"] = len(layout.cross_junctions)
+        out["n_cross_comm"] = layout.n_cross_pieces
         out["n_dc_comm"] = len(getattr(layout, "dbl_crossovers", []))
 
         # Constraints (V2 shape: 5 + n_piece_types inequalities, g <= 0 feasible).
@@ -264,17 +265,6 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
-    def _physical_pieces(self, layout) -> int:
-        """Count of physical pieces used.
-
-        CROSS_90 and DOUBLE_CROSSOVER each occupy TWO traversal slots in
-        ``main_loop_pieces`` but are one physical piece, so subtract one per record.
-        """
-        n_paired = len(layout.cross_junctions) + len(getattr(layout, "dbl_crossovers", []))
-        physical_main = len(layout.main_loop_pieces) - n_paired
-        branch = sum(len(sp.branch_pieces) for sp in layout.switch_pairs)
-        return physical_main + branch
-
     def _weighted_utilization(self, layout) -> float:
         """Utilization with special pieces weighted by ``special_piece_weight``.
 
@@ -287,7 +277,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
             + len(layout.cross_junctions)
             + len(getattr(layout, "dbl_crossovers", []))
         )
-        effective = self._physical_pieces(layout) + (self.special_piece_weight - 1.0) * n_special
+        effective = layout.n_physical_pieces + (self.special_piece_weight - 1.0) * n_special
         return effective / self.total_inventory
 
     def _compute_per_type_inventory_violation(self, layout) -> np.ndarray:

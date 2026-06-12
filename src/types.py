@@ -21,6 +21,10 @@ from numpy.typing import NDArray
 # PIECE CLASSIFICATION AND ROUTING
 # =============================================================================
 
+# Catalog piece index of CROSS_90 (piece_index in data/track_pieces_v2.yaml);
+# same convention as the local constants in templates.py.
+CROSS_90_INDEX = 3
+
 
 class PieceClass(Enum):
     """Classify pieces by port topology."""
@@ -263,6 +267,30 @@ class MultiPathLayout:
     @property
     def n_cross_junctions(self) -> int:
         return len(self.cross_junctions)
+
+    @property
+    def n_physical_pieces(self) -> int:
+        """Physical pieces used, including siding branches.
+
+        CROSS_90 / DOUBLE_CROSSOVER records occupy TWO traversal slots in
+        ``main_loop_pieces`` but are one physical piece, so subtract one per
+        record (emergent CROSS_90s occupy a single slot already).
+        """
+        n_paired = len(self.cross_junctions) + len(self.dbl_crossovers)
+        branch = sum(len(sp.branch_pieces) for sp in self.switch_pairs)
+        return len(self.main_loop_pieces) - n_paired + branch
+
+    @property
+    def n_cross_pieces(self) -> int:
+        """Physical CROSS_90 pieces in the loop, regardless of origin.
+
+        A descriptor-committed crossing marks BOTH its slots CROSS_90 and
+        carries a CrossJunction record; an emergent one (self-intersection
+        repair) marks one slot and carries no record. Physical pieces are
+        therefore CROSS_90 slots minus one per record.
+        """
+        cross_slots = sum(1 for p in self.main_loop_pieces if p == CROSS_90_INDEX)
+        return cross_slots - len(self.cross_junctions)
 
     @property
     def n_dbl_crossovers(self) -> int:
