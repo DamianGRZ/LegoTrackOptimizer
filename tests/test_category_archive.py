@@ -180,7 +180,10 @@ class TestCategoryReport:
         for category in ("switch", "cross", "dc"):
             assert f"## {category}" in report
             assert (tmp_path / f"best_with_{category}.png").exists()
-        assert "utilization" in report
+        assert "utilization score" in report
+        # The weighted score and the raw inventory fraction are different
+        # numbers — the report must show both, not one ambiguous percent.
+        assert "of inventory" in report
 
 
 class TestDecoderDropLog:
