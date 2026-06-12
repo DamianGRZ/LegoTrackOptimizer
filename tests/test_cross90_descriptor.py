@@ -34,7 +34,7 @@ def dims() -> PartitionedDimensions:
         max_junctions=0,
         max_cross_junctions=2,
         max_double_crossovers=0,
-        total_straights=40,
+        n_straights_16=40, n_straights_24=0,
         boundary_min_x=-200.0,
         boundary_max_x=200.0,
         boundary_min_y=-200.0,
