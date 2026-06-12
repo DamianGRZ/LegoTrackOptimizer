@@ -262,3 +262,68 @@ class TestCategoryOutKeys:
         assert int(np.asarray(pop.get("n_sw_pairs"))[0]) == 0
         assert int(np.asarray(pop.get("n_cross_comm"))[0]) == 0
         assert int(np.asarray(pop.get("n_dc_comm"))[0]) == 0
+
+
+class TestEmergentCrossCounting:
+    """An emergent (Step-4 self-intersection repair) CROSS_90 must count as
+    cross-bearing. Physical pieces = CROSS_90 slots minus one per
+    CrossJunction record: a descriptor commit marks BOTH its slots, an
+    emergent conversion marks one slot and carries no record."""
+
+    def test_n_cross_pieces_counts_both_origins(self):
+        from src.types import CrossJunction, MultiPathLayout
+        emergent = MultiPathLayout(main_loop_pieces=[0, 3, 0, 0])
+        assert emergent.n_cross_pieces == 1
+        committed = MultiPathLayout(
+            main_loop_pieces=[0, 3, 0, 3],
+            cross_junctions=[CrossJunction(
+                slot=0, positions=(1, 3), origin=(0.0, 0.0, 0.0),
+            )],
+        )
+        assert committed.n_cross_pieces == 1
+        plain = MultiPathLayout(main_loop_pieces=[0, 0, 2, 2])
+        assert plain.n_cross_pieces == 0
+
+    def test_descriptorless_figure_eight_reports_emergent_cross(
+        self, problem, inv, dims,
+    ):
+        """The figure-8 WITHOUT its descriptor: Step-4 repair converts the
+        perpendicular self-crossing into a CROSS_90, so the n_cross_comm
+        out-key (and with it the category archive) must see the genome as
+        cross-bearing."""
+        from src.sampling import _gen_figure_eight_cross
+        pieces, flips, *_ = _gen_figure_eight_cross(inv, dims)[-1]  # 34-pc base
+        x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
+        pop = Population.new("X", np.array([x]))
+        Evaluator().eval(problem, pop)
+        assert int(np.asarray(pop.get("n_cross_comm"))[0]) == 1
+
+
+class TestArchiveUtilIndConsistency:
+    """After an earlier category injects mid-notify, later categories must
+    see the CURRENT population: every archive entry's util must equal the
+    archived individual's own -F[0] (no stale-snapshot bookkeeping)."""
+
+    def test_injected_elite_not_recorded_with_stale_util(self):
+        from src.algorithm.runner import CategoryEliteArchive
+        arch = CategoryEliteArchive()
+        # gen1: one feasible individual carrying BOTH cross and dc.
+        gen1 = _fab_pop([
+            {"F0": -0.30, "feas": True, "cross": 1, "dc": 1},
+            {"F0": -0.60, "feas": True},
+        ])
+        arch.notify(_algo(gen1))
+        # gen2: both categories extinct. The cross category injects its
+        # elite into the worst (infeasible) slot BEFORE dc is processed —
+        # dc bookkeeping must describe the injected individual, not the
+        # replaced occupant.
+        gen2 = _fab_pop([
+            {"F0": -0.62, "feas": True},
+            {"F0": -0.10, "feas": False},
+        ])
+        arch.notify(_algo(gen2))
+        for store in (arch.feasible, arch.infeasible):
+            for category, entry in store.items():
+                assert entry["util"] == pytest.approx(
+                    -float(entry["ind"].F[0])
+                ), (category, entry["util"], float(entry["ind"].F[0]))
