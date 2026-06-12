@@ -44,6 +44,18 @@ class ConvergenceMonitorCallback(Callback):
             self.data[k] = []
         self._best_F: np.ndarray | None = None
 
+    @property
+    def best_front(self) -> np.ndarray:
+        """Run-cumulative non-dominated front of every feasible F seen.
+
+        Selection discards mid-run trade-off solutions; this archive is the
+        only record of them (the terminal population is a converged
+        monoculture). Consumed by the Pareto plot and saved artifacts.
+        """
+        if self._best_F is None:
+            return np.empty((0, 2))
+        return self._best_F
+
     def notify(self, algorithm) -> None:
         pop = algorithm.pop
         F = pop.get("F")

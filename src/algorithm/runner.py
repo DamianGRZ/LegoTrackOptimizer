@@ -388,7 +388,8 @@ class SnapshotCallback(Callback):
             util = float(-entry["F"][0])
             speed = float(-entry["F"][1])
             base = (f"Snapshot {snap_idx}/{total} | Gen {gen} | {category} | "
-                    f"{layout.n_pieces} pcs, util={util:.1%}, speed={speed:.2f} m/s")
+                    f"{layout.n_physical_pieces} pcs, score={util:.1%}, "
+                    f"speed={speed:.2f} m/s")
             title = base if category == "feasible" else f"{base}, CV={entry['cv']:.2f}"
             save_path = self._snap_dir / f"snapshot_{snap_idx:02d}_{category}.png"
             if hasattr(layout, "n_switch_pairs") and layout.n_switch_pairs > 0:
@@ -731,8 +732,9 @@ def run_optimization(
                     X[best_idx], catalog, config.inventory, dims=dims,
                 )
                 logger.info(
-                    f"Best feasible: {best_layout.n_pieces} pieces, "
-                    f"util={-F[best_idx, 0]:.1%}, speed={-F[best_idx, 1]:.2f} m/s, "
+                    f"Best feasible: {best_layout.n_physical_pieces}/"
+                    f"{sum(config.inventory.values())} pieces, "
+                    f"score={-F[best_idx, 0]:.1%}, speed={-F[best_idx, 1]:.2f} m/s, "
                     f"switches={best_layout.n_switch_pairs}"
                 )
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
@@ -794,6 +796,7 @@ def _write_category_report(res, output_dir, catalog, config, dims,
     best_util = (float(np.max(-F[feasible_mask][:, 0]))
                  if np.any(feasible_mask) else None)
     boundary = config.boundary
+    total_inv = sum(config.inventory.values())
     lines = ["# Category report", ""]
 
     for category in CATEGORY_KEYS:
@@ -813,17 +816,19 @@ def _write_category_report(res, output_dir, catalog, config, dims,
             }[category]
             gap = (f"{(best_util - util) * 100:.1f}pp below global best"
                    if best_util is not None else "n/a")
+            n_phys = layout.n_physical_pieces
             plot_fn(
                 layout,
-                f"Best with {category} ({layout.n_pieces} pcs, {util:.1%} util)",
+                f"Best with {category} ({n_phys}/{total_inv} pcs, "
+                f"score {util:.1%})",
                 output_dir / f"best_with_{category}.png",
             )
             xs = np.concatenate([p.states[:, 0] for p in layout.paths if len(p.states) > 1])
             ys = np.concatenate([p.states[:, 1] for p in layout.paths if len(p.states) > 1])
             lines += [
-                f"- utilization: {util:.1%} ({gap})",
-                f"- pieces: {layout.n_pieces}, speed: {-float(ind.F[1]):.2f} m/s, "
-                f"{category} count: {n_element}",
+                f"- utilization score: {util:.1%} ({gap})",
+                f"- pieces: {n_phys}/{total_inv} ({n_phys / total_inv:.1%} of inventory), "
+                f"speed: {-float(ind.F[1]):.2f} m/s, {category} count: {n_element}",
                 f"- bbox: {xs.max() - xs.min():.0f} x {ys.max() - ys.min():.0f} studs "
                 f"in {boundary.width:.0f} x {boundary.height:.0f} box",
             ]
@@ -879,9 +884,19 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
     feasible_indices = np.where(feasible_mask)[0]
 
+    # Run-cumulative feasible front from the monitor: the terminal population
+    # is a converged monoculture, so this archive is what actually shows the
+    # discovered trade-off curve. Persisted so the plot can be regenerated.
+    monitor = getattr(res, "monitor", None)
+    archive_F = getattr(monitor, "best_front", None) if monitor is not None else None
+    if archive_F is not None and len(archive_F) > 0:
+        np.savetxt(output_dir / "pareto_archive.csv", archive_F, delimiter=",",
+                   header="f0_neg_utilization,f1_neg_speed", comments="")
+
     try:
         plot_pareto_front(F, G, title="Pareto Front: Utilization vs Speed",
-                          save_path=output_dir / "pareto_front.png")
+                          save_path=output_dir / "pareto_front.png",
+                          archive_F=archive_F)
         logger.info("Pareto front saved to pareto_front.png")
     except Exception as e:
         logger.warning(f"Could not plot Pareto front: {e}")
@@ -902,8 +917,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     is_feasible = feasible_mask[best_overall_idx] if G is not None else True
 
     logger.info(
-        f"Best overall: {best_overall_layout.n_pieces} pieces, "
-        f"util={best_overall_util:.1%}, speed={best_overall_speed:.2f} m/s, "
+        f"Best overall: {best_overall_layout.n_physical_pieces}/"
+        f"{sum(config.inventory.values())} pieces, "
+        f"score={best_overall_util:.1%}, speed={best_overall_speed:.2f} m/s, "
         f"switches={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
         f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
     )
@@ -917,8 +933,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         best_feas_speed = -F[best_feas_idx, 1]
         _plot_layout(
             best_feas_layout,
-            f"Best Feasible ({best_feas_layout.n_pieces} pcs, "
-            f"{best_feas_util:.1%} util, {best_feas_speed:.2f} m/s)",
+            f"Best Feasible ({best_feas_layout.n_physical_pieces}/"
+            f"{sum(config.inventory.values())} pcs, score {best_feas_util:.1%}, "
+            f"{best_feas_speed:.2f} m/s)",
             output_dir / "best_layout.png",
         )
     else:
@@ -935,9 +952,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         best_infeas_cv = float(np.sum(np.maximum(0, G[best_infeas_idx])))
         _plot_layout(
             best_infeas_layout,
-            f"Best Infeasible ({best_infeas_layout.n_pieces} pcs, "
-            f"{best_infeas_util:.1%} util, {best_infeas_speed:.2f} m/s, "
-            f"CV={best_infeas_cv:.2f})",
+            f"Best Infeasible ({best_infeas_layout.n_physical_pieces}/"
+            f"{sum(config.inventory.values())} pcs, score {best_infeas_util:.1%}, "
+            f"{best_infeas_speed:.2f} m/s, CV={best_infeas_cv:.2f})",
             output_dir / "best_infeasible.png",
         )
 

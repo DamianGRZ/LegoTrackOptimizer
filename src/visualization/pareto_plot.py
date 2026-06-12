@@ -6,11 +6,25 @@ from typing import Optional, Union
 import matplotlib
 
 # Headless pipeline: PNGs only (Tk + Pool result-handler threads crash Tcl).
+# Must be forced BEFORE pymoo.visualization pulls in pyplot.
 matplotlib.use("Agg", force=True)
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np
-from matplotlib.figure import Figure
-from numpy.typing import NDArray
+import numpy as np  # noqa: E402
+from matplotlib.figure import Figure  # noqa: E402
+from numpy.typing import NDArray  # noqa: E402
+from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting  # noqa: E402
+from pymoo.visualization.scatter import Scatter  # noqa: E402
+
+
+def _add_with_multiplicity(plot, pts: NDArray, **style) -> list:
+    """Add distinct points to a pymoo plot; return [(xy, count)] for labels.
+
+    A converged terminal population holds hundreds of coincident F vectors,
+    which overlapping markers would render as a few lonely dots — distinct
+    points are drawn once and duplicates reported for annotation.
+    """
+    uniq, counts = np.unique(pts.round(6), axis=0, return_counts=True)
+    plot.add(uniq, **style)
+    return [(xy, int(c)) for xy, c in zip(uniq, counts) if c > 1]
 
 
 def plot_pareto_front(
@@ -18,59 +32,71 @@ def plot_pareto_front(
     G: Optional[NDArray[np.float64]] = None,
     title: str = "Pareto Front",
     save_path: Optional[Union[str, Path]] = None,
+    archive_F: Optional[NDArray[np.float64]] = None,
 ) -> Figure:
-    """Plot 2D Pareto front with objective values.
+    """Objective-space scatter built on pymoo's ``Scatter`` (maximized view).
+
+    Follows pymoo's front-vs-solutions convention: all distinct points are
+    drawn with their multiplicity, and the Pareto front is ringed. With
+    ``archive_F`` (the run-cumulative feasible front from the monitor) the
+    ring marks THAT front — the terminal population is a converged
+    monoculture, so the archive is what actually shows the trade-off curve.
+    Without it, the ring falls back to the final population's non-dominated
+    subset.
 
     Args:
-        F: Objective array of shape (n, 2) with columns [utilization, speed].
-        G: Optional constraint array of shape (n, 5) for feasibility coloring.
+        F: Objective array of shape (n, 2); both objectives are negated
+            maximization targets, plotted sign-flipped.
+        G: Optional constraint array for feasibility coloring.
         title: Plot title.
-        save_path: Optional path to save plot as PNG.
+        save_path: Optional path to save the plot as PNG.
+        archive_F: Optional (m, 2) run-cumulative feasible front (raw
+            minimized sign, like ``F``).
 
     Returns:
-        Matplotlib figure with 2D scatter plot.
+        Matplotlib figure with the 2D scatter plot.
     """
-    fig, ax = plt.subplots(figsize=(10, 8))
+    F = np.asarray(F, dtype=float)
+    feasible = (np.all(G <= 0, axis=1) if G is not None
+                else np.ones(len(F), dtype=bool))
+    view = np.column_stack([-F[:, 0], -F[:, 1]])
 
-    # Flip signs for maximization objectives (both F[0] and F[1] are negated)
-    utilization = -F[:, 0]
-    avg_speed = -F[:, 1]
+    plot = Scatter(
+        title=title, legend=True, figsize=(10, 8), tight_layout=True,
+        labels=["Utilization score (weighted)", "Avg Speed (m/s)"],
+    )
+    annotations: list = []
+    if feasible.any():
+        annotations += _add_with_multiplicity(
+            plot, view[feasible], color="green", s=50, alpha=0.6,
+            label="Feasible",
+        )
+    if (~feasible).any():
+        annotations += _add_with_multiplicity(
+            plot, view[~feasible], color="red", s=50, alpha=0.6,
+            label="Infeasible",
+        )
 
-    # Determine feasibility for coloring
-    if G is not None:
-        feasible = np.all(G <= 0, axis=1)
-        colors = np.where(feasible, "green", "red")
-        labels = ["Feasible", "Infeasible"]
-    else:
-        colors = "blue"
-        labels = ["Solutions"]
+    if archive_F is not None and len(archive_F) > 0:
+        front_view = np.column_stack([-archive_F[:, 0], -archive_F[:, 1]])
+        front_view = front_view[np.argsort(front_view[:, 0])]
+        plot.add(front_view, plot_type="line", color="black", alpha=0.4)
+        plot.add(front_view, s=140, facecolors="none", edgecolors="black",
+                 label="Run Pareto front (all generations)")
+    elif feasible.any():
+        front = NonDominatedSorting().do(
+            F[feasible], only_non_dominated_front=True,
+        )
+        front_pts = np.unique(view[feasible][front].round(6), axis=0)
+        plot.add(front_pts, s=140, facecolors="none", edgecolors="black",
+                 label="Non-dominated")
 
-    # Create scatter plot
-    if isinstance(colors, np.ndarray):
-        for color, label in zip(["green", "red"], labels):
-            mask = colors == color
-            if np.any(mask):
-                ax.scatter(
-                    utilization[mask],
-                    avg_speed[mask],
-                    c=color,
-                    marker="o",
-                    s=50,
-                    alpha=0.6,
-                    label=label,
-                )
-    else:
-        ax.scatter(utilization, avg_speed, c=colors, marker="o", s=50, alpha=0.6, label=labels[0])
-
-    ax.set_xlabel("Utilization (fraction)", fontsize=11)
-    ax.set_ylabel("Avg Speed (m/s)", fontsize=11)
-    ax.set_title(title, fontsize=14)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
+    plot.do()
+    for (x, y), count in annotations:
+        plot.ax.annotate(f"×{count}", (x, y), textcoords="offset points",
+                         xytext=(8, 5), fontsize=9)
+    plot.ax.grid(True, alpha=0.3)
 
     if save_path is not None:
-        fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
-
-    return fig
+        plot.save(save_path)
+    return plot.fig
