@@ -23,12 +23,18 @@ from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
 from pymoo.optimize import minimize
 from pymoo.parallelization.starmap import StarmapParallelization
 from pymoo.termination.default import DefaultMultiObjectiveTermination
+from pymoo.termination.max_gen import MaximumGenerationTermination
 
 from src.algorithm.monitoring import ConvergenceMonitorCallback
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.decoder import decode_chromosome
-from src.encoding import compute_dimensions
+from src.encoding import (
+    compute_dimensions,
+    get_active_cross_junctions,
+    get_active_double_crossovers,
+    get_active_junctions,
+)
 from src.operators import PartitionedCrossover, PartitionedMutation
 from src.problem import TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
@@ -173,6 +179,100 @@ class FeasibleEliteCallback(Callback):
             slot = int(np.argmax(F[:, 0]))
 
         pop[slot] = copy.deepcopy(self._elite)
+
+
+# =============================================================================
+# Category Elite Archive
+# =============================================================================
+
+# Category name -> custom out-key written by TrackOptimizationProblem._evaluate.
+CATEGORY_KEYS = {
+    "switch": "n_sw_pairs",
+    "cross": "n_cross_comm",
+    "dc": "n_dc_comm",
+}
+
+
+class CategoryEliteArchive(Callback):
+    """Preserve the best individual containing each special element.
+
+    Generalizes :class:`FeasibleEliteCallback` to per-category elites: for each
+    category (committed switch pair / CROSS_90 / DOUBLE_CROSSOVER) the archive
+    keeps the best-utilization FEASIBLE individual ever seen and re-injects it
+    (one per category, replacing the worst individual) whenever the population
+    no longer holds a feasible member of that category at least as good.
+    Best INFEASIBLE individuals are archived too, but only for reporting —
+    they are never injected.
+
+    Must run AFTER FeasibleEliteCallback in the chain: the global elite's slot
+    stops being "worst" once injected, so it is never clobbered here.
+    """
+
+    def __init__(self, inject: bool = True):
+        super().__init__()
+        self.inject = inject
+        self.feasible: dict = {}    # category -> {"util": float, "ind": Individual}
+        self.infeasible: dict = {}  # category -> {"util": float, "ind": Individual}
+
+    def notify(self, algorithm):
+        pop = algorithm.pop
+        if pop is None:
+            return
+        F = pop.get("F")
+        G = pop.get("G")
+        if F is None or G is None:
+            return
+
+        feas_mask = np.all(G <= 0, axis=1)
+        used_slots: set = set()
+
+        for category, key in CATEGORY_KEYS.items():
+            counts = pop.get(key)
+            if counts is None:
+                return  # population evaluated without category keys
+            has_element = np.asarray(counts, dtype=float) > 0
+
+            self._update(self.feasible, category, pop, F, has_element & feas_mask)
+            self._update(self.infeasible, category, pop, F, has_element & ~feas_mask)
+
+            if self.inject:
+                self._inject(category, pop, F, G, feas_mask, has_element, used_slots)
+
+    def _update(self, store, category, pop, F, mask):
+        if not np.any(mask):
+            return
+        idx = np.where(mask)[0]
+        best = int(idx[np.argmax(-F[idx, 0])])
+        util = float(-F[best, 0])
+        current = store.get(category)
+        if current is None or util > current["util"]:
+            store[category] = {"util": util, "ind": copy.deepcopy(pop[best])}
+
+    def _inject(self, category, pop, F, G, feas_mask, has_element, used_slots):
+        elite = self.feasible.get(category)
+        if elite is None:
+            return
+        member_mask = has_element & feas_mask
+        if np.any(member_mask) and float(np.max(-F[member_mask, 0])) >= elite["util"]:
+            return  # an equal-or-better feasible member is already present
+
+        slot = self._worst_slot(F, G, feas_mask, used_slots)
+        if slot is None:
+            return
+        used_slots.add(slot)
+        pop[slot] = copy.deepcopy(elite["ind"])
+
+    @staticmethod
+    def _worst_slot(F, G, feas_mask, used_slots):
+        """Worst-CV infeasible slot first, else lowest-utilization feasible."""
+        infeas = [i for i in np.where(~feas_mask)[0] if i not in used_slots]
+        if infeas:
+            cv = np.maximum(G[infeas], 0).sum(axis=1)
+            return int(np.asarray(infeas)[int(np.argmax(cv))])
+        feas = [i for i in np.where(feas_mask)[0] if i not in used_slots]
+        if feas:
+            return int(np.asarray(feas)[int(np.argmax(F[feas, 0]))])
+        return None
 
 
 # =============================================================================
@@ -362,20 +462,27 @@ def _build_elementwise_runner(n_workers: int):
     return StarmapParallelization(pool.starmap), pool
 
 
-def _build_termination(config: OptimizationConfig) -> DefaultMultiObjectiveTermination:
-    """Improvement-aware termination from ``TerminationConfig``.
+def _build_termination(config: OptimizationConfig):
+    """Termination from ``TerminationConfig``.
 
-    Stops at ``algorithm.n_gen`` (capped further by ``termination.n_max_gen``)
-    OR earlier when the feasible objective space stops improving by ``ftol``
-    over a ``period``-generation window — converged runs no longer grind out
-    the full generation budget.
+    ``period = 0`` (default): no improvement-based early stop — the run uses
+    the full generation budget. A stagnation window judged while the epsilon
+    schedule still relaxes constraints would cut the run before its late
+    strict phase, where feasible improvements typically land.
+
+    ``period > 0``: stop at the generation cap OR earlier when the feasible
+    objective space stops improving by ``ftol`` over a ``period``-generation
+    window, exactly as configured.
     """
     t = config.algorithm.termination
+    n_max_gen = min(config.algorithm.n_gen, t.n_max_gen)
+    if t.period <= 0:
+        return MaximumGenerationTermination(n_max_gen)
     return DefaultMultiObjectiveTermination(
         xtol=t.xtol,
         ftol=t.ftol,
         period=t.period,
-        n_max_gen=min(config.algorithm.n_gen, t.n_max_gen),
+        n_max_gen=n_max_gen,
     )
 
 
@@ -554,8 +661,11 @@ def run_optimization(
     termination = _build_termination(config)
 
     elite_callback = FeasibleEliteCallback()
+    # After FeasibleEliteCallback: the global elite's slot is no longer
+    # "worst", so category injection never clobbers it.
+    category_archive = CategoryEliteArchive()
     monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55))
-    chain: list[Callback] = [elite_callback, monitor]
+    chain: list[Callback] = [elite_callback, category_archive, monitor]
     if output_dir is not None:
         snapshot_cb = SnapshotCallback(
             _compute_snapshot_targets(config.algorithm.n_gen),
@@ -597,6 +707,7 @@ def run_optimization(
     res.monitor = monitor
     res.monitor_data = monitor.data
     res.snapshots = snapshot_cb.snapshots if snapshot_cb is not None else []
+    res.category_elites = category_archive
 
     logger.info("Optimization complete!")
 
@@ -625,6 +736,111 @@ def run_optimization(
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
 
     return res
+
+
+# =============================================================================
+# Category Report
+# =============================================================================
+
+# General geometric context per category (rule-level facts, not run data).
+_CATEGORY_CONTEXT = {
+    "switch": "a passing siding adds a parallel track segment inside the "
+              "loop's existing bounding box",
+    "cross": "a CROSS_90 needs the loop to cross itself perpendicular; the "
+             "figure-8 family spends >=24 R40 curves on two turning-circle lobes",
+    "dc": "a DOUBLE_CROSSOVER joins two parallel tracks 16 studs apart and "
+          "both traversals must jointly cover all 4 ports",
+}
+
+# Category -> (active-descriptor reader, drop_log entry prefix).
+_CATEGORY_GENOTYPE = {
+    "switch": (get_active_junctions, "junction["),
+    "cross": (get_active_cross_junctions, "CROSS["),
+    "dc": (get_active_double_crossovers, "DC["),
+}
+
+
+def _collect_drop_reasons(category, X, catalog, config, dims, limit=5):
+    """Decode up to ``limit`` final-population genomes whose descriptor block
+    is active for ``category`` and aggregate the decoder's drop reasons."""
+    reader, prefix = _CATEGORY_GENOTYPE[category]
+    reasons: list[str] = []
+    sampled = 0
+    for row in X:
+        if sampled >= limit:
+            break
+        x = np.asarray(row, dtype=np.int16)
+        if not reader(x, dims):
+            continue
+        sampled += 1
+        layout = decode_chromosome(x, catalog, config.inventory, dims=dims)
+        reasons.extend(e for e in layout.drop_log if e.startswith(prefix))
+    deduped: list[str] = []
+    for r in reasons:
+        if r not in deduped:
+            deduped.append(r)
+    return deduped[:10]
+
+
+def _write_category_report(res, output_dir, catalog, config, dims,
+                           F, X, feasible_mask, plot_fn) -> None:
+    """Render best_with_<cat>.png + category_report.md from the elite archive."""
+    archive = getattr(res, "category_elites", None)
+    if archive is None:
+        return
+
+    best_util = (float(np.max(-F[feasible_mask][:, 0]))
+                 if np.any(feasible_mask) else None)
+    boundary = config.boundary
+    lines = ["# Category report", ""]
+
+    for category in CATEGORY_KEYS:
+        lines.append(f"## {category}")
+        elite = archive.feasible.get(category)
+        if elite is not None:
+            ind = elite["ind"]
+            layout = decode_chromosome(
+                np.asarray(ind.X, dtype=np.int16), catalog,
+                config.inventory, dims=dims,
+            )
+            util = elite["util"]
+            n_element = {
+                "switch": layout.n_switch_pairs,
+                "cross": layout.n_cross_junctions,
+                "dc": layout.n_dbl_crossovers,
+            }[category]
+            gap = (f"{(best_util - util) * 100:.1f}pp below global best"
+                   if best_util is not None else "n/a")
+            plot_fn(
+                layout,
+                f"Best with {category} ({layout.n_pieces} pcs, {util:.1%} util)",
+                output_dir / f"best_with_{category}.png",
+            )
+            xs = np.concatenate([p.states[:, 0] for p in layout.paths if len(p.states) > 1])
+            ys = np.concatenate([p.states[:, 1] for p in layout.paths if len(p.states) > 1])
+            lines += [
+                f"- utilization: {util:.1%} ({gap})",
+                f"- pieces: {layout.n_pieces}, speed: {-float(ind.F[1]):.2f} m/s, "
+                f"{category} count: {n_element}",
+                f"- bbox: {xs.max() - xs.min():.0f} x {ys.max() - ys.min():.0f} studs "
+                f"in {boundary.width:.0f} x {boundary.height:.0f} box",
+            ]
+        else:
+            lines.append("- no feasible solution containing this element was seen")
+            infeas = archive.infeasible.get(category)
+            if infeas is not None:
+                cv = float(np.sum(np.maximum(0, infeas["ind"].G)))
+                lines.append(
+                    f"- best infeasible: util {infeas['util']:.1%}, CV={cv:.2f}"
+                )
+            reasons = _collect_drop_reasons(category, X, catalog, config, dims)
+            if reasons:
+                lines.append("- decoder drop reasons (final-population sample):")
+                lines.extend(f"  - {r}" for r in reasons)
+        lines.append(f"- context: {_CATEGORY_CONTEXT[category]}")
+        lines.append("")
+
+    (output_dir / "category_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 # =============================================================================
@@ -722,5 +938,8 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             f"CV={best_infeas_cv:.2f})",
             output_dir / "best_infeasible.png",
         )
+
+    _write_category_report(res, output_dir, catalog, config, dims,
+                           F, X, feasible_mask, _plot_layout)
 
     logger.info(f"Results saved to {output_dir}")

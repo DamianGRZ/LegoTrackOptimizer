@@ -121,6 +121,10 @@ def decode_chromosome(
 
     tracker = InventoryTracker(inventory, catalog)
 
+    # Trace of every descriptor the decode skips, attached to the layout for
+    # the per-category run report.
+    drop_log: List[str] = []
+
     # Step 1: Read main loop active pieces and their flip bits
     main_pieces, main_flips = _read_main_loop(x, dims, tracker)
 
@@ -128,21 +132,25 @@ def decode_chromosome(
         return _empty_layout()
 
     # Step 2: Read and validate junctions
-    junctions = _read_junctions(x, dims, main_pieces, tracker, catalog, config, main_flips=main_flips)
+    junctions = _read_junctions(
+        x, dims, main_pieces, tracker, catalog, config,
+        main_flips=main_flips, drop_log=drop_log,
+    )
 
     # Step 3: Inject switches into main loop, build switch pairs
     augmented_pieces, augmented_flips, switch_pairs = _inject_switches(
-        main_pieces, junctions, tracker, catalog, config, main_flips=main_flips,
+        main_pieces, junctions, tracker, catalog, config,
+        main_flips=main_flips, drop_log=drop_log,
     )
 
     cross_junctions = _inject_cross_junctions(
         augmented_pieces, x, dims, tracker, catalog, config,
-        main_flips=augmented_flips,
+        main_flips=augmented_flips, drop_log=drop_log,
     )
 
     dbl_crossovers, dbl_route_map = _inject_double_crossovers(
         augmented_pieces, x, dims, tracker, catalog, config,
-        main_flips=augmented_flips,
+        main_flips=augmented_flips, drop_log=drop_log,
     )
 
     # Step 4: Self-intersection repair (CROSS_90 injection)
@@ -157,6 +165,7 @@ def decode_chromosome(
     multi_path.cross_junctions = cross_junctions
     multi_path.dbl_crossovers = dbl_crossovers
     multi_path.main_loop_routes = dbl_route_map
+    multi_path.drop_log = drop_log
 
     # Step 7: Auto-center within boundary
     start_x, start_y = get_start_position(x, dims)
@@ -210,6 +219,7 @@ def _read_junctions(
     catalog: TrackCatalog,
     config: DecoderConfig,
     main_flips: Optional[List[int]] = None,
+    drop_log: Optional[List[str]] = None,
 ) -> List[ValidatedJunction]:
     """Read active junctions, validate inventory, deactivate if insufficient.
 
@@ -243,6 +253,10 @@ def _read_junctions(
 
         # Greedy inventory check
         if not tracker.can_use_batch(requirements):
+            if drop_log is not None:
+                drop_log.append(
+                    f"junction[{slot}] (pos {position}): insufficient inventory for siding"
+                )
             continue
 
         # Reserve the inventory
@@ -273,6 +287,7 @@ def _inject_switches(
     catalog: TrackCatalog,
     config: DecoderConfig,
     main_flips: Optional[List[int]] = None,
+    drop_log: Optional[List[str]] = None,
 ) -> Tuple[List[int], List[int], List[SwitchPair]]:
     """Replace main loop pieces at junction positions with switches.
 
@@ -294,10 +309,15 @@ def _inject_switches(
 
     pair_id = 0
 
+    def _log_drop(junc, reason):
+        if drop_log is not None:
+            drop_log.append(f"junction[{junc.slot}] (pos {junc.position}): {reason}")
+
     for junc in junctions:
         in_pos = junc.position
 
         if in_pos in used_positions or in_pos >= n_main:
+            _log_drop(junc, "IN position occupied or out of range")
             _release_junction_inventory(junc, tracker)
             continue
 
@@ -307,10 +327,12 @@ def _inject_switches(
         out_pos = _find_out_position(augmented, augmented_flips, in_pos, required_dist, catalog)
 
         if out_pos is None or out_pos >= n_main or out_pos <= in_pos:
+            _log_drop(junc, "no OUT position at the required main distance")
             _release_junction_inventory(junc, tracker)
             continue
 
         if out_pos in used_positions:
+            _log_drop(junc, f"OUT position {out_pos} occupied")
             _release_junction_inventory(junc, tracker)
             continue
 
@@ -328,6 +350,7 @@ def _inject_switches(
             position_tolerance=config.siding_position_tolerance,
             angle_tolerance=config.siding_angle_tolerance,
         ):
+            _log_drop(junc, "siding geometry invalid (branch endpoint mismatch)")
             augmented[in_pos] = orig_in
             augmented_flips[in_pos] = orig_in_flip
             _release_junction_inventory(junc, tracker)
@@ -376,6 +399,7 @@ def _inject_cross_junctions(
     config: DecoderConfig,
     *,
     main_flips: Optional[List[int]] = None,
+    drop_log: Optional[List[str]] = None,
 ) -> List[CrossJunction]:
     """Place a CROSS_90 wherever a descriptor names two perpendicular-coincident slots.
 
@@ -408,19 +432,28 @@ def _inject_cross_junctions(
     states = compute_fk_chain(fk_array_with_flips(catalog, main_pieces, main_flips))
     cross_junctions: List[CrossJunction] = []
 
+    def _log_drop(slot, p1, p2, reason):
+        if drop_log is not None:
+            drop_log.append(f"CROSS[{slot}] (pos {p1},{p2}): {reason}")
+
     for slot, _active, p1, p2 in descriptors:
         p1, p2 = (p1, p2) if p1 < p2 else (p2, p1)
         if p1 == p2 or p1 < 0 or p2 >= n_main:
+            _log_drop(slot, p1, p2, "invalid positions")
             continue
         if p1 in occupied or p2 in occupied:
+            _log_drop(slot, p1, p2, "position occupied")
             continue
         if main_pieces[p1] != STRAIGHT_16 or main_pieces[p2] != STRAIGHT_16:
+            _log_drop(slot, p1, p2, "slots not STRAIGHT_16")
             continue
         if not tracker.can_use(CROSS_90_INDEX):
+            _log_drop(slot, p1, p2, "no CROSS_90 inventory")
             continue
         # Validate with the dangling-port predicate's own tolerances so a
         # committed crossing is guaranteed feasible (never counted dangling).
         if not cross_pair_perpendicular(states, p1, p2):
+            _log_drop(slot, p1, p2, "not perpendicular-coincident")
             continue
 
         tracker.release(main_pieces[p1])
@@ -452,6 +485,7 @@ def _inject_double_crossovers(
     config: DecoderConfig,
     *,
     main_flips: Optional[List[int]] = None,
+    drop_log: Optional[List[str]] = None,
 ) -> Tuple[List[DblCrossover], Dict[int, int]]:
     """Replace pairs of main-loop slots with a physical DOUBLE_CROSSOVER.
 
@@ -483,17 +517,26 @@ def _inject_double_crossovers(
     route_map: Dict[int, int] = {}
     records: List[DblCrossover] = []
 
+    def _log_drop(slot, p1, p2, reason):
+        if drop_log is not None:
+            drop_log.append(f"DC[{slot}] (pos {p1},{p2}): {reason}")
+
     for slot, _active, p1, r1, p2, r2 in descriptors:
         p1, p2 = (p1, p2) if p1 < p2 else (p2, p1)
         if p1 == p2 or p1 >= n_main or p2 >= n_main:
+            _log_drop(slot, p1, p2, "invalid positions")
             continue
         if not dbl_crossover_routes_cover_all_ports(r1, r2):
+            _log_drop(slot, p1, p2, f"routes {r1},{r2} do not cover all 4 ports")
             continue
         if p1 in occupied or p2 in occupied:
+            _log_drop(slot, p1, p2, "position occupied")
             continue
         if main_pieces[p1] != STRAIGHT_16 or main_pieces[p2] != STRAIGHT_16:
+            _log_drop(slot, p1, p2, "slots not STRAIGHT_16")
             continue
         if not tracker.can_use_batch(get_dbl_crossover_inventory_requirements()):
+            _log_drop(slot, p1, p2, "no DOUBLE_CROSSOVER inventory")
             continue
 
         # Build a tentative pieces+route_map view so the FK chain at p2 sees
@@ -514,6 +557,7 @@ def _inject_double_crossovers(
         origin_1 = dbl_crossover_piece_origin(state_p1, r1)
         origin_2 = dbl_crossover_piece_origin(state_p2, r2)
         if not _piece_origins_match(origin_1, origin_2, pos_tol, ang_tol_deg):
+            _log_drop(slot, p1, p2, "piece origins do not coincide (FK mismatch)")
             continue
 
         # Commit: release the two STRAIGHT_16s, consume one DBL_CROSSOVER, and

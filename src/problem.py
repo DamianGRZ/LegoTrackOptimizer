@@ -154,6 +154,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
         if layout.n_pieces == 0:
             out["F"] = np.array([np.inf, np.inf])
             out["G"] = np.full(self.n_ieq_constr, 1e6)
+            out["n_sw_pairs"] = 0
+            out["n_cross_comm"] = 0
+            out["n_dc_comm"] = 0
             return
 
         # F[0]: -utilization (special pieces weighted so topology is not overhead)
@@ -174,6 +177,14 @@ class TrackOptimizationProblem(ElementwiseProblem):
         )
 
         out["F"] = [-utilization, -slowest_route_speed]
+
+        # Committed-element census as custom out-keys: the Evaluator copies
+        # them onto the Population, so the category-elite archive reads them
+        # via pop.get() without an extra decode. Counted from the decoded
+        # layout, so emergent CROSS_90 placements are included.
+        out["n_sw_pairs"] = len(layout.switch_pairs)
+        out["n_cross_comm"] = len(layout.cross_junctions)
+        out["n_dc_comm"] = len(getattr(layout, "dbl_crossovers", []))
 
         # Constraints (V2 shape: 5 + n_piece_types inequalities, g <= 0 feasible).
         # G[0..2]: closure split into per-axis inequalities (shim: degrees for theta

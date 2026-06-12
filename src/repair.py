@@ -25,6 +25,8 @@ from .encoding import (
     GENES_PER_JUNCTION,
     PartitionedDimensions,
     PieceIndex,
+    get_active_cross_junctions,
+    get_active_double_crossovers,
     get_active_junctions,
     get_active_main_pieces,
     get_junction,
@@ -44,6 +46,11 @@ STRAIGHT_24 = int(PieceIndex.STRAIGHT_24)
 R40_ANGLE = 22.5
 TARGET_ANGLE = 360.0
 CLOSURE_TOLERANCE = 1.0  # degrees
+
+# Legal turning sums for a genome that carries an active crossing-capable
+# descriptor (CROSS_90 / DOUBLE_CROSSOVER): a closed self-crossing loop has
+# turning 0 (figure-8) or 720 (double wrap), never necessarily 360.
+ANGLE_TARGETS_CROSSING = (0.0, 360.0, 720.0)
 
 SIDING_MARGIN = 16.0  # conservative per-side reach of an active passing siding (studs)
 
@@ -147,6 +154,19 @@ class MainLoopClosureRepair(Repair):
             self._repair_chromosome(X[i])
         return X
 
+    def _target_angle(self, x: NDArray, total_angle: float) -> float:
+        """Angular target for this genome.
+
+        Plain loops are driven toward 360 degrees. A genome with an active
+        cross/DC descriptor is a self-crossing candidate, whose legal turning
+        sums are {0, 360, 720} — forcing 360 on a figure-8 (turning 0) would
+        mutilate it; the nearest legal target is used instead.
+        """
+        if (get_active_cross_junctions(x, self.dims)
+                or get_active_double_crossovers(x, self.dims)):
+            return min(ANGLE_TARGETS_CROSSING, key=lambda t: abs(t - total_angle))
+        return TARGET_ANGLE
+
     def _repair_chromosome(self, x: NDArray) -> None:
         types = get_main_loop_types(x, self.dims)
         flips = get_main_loop_flips(x, self.dims)
@@ -156,9 +176,10 @@ class MainLoopClosureRepair(Repair):
             return
 
         total_angle = self._compute_total_angle(types[active_mask], flips[active_mask])
-        deficit = TARGET_ANGLE - total_angle
+        target = self._target_angle(x, total_angle)
+        deficit = target - total_angle
 
-        # Stage 1: angular closure — add/remove R40 curves to reach 360 degrees.
+        # Stage 1: angular closure — add/remove R40 curves toward the target.
         if abs(deficit) >= CLOSURE_TOLERANCE:
             usage = Counter(int(t) for t in types[active_mask])
             if deficit > R40_ANGLE:
@@ -170,8 +191,12 @@ class MainLoopClosureRepair(Repair):
 
         # Stage 2: translational closure — only meaningful on an angularly closed
         # loop. Straights carry dtheta=0, so dropping one shifts the tail by exactly
-        # its world displacement without disturbing the 360-degree sum.
-        if abs(TARGET_ANGLE - total_angle) < CLOSURE_TOLERANCE:
+        # its world displacement without disturbing the angular sum.
+        # Skipped when an active DC descriptor exists: the descriptor reroutes
+        # two slots at decode time, so the raw main-loop chain's dx/dy gap is an
+        # artifact — decline gracefully rather than break a valid loop.
+        if (abs(target - total_angle) < CLOSURE_TOLERANCE
+                and not get_active_double_crossovers(x, self.dims)):
             self._close_translation(x)
 
     def _compute_total_angle(self, active_types: NDArray, active_flips: NDArray) -> float:
@@ -529,6 +554,11 @@ class BoundaryAwareRepair(Repair):
         return max(0.0, box_w - 2 * margin), max(0.0, box_h - 2 * margin)
 
     def _repair_chromosome(self, x: NDArray) -> None:
+        # An active DC descriptor reroutes two slots at decode time, so the
+        # raw main-loop span measured below is an artifact — decline
+        # gracefully and leave boundary enforcement to the G[3] penalty.
+        if get_active_double_crossovers(x, self.dims):
+            return
         states = _main_loop_states(x, self.dims, self.fk_table)
         if states.shape[0] <= 1:
             return
