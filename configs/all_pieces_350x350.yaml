@@ -5,7 +5,7 @@ train_config_path: trains/default.yaml
 
 inventory:
   # Straights
-  #STRAIGHT_24: 8
+  STRAIGHT_24: 8
   STRAIGHT_16: 120
   # R40 curves
   R40_CURVE: 80
@@ -31,14 +31,14 @@ algorithm:
   name: NSGA2
   pop_size: 1000
   n_gen: 300
-  heuristic_ratio: 0.20
-  crossover_prob: 0.95
-  mutation_prob: 0.05
+  heuristic_ratio: 0.2
+  crossover_prob: 0.9
+  mutation_prob: 0.1
   eliminate_duplicates: true
   seed: null
   termination:
     n_max_gen: 1000
-    period: 100  # Early stop if no improvement for 100 generations
+    period: 0  # 0 = no improvement-based early stop; run the full generation budget
 
 closure_tolerance: 4.0
 angle_tolerance: 5.0
