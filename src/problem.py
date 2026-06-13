@@ -184,7 +184,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # G[3]: boundary violation (project extension; V2 spec drops boundary).
         # G[4]: collision count (unresolved self-intersections).
         # G[5..4+T]: per-type inventory excess for each catalog piece index.
-        main_path = layout.get_main_path() if hasattr(layout, 'get_main_path') else None
+        main_path = layout.get_main_path()
         states = main_path.states if main_path is not None else layout.states
 
         dx = float(states[-1, 0] - states[0, 0])

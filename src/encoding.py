@@ -64,20 +64,6 @@ DC_ROUTE_CROSS_1_TO_2 = 2
 DC_ROUTE_CROSS_2_TO_1 = 3
 DC_N_ROUTES = 4
 
-# Port set covered by each catalog route (A=0, B=1, C=2, D=3)
-DC_ROUTE_PORTS: dict = {
-    DC_ROUTE_TRACK1_THROUGH: frozenset({0, 1}),   # A,B
-    DC_ROUTE_TRACK2_THROUGH: frozenset({2, 3}),   # C,D
-    DC_ROUTE_CROSS_1_TO_2:   frozenset({0, 3}),   # A,D
-    DC_ROUTE_CROSS_2_TO_1:   frozenset({2, 1}),   # C,B
-}
-
-# Valid 2-route covers of all four ports {A,B,C,D}. Initialised once below.
-DC_VALID_ROUTE_PAIRS: frozenset = frozenset({
-    frozenset({DC_ROUTE_TRACK1_THROUGH, DC_ROUTE_TRACK2_THROUGH}),  # A->B + C->D
-    frozenset({DC_ROUTE_CROSS_1_TO_2, DC_ROUTE_CROSS_2_TO_1}),      # A->D + C->B
-})
-
 
 # =============================================================================
 # Piece Index Constants (from track_pieces.yaml piece_index mapping)
@@ -362,6 +348,24 @@ def get_active_main_pieces_with_flips(
     flips = x[dims.main_flips_start:dims.main_flips_end]
     mask = types != INACTIVE
     return types[mask].copy(), flips[mask].copy()
+
+
+def fk_rows_with_flips(fk_table: NDArray, types, flips=None) -> NDArray:
+    """FK rows for ``types`` with R40 handedness applied.
+
+    The catalog row for R40_CURVE encodes the LEFT turn; a set flip bit
+    mirrors it (negates dy and dtheta). Other piece types ignore their flip
+    bit. ``types`` must be valid catalog indices. Fancy indexing copies, so
+    the returned array is safe to mutate. ``flips=None`` skips mirroring.
+    """
+    types = np.asarray(types, dtype=np.int32)
+    deltas = fk_table[types]
+    if flips is None:
+        return deltas
+    negate = (types == int(R40_CURVE)) & (np.asarray(flips, dtype=np.int32) == 1)
+    deltas[negate, 1] *= -1.0
+    deltas[negate, 2] *= -1.0
+    return deltas
 
 
 # =============================================================================

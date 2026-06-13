@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 import numpy as np
-from numpy.typing import NDArray
 
 
 # =============================================================================

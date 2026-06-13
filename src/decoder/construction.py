@@ -19,14 +19,12 @@ from numpy.typing import NDArray
 from src.catalog import TrackCatalog
 from src.decoder.types import DecoderConfig, InventoryTracker, ValidatedJunction
 from src.encoding import (
-    CJ_ACTIVE,
-    CJ_POSITION_1,
-    CJ_POSITION_2,
     INACTIVE,
     R40_CURVE,
     STRAIGHT_16,
     SWITCH_INDICES,
     PartitionedDimensions,
+    fk_rows_with_flips,
     get_active_cross_junctions,
     get_active_double_crossovers,
     get_active_junctions,
@@ -80,17 +78,7 @@ def fk_array_with_flips(
     flips: Optional[List[int]] = None,
 ) -> NDArray[np.float64]:
     """Vectorized FK lookup for a main-loop slice, applying per-slot flips."""
-    indices = np.asarray(pieces, dtype=np.int32)
-    fk = catalog.get_fk(indices).copy()
-    if flips is None:
-        return fk
-    pieces_arr = np.asarray(pieces, dtype=np.int32)
-    flips_arr = np.asarray(flips, dtype=np.int32)
-    negate = (pieces_arr == int(R40_CURVE)) & (flips_arr == 1)
-    if negate.any():
-        fk[negate, 1] *= -1.0
-        fk[negate, 2] *= -1.0
-    return fk
+    return fk_rows_with_flips(catalog._fk_table, pieces, flips)
 
 
 # =============================================================================
@@ -336,14 +324,14 @@ def _inject_switches(
             _release_junction_inventory(junc, tracker)
             continue
 
-        in_state = _compute_state_at_position(augmented, augmented_flips, in_pos, catalog)
+        in_state = _state_at_position(augmented, augmented_flips, in_pos, catalog)
 
         entry_switch_idx, exit_switch_idx = switch_indices_for(template)
         orig_in = augmented[in_pos]
         orig_in_flip = augmented_flips[in_pos]
         augmented[in_pos] = entry_switch_idx
         augmented_flips[in_pos] = 0
-        out_state = _compute_state_at_position(augmented, augmented_flips, out_pos, catalog)
+        out_state = _state_at_position(augmented, augmented_flips, out_pos, catalog)
 
         if not is_valid_siding(
             in_state, out_state, template, junc.n_straights,
@@ -358,8 +346,6 @@ def _inject_switches(
 
         # Release the replaced pieces and complete the OUT injection.
         orig_out = augmented[out_pos]
-        orig_out = augmented[out_pos]
-        orig_out_flip = augmented_flips[out_pos]
         tracker.release(orig_in)
         tracker.release(orig_out)
         augmented[out_pos] = exit_switch_idx
@@ -544,13 +530,13 @@ def _inject_double_crossovers(
         tentative = list(main_pieces)
         tentative_flips = list(main_flips)
         tentative_routes = dict(route_map)
-        state_p1 = _state_at_position_with_routes(
+        state_p1 = _state_at_position(
             tentative, tentative_flips, p1, catalog, tentative_routes,
         )
         tentative[p1] = DC_PIECE_IDX
         tentative_flips[p1] = 0
         tentative_routes[p1] = r1
-        state_p2 = _state_at_position_with_routes(
+        state_p2 = _state_at_position(
             tentative, tentative_flips, p2, catalog, tentative_routes,
         )
 
@@ -582,26 +568,32 @@ def _inject_double_crossovers(
     return records, route_map
 
 
-def _state_at_position_with_routes(
+def _state_at_position(
     pieces: List[int],
     flips: List[int],
     position: int,
     catalog: TrackCatalog,
-    route_map: Dict[int, int],
+    route_map: Optional[Dict[int, int]] = None,
 ) -> Tuple[float, float, float]:
-    """FK state at `position` using ``route_map`` for multi-route pieces and the
-    parallel ``flips`` array for R40_CURVE handedness."""
+    """FK state entering ``position`` (origin-based walk of pieces[:position]).
+
+    ``route_map`` maps main-loop positions to catalog-route indices for
+    multi-route pieces (DOUBLE_CROSSOVER slots); without it the vectorized
+    flip-aware lookup is used.
+    """
     if position <= 0:
         return (0.0, 0.0, 0.0)
-    deltas = np.empty((position, 3), dtype=np.float64)
-    for i in range(position):
-        piece = pieces[i]
-        if i in route_map:
-            deltas[i] = catalog.get_fk_route(piece, route_map[i])
-        else:
-            deltas[i] = get_fk_with_flip(
-                catalog, piece, flips[i] if i < len(flips) else 0,
-            )
+    if route_map:
+        deltas = np.empty((position, 3), dtype=np.float64)
+        for i in range(position):
+            if i in route_map:
+                deltas[i] = catalog.get_fk_route(pieces[i], route_map[i])
+            else:
+                deltas[i] = get_fk_with_flip(
+                    catalog, pieces[i], flips[i] if i < len(flips) else 0,
+                )
+    else:
+        deltas = fk_array_with_flips(catalog, pieces[:position], flips[:position])
     final = compute_fk_chain(deltas)[-1]
     return (float(final[0]), float(final[1]), float(final[2]))
 
@@ -636,7 +628,7 @@ def _find_out_position(
     if in_pos + 2 >= n:
         return None
 
-    in_state = _compute_state_at_position(pieces, flips, in_pos, catalog)
+    in_state = _state_at_position(pieces, flips, in_pos, catalog)
     base_theta = in_state[2]
 
     cumulative_x = 0.0
@@ -669,23 +661,6 @@ def _find_out_position(
         return best_pos
 
     return None
-
-
-def _compute_state_at_position(
-    pieces: List[int],
-    flips: List[int],
-    position: int,
-    catalog: TrackCatalog,
-) -> Tuple[float, float, float]:
-    """FK state at ``position``, walking through pieces[0:position] with flips."""
-    if position == 0:
-        return (0.0, 0.0, 0.0)
-
-    fk_deltas = fk_array_with_flips(catalog, pieces[:position], flips[:position])
-    states = compute_fk_chain(fk_deltas)
-
-    final = states[-1]
-    return (float(final[0]), float(final[1]), float(final[2]))
 
 
 def _release_junction_inventory(

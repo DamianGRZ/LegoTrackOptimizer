@@ -22,12 +22,13 @@ from pymoo.core.repair import Repair
 
 from .encoding import (
     INACTIVE,
-    GENES_PER_JUNCTION,
+    SWITCH_LEFT,
+    SWITCH_RIGHT,
     PartitionedDimensions,
     PieceIndex,
+    fk_rows_with_flips,
     get_active_cross_junctions,
     get_active_double_crossovers,
-    get_active_junctions,
     get_active_main_pieces,
     get_junction,
     get_main_loop_flips,
@@ -61,15 +62,9 @@ def _main_loop_states(x: NDArray, dims: PartitionedDimensions,
     types = x[:dims.n_main]
     flips = x[dims.main_flips_start:dims.main_flips_end]
     mask = types != INACTIVE
-    active_types = types[mask].astype(int)
-    active_flips = flips[mask].astype(int)
-    if active_types.size == 0:
+    if not mask.any():
         return np.zeros((1, 3), dtype=np.float64)
-    deltas = fk_table[active_types].copy()
-    negate = (active_types == R40_CURVE) & (active_flips == 1)
-    deltas[negate, 1] *= -1.0
-    deltas[negate, 2] *= -1.0
-    return compute_fk_chain(deltas)
+    return compute_fk_chain(fk_rows_with_flips(fk_table, types[mask], flips[mask]))
 
 
 _STRAIGHT_TYPES = (STRAIGHT_16, STRAIGHT_24)
@@ -401,8 +396,6 @@ class JunctionValidityRepair(Repair):
         Each passing siding is opposite-handed: 1 LEFT + 1 RIGHT switch.
         Max pair count = min(LEFT_count, RIGHT_count).
         """
-        from .encoding import SWITCH_LEFT, SWITCH_RIGHT
-
         left_count = self.inventory_by_index.get(int(SWITCH_LEFT), 0)
         right_count = self.inventory_by_index.get(int(SWITCH_RIGHT), 0)
         max_pairs = min(left_count, right_count)
@@ -463,7 +456,6 @@ class InventoryRepair(Repair):
 
         # Each active junction is a passing siding consuming 1 LEFT + 1 RIGHT
         # switch (opposite-handed pair) regardless of which side it diverges to.
-        from .encoding import SWITCH_LEFT, SWITCH_RIGHT
         left_sw, right_sw = int(SWITCH_LEFT), int(SWITCH_RIGHT)
 
         for k in range(self.dims.max_junctions):
