@@ -362,9 +362,14 @@ def fk_rows_with_flips(fk_table: NDArray, types, flips=None) -> NDArray:
     deltas = fk_table[types]
     if flips is None:
         return deltas
+    # One physical R40 SKU covers BOTH handednesses — there is deliberately no
+    # separate right-curve catalog entry. The catalog stores the LEFT turn;
+    # mirroring it about the piece's own forward (x) axis turns it into the
+    # RIGHT turn exactly. That mirror is: negate the lateral offset dy and the
+    # heading change dtheta, keep dx. So flip=1 reflects LEFT into RIGHT.
     negate = (types == int(R40_CURVE)) & (np.asarray(flips, dtype=np.int32) == 1)
-    deltas[negate, 1] *= -1.0
-    deltas[negate, 2] *= -1.0
+    deltas[negate, 1] *= -1.0  # dy: mirror lateral offset
+    deltas[negate, 2] *= -1.0  # dtheta: mirror heading change
     return deltas
 
 
