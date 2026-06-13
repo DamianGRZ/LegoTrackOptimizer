@@ -41,7 +41,7 @@ htmlcov/
 # Project specific
 outputs/
 archive/
-docs/PDF/
+docs/
 *.log
 *.zip
 
