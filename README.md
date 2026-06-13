@@ -6,9 +6,9 @@ searches for layouts that maximize **piece utilization** and **train speed** whi
 staying geometrically valid — the loop must close, fit inside the boundary, respect
 the inventory, and avoid illegal self-intersections.
 
-Built on [pymoo](https://pymoo.org/) (NSGA-II / R-NSGA-II) with a custom
-domain-specific encoding, decoder, genetic operators, repair pipeline, and a
-locomotive physics model.
+Built on [pymoo](https://pymoo.org/) (NSGA-II) with a custom domain-specific
+encoding, decoder, genetic operators, repair pipeline, and a locomotive physics
+model.
 
 ---
 
@@ -66,11 +66,17 @@ let a train run faster, while enforcing buildability by construction and repair.
 
 ## How it works
 
+A candidate layout makes a short journey from raw genes to a scored verdict: an
+inventory-shaped **chromosome** is built into exact track by a **decoder**, two
+**objectives** judge it, a handful of **constraints** decide whether it could really
+be built, and an **evolutionary loop** breeds the survivors. The stages below follow
+that journey.
+
 ```
 data/track_pieces_v2.yaml ─► TrackCatalog (FK tables, speed limits, routes)
 configs/*.yaml            ─► OptimizationConfig (inventory, boundary, algorithm)
                                       │
-main.py ─► NSGA-II / R-NSGA-II + IntegerSampling ─► Problem._evaluate()
+main.py ─► NSGA-II + IntegerSampling ─► Problem._evaluate()
                                       │
    chromosome ─► decode_chromosome() ─► MultiPathLayout
                                       │
@@ -79,10 +85,13 @@ main.py ─► NSGA-II / R-NSGA-II + IntegerSampling ─► Problem._evaluate()
    results ─► PNG layouts + Pareto plot + run_info.md + category_report.md ─► outputs/
 ```
 
-### 1. Representation (chromosome)
+### 1. Representation — the chromosome
 
-An integer (`int16`) vector, **partitioned into segments** whose sizes all scale from
-the inventory:
+A layout is one integer (`int16`) vector, but never a flat bag of numbers: it is
+**partitioned** into meaningful regions, and every region's size is computed from your
+inventory at startup — never hardcoded. Unused slots are switched off with an
+`INACTIVE` (−1) sentinel, so a tight 40-piece loop and a sprawling 130-piece figure-8
+coexist and compete inside the same fixed-width genome:
 
 | Segment | Encodes |
 |---|---|
@@ -93,47 +102,67 @@ the inventory:
 | Double-crossovers | `(active, pos_1, route_1, pos_2, route_2)` per `DOUBLE_CROSSOVER` |
 | Start position | fine `(x, y)` offset on top of auto-centering |
 
-Switches and crossings are **not** legal main-loop alleles — they enter only through
-descriptor blocks and decoder repair.
+Switches and crossings are deliberately **not** legal main-loop alleles — letting
+mutation scatter them at random would be hopeless. They live in dedicated descriptor
+blocks instead, stitched in (and validated as a unit) by the decoder.
 
-### 2. Decoder (genotype → geometry)
+### 2. Decoder — from genes to geometry
 
-`decode_chromosome()` is fully deterministic. It reads the main loop, injects sidings
-from templates, injects cross-junctions and double-crossovers, repairs perpendicular
-straight-on-straight crossings into `CROSS_90`, computes the layout via a vectorized
-forward-kinematics chain accumulating `[x, y, θ]`, enumerates all `2^J` traversal
-paths, and auto-centers the result in the boundary box.
+The decoder is the heart of the system, and it is fully **deterministic**: the same
+genes always trace the same track. Piece by piece it composes each part's
+`[dx, dy, θ]` offset through forward kinematics (a vectorized cumulative sum) to find
+where the rails actually go — then injects passing sidings from validated templates,
+drops in cross-junctions and double-crossovers, repairs perpendicular
+straight-on-straight overlaps into real `CROSS_90` pieces, enumerates every one of the
+`2^J` ways a train could thread the sidings, and centers the result in the boundary
+box. Anything that fails a geometry or inventory check is dropped — never allowed to
+corrupt the layout — with the reason logged.
 
-### 3. Objectives & constraints
+### 3. Objectives & constraints — what "good" means
 
-Two objectives (both minimized internally, hence the negatives):
+Two goals pull on every layout, and they genuinely conflict:
 
-- `F[0] = −weighted_utilization` — fraction of the inventory used, with special
-  pieces (sidings/crossings/double-crossovers) weighted so multi-path topology is
-  rewarded rather than stripped as overhead.
-- `F[1] = −(slowest route's average speed)` at a 0.95 safety margin.
+- **Use more of the kit** — `F[0]` rewards weighted piece utilization, counting each
+  siding, crossing, and double-crossover as more than one piece; otherwise the GA
+  would strip multi-path topology away as dead weight.
+- **Run faster** — `F[1]` rewards the average speed of the *slowest* of all `2^J`
+  routes (at a 0.95 safety margin), so a fast through-line can't hide a crawling,
+  curve-choked branch.
 
-Constraints are all **inequalities** (`g ≤ 0`; there are no equality constraints):
-per-axis closure (`dx`, `dy`, `dθ`), boundary violation, collisions
-(unresolved crossings + dangling ports), and per-type inventory excess.
+Buildability is enforced separately, as **inequality constraints** (there are no
+equality constraints): the loop must close in `x`, `y`, and heading; everything must
+fit the boundary; segments may not illegally overlap; and no piece type may exceed its
+inventory. A layout is feasible only when every one of these holds.
 
-### 4. Operators, repair & sampling
+### 4. Operators, repair & sampling — how candidates evolve
 
-- **Crossover** — one-point on the main loop (cut mirrored on the flip array),
-  uniform per-slot swap on descriptors; double-crossover loops are kept parent-intact.
-- **Mutation** — a weighted portfolio of sub-operators (change/activate/deactivate/
-  swap/flip, crossing-aware straighten, closure-exact compensated-pair grow).
-- **Repair** — a 4-stage pipeline: junction-validity clamp → inventory trim →
-  main-loop closure (angular, then translational) → boundary re-center/shrink.
-- **Sampling** — a hybrid: ~20% inventory/boundary-aware closed-loop seeds
-  (loops, ovals, racetracks, sidings, figure-8s) plus random partial-fill chromosomes.
+Off-the-shelf genetic operators would shred this structured genome, so the project
+ships its own:
 
-### 5. Algorithm
+- **Crossover** respects the partitions — one-point on the main loop (with the flip
+  array cut in lockstep), uniform per-slot swaps on descriptors — and keeps delicate
+  double-crossover figure-8s intact rather than splicing them apart.
+- **Mutation** is a weighted portfolio of small, purposeful moves: change a piece,
+  flip a curve's handedness, nudge a siding, straighten near an unresolved crossing,
+  or grow the loop by a closure-exact "compensated pair" of straights that cancels its
+  own displacement.
+- **Repair** is a 4-stage cleanup that walks a broken layout back toward feasibility:
+  clamp descriptors → trim over-budget pieces → close the loop (first by angle, then
+  by position) → re-center or shrink to fit the box.
+- **Sampling** seeds the first generation with a fifth of inventory- and
+  boundary-aware ready-made closed loops (ovals, racetracks, sidings, figure-8s); the
+  rest are random partial-fill chromosomes, so the search starts from buildable
+  bridgeheads, not noise.
 
-pymoo's `NSGA2` or `RNSGA2` (reference-point niching toward the utopian corner),
-with the custom sampling/crossover/mutation/repair embedded, wrapped in an adaptive
-epsilon-constraint handler that relaxes *soft* constraints (closure, boundary) early
-in the run while keeping *hard* ones (collisions, inventory) strict.
+### 5. Algorithm — the evolutionary loop
+
+Everything runs on pymoo's **NSGA-II** with Deb's feasibility-first ranking
+(`ConstrRankAndCrowding`) and the custom sampling, crossover, mutation, and repair
+plugged in. An adaptive epsilon handler relaxes the *soft* constraints (closure,
+boundary) early in a run — so promising-but-imperfect layouts survive long enough to
+be repaired — while the *hard* ones (collisions, inventory) stay strict throughout.
+Category-elite callbacks protect the best switch, crossing, and double-crossover
+layouts from being out-competed by simpler loops.
 
 ---
 
@@ -185,7 +214,7 @@ backend (the interactive Tk backend crashes under multiprocessing).
 ### Run an optimization
 
 ```bash
-# Default config (R-NSGA-II, pop 1000, 200 generations)
+# Default config (NSGA-II, pop 1000, 200 generations)
 python main.py --config configs/default.yaml --verbose
 
 # Layouts with passing sidings (NSGA-II, 500 generations)
@@ -234,7 +263,7 @@ boundary:                 # rectangular build area, in studs
   max_y: 150.0
 
 algorithm:
-  name: RNSGA2            # RNSGA2 or NSGA2
+  name: NSGA2             # only NSGA2 is supported
   pop_size: 1000
   n_gen: 200
   heuristic_ratio: 0.20   # fraction of seeded heuristic individuals

@@ -50,7 +50,7 @@ Recurring mistakes that must not repeat:
 
 **Why**: Generate feasible track layouts satisfying geometric constraints (closure, boundaries) while maximizing piece utilization and train speed.
 
-**How**: pymoo NSGA-II/RNSGA-II with heuristic sampling, template-based passing sidings, construction-based decoder, and locomotive physics model.
+**How**: pymoo NSGA-II with heuristic sampling, template-based passing sidings, construction-based decoder, and locomotive physics model.
 
 ---
 
@@ -89,7 +89,7 @@ Use with the Task tool for specialized work. **Prefer skills over agents when po
 
 ## Tech Stack
 
-- **pymoo 0.6.1.6**: Multi-objective optimization (NSGA2, RNSGA2)
+- **pymoo 0.6.1.6**: Multi-objective optimization (NSGA2)
 - **numpy >=1.24.0, scipy >=1.10.0**: Scientific computing
 - **pyyaml >=6.0, ruamel.yaml, pydantic >=2.0.0**: Config and catalog validation
 - **matplotlib >=3.7.0**: Visualization (forced `Agg` backend — Tk crashes under multiprocessing)
@@ -161,11 +161,11 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 
 **6. Heuristic sampling.** Hybrid (`IntegerSampling._do`): `heuristic_ratio` (default 0.20) of the population is inventory/boundary-aware closed loops (`_gen_simple_loop` / `_oval` / `_racetrack` / `_oval_with_siding` / `_oval_two_sidings` / `_figure_eight` / `_figure_eight_cross` / `_figure_eight_dbl_crossover`); the remainder are random partial-fill chromosomes. All pattern dimensions derive from boundary + inventory.
 
-**7. Survival & constraint handling.** `NSGA2` uses `ConstrRankAndCrowding()` (Deb feasibility-first); `RNSGA2` uses reference-point niching (utopian corner, weights 0.85/0.15 toward utilization). Both wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`): three-phase schedule (hold → linear decay → strict), epsilon_0 from the 10th percentile of infeasible CVs capped at 30. Closure + boundary (`G[0..3]`) are SOFT (relaxable); collisions + inventory are HARD — weighted ×1000 via `cv_ieq.scale` so no epsilon can relax them (never bake epsilon into CV; see memory note on the tournament crash).
+**7. Survival & constraint handling.** `NSGA2` uses `ConstrRankAndCrowding()` (Deb feasibility-first), wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`): three-phase schedule (hold → linear decay → strict), epsilon_0 from the 10th percentile of infeasible CVs capped at 30. Closure + boundary (`G[0..3]`) are SOFT (relaxable); collisions + inventory are HARD — weighted ×1000 via `cv_ieq.scale` so no epsilon can relax them (never bake epsilon into CV; see memory note on the tournament crash).
 
 **8. Callbacks.** Always attached: `FeasibleEliteCallback` (re-injects best-utilization feasible), `CategoryEliteArchive` (per switch/cross/DC category elites; must run AFTER the global elite), `ConvergenceMonitorCallback` (HV/IGD/feasibility + run-cumulative feasible front — dedupe before NDS or the run slows down quadratically). `SnapshotCallback` only when `output_dir` is set; `ProgressCallback` only when `verbose`.
 
-**9. Config & scale.** `AlgorithmConfig` (`src/config.py`): `default.yaml` = RNSGA2, `pop_size=1000`, `n_gen=200`, `crossover_prob=0.2`, `mutation_prob=0.8`, `heuristic_ratio=0.20`, `seed=null`; `with_switches.yaml` = NSGA2, `n_gen=500`, `n_workers=32`, termination `period=100`. Termination via `_build_termination`: `MaximumGenerationTermination` by default; `DefaultMultiObjectiveTermination` (improvement-aware early stop) when `termination.period > 0`. Catalog = **7 piece types**. `seed=null` (non-deterministic); **one run per `main.py` invocation**.
+**9. Config & scale.** `AlgorithmConfig` (`src/config.py`): `default.yaml` = NSGA2, `pop_size=1000`, `n_gen=200`, `crossover_prob=0.2`, `mutation_prob=0.8`, `heuristic_ratio=0.20`, `seed=null`; `with_switches.yaml` = NSGA2, `n_gen=500`, `n_workers=32`, termination `period=100`. Termination via `_build_termination`: `MaximumGenerationTermination` by default; `DefaultMultiObjectiveTermination` (improvement-aware early stop) when `termination.period > 0`. Catalog = **7 piece types**. `seed=null` (non-deterministic); **one run per `main.py` invocation**.
 
 ---
 
@@ -207,7 +207,7 @@ The decoder reads active descriptors sorted by position, computes branch geometr
 ```
 data/track_pieces_v2.yaml -> TrackCatalog (FK tables, speed limits, routes)
 configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
-main.py -> NSGA2/RNSGA2 + IntegerSampling -> Problem._evaluate()
+main.py -> NSGA2 + IntegerSampling -> Problem._evaluate()
 chromosome -> decode_chromosome() -> MultiPathLayout
 MultiPathLayout -> compute_speed_profile() -> F[], G[]
 results -> visualization + run_info.md + category_report.md -> outputs/
