@@ -610,13 +610,9 @@ class IntegerSampling(Sampling):
         self.heuristic_ratio = heuristic_ratio
         self._seed = seed
 
-        self.inventory_by_index: Dict[int, int] = {}
-        for piece_id, count in config.inventory.items():
-            idx = catalog._id_to_index.get(piece_id)
-            if idx is not None:
-                self.inventory_by_index[idx] = (
-                    self.inventory_by_index.get(idx, 0) + count
-                )
+        self.inventory_by_index: Dict[int, int] = catalog.inventory_by_index(
+            config.inventory,
+        )
 
     def _n_heuristic(self, n_samples: int) -> int:
         """Heuristic-seed count for a population of ``n_samples``.
