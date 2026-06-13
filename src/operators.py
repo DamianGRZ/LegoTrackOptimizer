@@ -23,16 +23,15 @@ from pymoo.core.mutation import Mutation
 from .catalog import TrackCatalog
 from .encoding import (
     CROSS_90,
-    DC_N_ROUTES,
     GENES_PER_DBL_CROSSOVER,
     GENES_PER_JUNCTION,
     INACTIVE,
     MAIN_LOOP_PIECE_INDICES,
-    MAX_MAIN_LOOP_PIECE,
     R40_CURVE,
     STRAIGHT_16,
     STRAIGHT_24,
     PartitionedDimensions,
+    fk_rows_with_flips,
     get_active_cross_junctions,
     get_active_double_crossovers,
     get_active_junctions,
@@ -44,6 +43,7 @@ from .encoding import (
 from .geometry import compute_fk_chain
 from .intersection import find_crossing_pairs
 from .sampling import _figure_eight_main_loop  # shared, validated figure-8 builder
+from .templates import TEMPLATES
 
 # Valid main-loop piece types as a sorted array for fast random selection
 _MAIN_LOOP_TYPES = np.array(sorted(MAIN_LOOP_PIECE_INDICES), dtype=np.int16)
@@ -327,16 +327,6 @@ def _active_view(x: NDArray, dims: PartitionedDimensions):
     return types, flips
 
 
-def _fk_deltas(types, flips, catalog) -> NDArray:
-    """FK rows for an active list, with R40 flips applied."""
-    deltas = catalog._fk_table[np.asarray(types, dtype=np.int32)].copy()
-    negate = (np.asarray(types) == int(R40_CURVE)) & (np.asarray(flips) == 1)
-    if negate.any():
-        deltas[negate, 1] *= -1.0
-        deltas[negate, 2] *= -1.0
-    return deltas
-
-
 def _descriptor_spans(x: NDArray, dims: PartitionedDimensions):
     """(lo, hi) active-index spans of committed-pair descriptors (cross + DC)."""
     spans = [(min(p1, p2), max(p1, p2))
@@ -407,7 +397,7 @@ def _compensated_pair_grow(
     else:
         return False
 
-    states = compute_fk_chain(_fk_deltas(types, flips, catalog))
+    states = compute_fk_chain(fk_rows_with_flips(catalog._fk_table, types, flips))
     slack_x = (dims.boundary_max_x - dims.boundary_min_x) - float(
         states[:, 0].max() - states[:, 0].min())
     slack_y = (dims.boundary_max_y - dims.boundary_min_y) - float(
@@ -485,7 +475,6 @@ def _change_handedness(x: NDArray, dims: PartitionedDimensions) -> None:
     """Set handedness of a random junction to a valid template index."""
     if dims.max_junctions == 0:
         return
-    from .templates import TEMPLATES
     slot = np.random.randint(dims.max_junctions)
     base = dims.junc_start + slot * GENES_PER_JUNCTION
     x[base + 2] = np.random.randint(0, len(TEMPLATES))

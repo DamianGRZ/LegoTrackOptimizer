@@ -681,7 +681,7 @@ def run_optimization(
     callback = CallbackChain(*chain)
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info(f"Objectives: utilization + speed (bi-objective)")
+    logger.info("Objectives: utilization + speed (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(f"Chromosome: {dims.n_var} genes (main={dims.n_main}, junctions={dims.max_junctions})")

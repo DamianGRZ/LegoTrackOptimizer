@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Dict, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
@@ -100,44 +100,6 @@ class OptimizationConfig(BaseModel):
     def total_inventory(self) -> int:
         """Total number of pieces available."""
         return sum(self.inventory.values())
-
-    def calculate_max_layout_pieces(self, safety_margin: float = 10.0) -> int:
-        """Calculate maximum chromosome size based on boundary dimensions.
-
-        Args:
-            safety_margin: Extra studs of clearance from boundary edges.
-
-        Returns:
-            Maximum number of pieces that could fit in the layout.
-        """
-        # Base circle requires 16 R40 curves (approx 80 studs diameter)
-        base_circle_width = 80.0
-        straight_length = 16.0
-        min_curves_for_closure = 16
-
-        # Calculate available space after margins
-        available_width = self.boundary.width - 2 * safety_margin
-        available_height = self.boundary.height - 2 * safety_margin
-
-        # Check if base circle fits
-        if available_width < base_circle_width or available_height < base_circle_width:
-            return min_curves_for_closure
-
-        # Calculate extra space for straights
-        extra_space = max(0, min(available_width, available_height) - base_circle_width)
-        max_straights = int((extra_space / straight_length) * 2)
-
-        # Total pieces, capped by inventory
-        total = min_curves_for_closure + max_straights
-        total = min(total, self.total_inventory)
-
-        # Add 10% buffer for mutations
-        return int(total * 1.1)
-
-    @property
-    def n_var(self) -> int:
-        """Number of decision variables for pymoo."""
-        return self.calculate_max_layout_pieces()
 
     @classmethod
     def load(cls, path: str | Path) -> "OptimizationConfig":

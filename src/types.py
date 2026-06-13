@@ -320,16 +320,6 @@ class MultiPathLayout:
             return 0.0
         return max(path.angle_error for path in self.paths)
 
-    @property
-    def total_pieces(self) -> int:
-        # main_loop_pieces already includes both switches (injected at
-        # in_position and out_position by the decoder). Just add branch pieces.
-        all_pieces = set(self.main_loop_pieces)
-        for sp in self.switch_pairs:
-            all_pieces.update(sp.branch_pieces)
-        all_pieces.discard(-1)
-        return len(all_pieces)
-
     def get_path_by_choices(self, choices: Tuple[int, ...]) -> Optional[TraversalPath]:
         for path in self.paths:
             if path.route_choices == choices:
