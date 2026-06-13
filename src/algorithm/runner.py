@@ -605,10 +605,9 @@ def run_optimization(
         heuristic_ratio=config.algorithm.heuristic_ratio,
     )
 
-    inventory_by_index = problem._convert_inventory(config.inventory)
     repair = TrackRepairPipeline(
         dims=dims,
-        inventory_by_index=inventory_by_index,
+        inventory_by_index=problem.inventory_by_index,
         catalog_fk_table=catalog._fk_table,
         enable_closure_repair=True,
         enable_boundary_repair=True,

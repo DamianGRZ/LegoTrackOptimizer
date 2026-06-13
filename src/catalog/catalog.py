@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,6 +15,8 @@ from ..types import FKRoute, PieceClass, PieceTopology
 from .loader import load_catalog_spec
 from .pieces import FKDeltas, Port, TrackPiece
 from .specs import TrackCatalogSpec, TrackPieceSpec
+
+log = logging.getLogger(__name__)
 
 
 # Canonical piece_id -> chromosome index mapping (legacy v1 encoding).
@@ -103,6 +106,7 @@ class TrackCatalog:
         self._topologies: Dict[int, PieceTopology] = {}
         self._route_fk_tables: Dict[int, List[NDArray[np.float64]]] = {}
         self._max_index: int = 0
+        self._warned_inventory_ids: set = set()
         self.stud_mm: float = 8.0
 
     @classmethod
@@ -477,16 +481,26 @@ class TrackCatalog:
     def index_to_id(self) -> Dict[int, str]:
         return {idx: piece.id for idx, piece in self._index_to_piece.items()}
 
+    def inventory_by_index(self, inventory: Dict[str, int]) -> Dict[int, int]:
+        """Convert a {piece_id: count} inventory to {piece_index: count}.
+
+        Piece IDs missing from the catalog cannot be placed, so they are
+        dropped from the result. Dropping is loud: each unknown-ID set is
+        logged once per catalog instance, not per call — the decoder converts
+        on every evaluation.
+        """
+        unknown = tuple(sorted(pid for pid in inventory if pid not in self._id_to_index))
+        if unknown and unknown not in self._warned_inventory_ids:
+            self._warned_inventory_ids.add(unknown)
+            log.warning("Inventory IDs not in catalog, ignored: %s", ", ".join(unknown))
+        return {
+            self._id_to_index[pid]: count
+            for pid, count in inventory.items()
+            if pid in self._id_to_index
+        }
+
     def __getitem__(self, index: int) -> Optional[TrackPiece]:
         return self._index_to_piece.get(index)
-
-
-def load_inventory(path: str | Path) -> Dict[str, int]:
-    """Load inventory from YAML config file."""
-    path = Path(path)
-    with open(path, "r") as f:
-        data = yaml.safe_load(f)
-    return data.get("inventory", {})
 
 
 # =============================================================================

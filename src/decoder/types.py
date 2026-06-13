@@ -44,11 +44,7 @@ class InventoryTracker:
     """
 
     def __init__(self, inventory: Dict[str, int], catalog: TrackCatalog) -> None:
-        self._available: Dict[int, int] = {}
-        for piece_id, count in inventory.items():
-            idx = catalog._id_to_index.get(piece_id)
-            if idx is not None:
-                self._available[idx] = count
+        self._available: Dict[int, int] = catalog.inventory_by_index(inventory)
         self._used: Dict[int, int] = {}
 
     def remaining(self, piece_idx: int) -> int:

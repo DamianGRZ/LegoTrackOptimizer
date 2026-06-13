@@ -120,7 +120,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self._train_config = config.load_train_config()
         self.total_inventory = sum(config.inventory.values())
         self.special_piece_weight = config.special_piece_weight
-        self.inventory_by_index = self._convert_inventory(config.inventory)
+        self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
         self.decoder_config = DecoderConfig(
             position_tolerance=self.closure_tolerance,
@@ -130,15 +130,6 @@ class TrackOptimizationProblem(ElementwiseProblem):
             boundary_min_y=config.boundary.min_y,
             boundary_max_y=config.boundary.max_y,
         )
-
-    def _convert_inventory(self, inventory: dict[str, int]) -> dict[int, int]:
-        """Convert inventory from piece_id to piece_index."""
-        result = {}
-        for piece_id, count in inventory.items():
-            idx = self.catalog._id_to_index.get(piece_id)
-            if idx is not None:
-                result[idx] = count
-        return result
 
     def _evaluate(self, x, out, *args, **kwargs):
         """Evaluate single chromosome for both objectives and constraints."""
