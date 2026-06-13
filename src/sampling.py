@@ -337,8 +337,7 @@ def _gen_figure_eight(
     """
     if (
         inv.get(STRAIGHT_16, 0) < 10
-        or inv.get(R40_CURVE, 0) < 12
-        or inv.get(R40_CURVE, 0) < 12
+        or inv.get(R40_CURVE, 0) < 24
         or inv.get(CROSS_90, 0) < 1
     ):
         return []
@@ -409,7 +408,7 @@ def _gen_figure_eight_dbl_crossover(
     """
     if dims.max_double_crossovers < 1:
         return []
-    base = {R40_CURVE: 16, R40_CURVE: 16, DOUBLE_CROSSOVER: 1}
+    base = {R40_CURVE: 32, DOUBLE_CROSSOVER: 1}
     if any(inv.get(idx, 0) < n for idx, n in base.items()):
         return []
 
