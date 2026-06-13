@@ -16,7 +16,6 @@ matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
-from pymoo.algorithms.moo.rnsga2 import RNSGA2
 from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
 from pymoo.core.callback import Callback
 from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
@@ -40,17 +39,6 @@ from src.problem import TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.sampling import IntegerSampling
 from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
-
-# R-NSGA-II preference (Deb & Sundar, AAAI 2006). Reference point is the
-# utopian corner (100% utilization, motor-max speed) so the front is pulled
-# toward "everything maximized" rather than any specific trade-off. The
-# weights control how the modified-crowding distance to that corner is
-# measured: putting almost all the mass on F[0] means a solution close to
-# the corner in UTILIZATION is treated as "much closer to the ideal" than
-# one close in speed. Concrete bias: utilization deviation weighs
-# 0.85 / 0.15 ≈ 5.7× more than speed deviation in the niching metric.
-PREFERENCE_WEIGHTS = np.array([0.85, 0.15])  # (utilization, speed)
-PREFERENCE_EPSILON = 0.01                    # niche radius for R-NSGA-II
 
 
 def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
@@ -617,38 +605,16 @@ def run_optimization(
     mutation = PartitionedMutation(dims, prob=config.algorithm.mutation_prob)
 
     algo_name = config.algorithm.name
-    if algo_name == "RNSGA2":
-        v_motor_max = problem._train_config.v_motor_max
-        ref_points = np.array([[-1.0, -v_motor_max]])
-        base_algorithm = RNSGA2(
-            ref_points=ref_points,
-            weights=PREFERENCE_WEIGHTS,
-            epsilon=PREFERENCE_EPSILON,
-            normalization="ever",
-            pop_size=config.algorithm.pop_size,
-            sampling=sampler,
-            crossover=crossover,
-            mutation=mutation,
-            repair=repair,
-            eliminate_duplicates=config.algorithm.eliminate_duplicates,
-        )
-        logger.info(
-            f"R-NSGA-II preference: ref={ref_points.tolist()}, "
-            f"weights={PREFERENCE_WEIGHTS.tolist()}, epsilon={PREFERENCE_EPSILON}"
-        )
-    elif algo_name == "NSGA2":
-        base_algorithm = NSGA2(
-            pop_size=config.algorithm.pop_size,
-            sampling=sampler,
-            crossover=crossover,
-            mutation=mutation,
-            repair=repair,
-            survival=ConstrRankAndCrowding(),
-            eliminate_duplicates=config.algorithm.eliminate_duplicates,
-        )
-        logger.info("NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)")
-    else:
-        raise ValueError(f"Unknown algorithm name: {algo_name!r} (expected 'NSGA2' or 'RNSGA2')")
+    base_algorithm = NSGA2(
+        pop_size=config.algorithm.pop_size,
+        sampling=sampler,
+        crossover=crossover,
+        mutation=mutation,
+        repair=repair,
+        survival=ConstrRankAndCrowding(),
+        eliminate_duplicates=config.algorithm.eliminate_duplicates,
+    )
+    logger.info("NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)")
 
     # Wrap with adaptive epsilon-constraint handling
     # Allows infeasible sidings to survive and evolve toward feasibility
