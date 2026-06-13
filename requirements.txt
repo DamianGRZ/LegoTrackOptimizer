@@ -4,7 +4,6 @@ pymoo==0.6.1.6
 # Scientific computing
 numpy>=1.24.0
 scipy>=1.10.0
-networkx>=3.0
 
 # Data handling
 pyyaml>=6.0
