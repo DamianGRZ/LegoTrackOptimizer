@@ -643,7 +643,7 @@ def run_optimization(
     else:
         snapshot_cb = None
     if verbose:
-        chain.append(ProgressCallback(every_n_gen=10, total_inventory=config.total_inventory))
+        chain.append(ProgressCallback(every_n_gen=1, total_inventory=config.total_inventory))
     callback = CallbackChain(*chain)
 
     logger.info(f"Starting {algo_name} track optimization...")
@@ -838,7 +838,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
                header="neg_utilization,neg_avg_speed", comments="")
     if G is not None:
-        # Stage B G layout: 5 base + one per catalog piece index (inv_<t>).
+        # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
             "closure_x,closure_y,closure_theta,boundary,collisions,"
             + ",".join(f"inv_{i}" for i in range(catalog.n_pieces))
@@ -859,18 +859,20 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
                    header="f0_neg_utilization,f1_neg_speed", comments="")
 
     try:
-        plot_pareto_front(F, G, title="Pareto Front: Utilization vs Speed",
-                          save_path=output_dir / "pareto_front.png",
-                          archive_F=archive_F)
+        fig = plot_pareto_front(F, G, title="Pareto Front: Utilization vs Speed",
+                                save_path=output_dir / "pareto_front.png",
+                                archive_F=archive_F)
+        plt.close(fig)
         logger.info("Pareto front saved to pareto_front.png")
     except Exception as e:
         logger.warning(f"Could not plot Pareto front: {e}")
 
     def _plot_layout(layout, title, path):
         if hasattr(layout, 'n_switch_pairs') and layout.n_switch_pairs > 0:
-            plot_multi_path_layout(layout, catalog, config.boundary, title, path)
+            fig = plot_multi_path_layout(layout, catalog, config.boundary, title, path)
         else:
-            plot_layout(layout, catalog, config.boundary, title, path)
+            fig = plot_layout(layout, catalog, config.boundary, title, path)
+        plt.close(fig)
 
     best_overall_idx = np.argmin(F[:, 0])
     best_overall_layout = decode_chromosome(

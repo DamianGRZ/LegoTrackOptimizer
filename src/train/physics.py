@@ -6,9 +6,8 @@ another project unchanged. All quantities in SI units (m, m/s, deg).
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Dict
 
 import numpy as np
 import yaml
@@ -52,33 +51,29 @@ class TrainConfig:
         """Total consist mass: locomotive + trailing vehicles."""
         return self.mass_loco + self.mass_trailing
 
-    # ---------------- Derailment-mode scalar formulas ----------------
+    # ---------------- Derailment-mode scalar caps ----------------
+    # Scalar wrappers over the vectorized derailment_caps(); the formulas live
+    # in exactly one place. np.sqrt(inf) == inf preserves the inf-radius result.
+
+    def _derailment_caps(self, r_m: float) -> tuple[float, float, float]:
+        slide, tip, nadal = derailment_caps(self, np.array([r_m], dtype=np.float64))
+        return float(slide[0]), float(tip[0]), float(nadal[0])
 
     def v_slide(self, r_m: float) -> float:
         """Lateral sliding cap: sqrt(mu_design * g * R). Inf radius -> inf."""
-        if math.isinf(r_m):
-            return math.inf
-        return math.sqrt(self.mu_design * self.g * r_m)
+        return self._derailment_caps(r_m)[0]
 
     def v_tip(self, r_m: float) -> float:
         """Tip-over cap: sqrt(g * R * (b/2) / h). Inf radius -> inf."""
-        if math.isinf(r_m):
-            return math.inf
-        return math.sqrt(self.g * r_m * (self.gauge_b / 2.0) / self.cog_height_h)
+        return self._derailment_caps(r_m)[1]
 
     def v_nadal(self, r_m: float) -> float:
         """Nadal wheel-climb cap via L/V criterion at mu_design. Inf radius -> inf."""
-        if math.isinf(r_m):
-            return math.inf
-        tan_d = math.tan(math.radians(self.flange_angle_deg))
-        lv_crit = (tan_d - self.mu_design) / (1.0 + self.mu_design * tan_d)
-        if lv_crit <= 0:
-            return math.inf
-        return math.sqrt(self.g * r_m * lv_crit)
+        return self._derailment_caps(r_m)[2]
 
     def v_max(self, r_m: float) -> float:
         """Derailment-mode minimum: min(slide, tip, nadal)."""
-        return min(self.v_slide(r_m), self.v_tip(r_m), self.v_nadal(r_m))
+        return min(self._derailment_caps(r_m))
 
     def v_eff(self, r_m: float) -> float:
         """Effective speed cap: min(v_max, v_motor_max)."""
@@ -93,16 +88,15 @@ class TrainConfig:
         valid = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in valid})
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Dump to a plain dict for export or comparison."""
-        return asdict(self)
 
+def derailment_caps(
+    config: TrainConfig, radii_m: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per-radius (v_slide, v_tip, v_nadal) derailment-mode speed caps.
 
-def v_eff_array(config: TrainConfig, radii_m: np.ndarray) -> np.ndarray:
-    """Vectorized effective speed cap over an array of radii (in metres).
-
-    Uses config.mu_design (pessimistic friction). Handles inf radii: np.sqrt(inf)
-    = inf, and np.minimum with v_motor_max collapses straights to the motor cap.
+    Single source of truth for the three derailment formulas; v_eff_array and
+    the evaluation stability domain both build on it. Uses config.mu_design
+    (pessimistic friction). Inf radius -> inf cap (np.sqrt(inf) == inf).
     """
     r = np.asarray(radii_m, dtype=np.float64)
     v_slide = np.sqrt(config.mu_design * config.g * r)
@@ -110,6 +104,16 @@ def v_eff_array(config: TrainConfig, radii_m: np.ndarray) -> np.ndarray:
     tan_d = math.tan(math.radians(config.flange_angle_deg))
     lv_crit = (tan_d - config.mu_design) / (1.0 + config.mu_design * tan_d)
     v_nadal = np.sqrt(config.g * r * lv_crit) if lv_crit > 0 else np.full_like(r, np.inf)
+    return v_slide, v_tip, v_nadal
+
+
+def v_eff_array(config: TrainConfig, radii_m: np.ndarray) -> np.ndarray:
+    """Vectorized effective speed cap over an array of radii (in metres).
+
+    Effective cap = min(v_slide, v_tip, v_nadal, v_motor_max). Straights
+    (inf radius) collapse to the motor cap.
+    """
+    v_slide, v_tip, v_nadal = derailment_caps(config, radii_m)
     v_max = np.minimum.reduce([v_slide, v_tip, v_nadal])
     return np.minimum(v_max, config.v_motor_max)
 

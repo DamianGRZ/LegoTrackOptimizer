@@ -207,24 +207,11 @@ class TestPieceClassification:
 
 
 class TestStudMm:
-    """TrackCatalog exposes stud_mm read from track_pieces.yaml metadata."""
+    """TrackCatalog exposes stud_mm read from track_pieces_v2.yaml metadata."""
 
     def test_catalog_has_stud_mm_attribute(self, catalog):
         assert hasattr(catalog, "stud_mm")
 
     def test_stud_mm_value_from_yaml(self, catalog):
-        # data/track_pieces.yaml -> metadata.stud_mm = 8.0
+        # data/track_pieces_v2.yaml -> metadata.stud_mm = 8.0
         assert catalog.stud_mm == pytest.approx(8.0)
-
-
-class TestV1Deprecation:
-    def test_loading_v1_yaml_warns(self):
-        import warnings
-        from src.catalog import TrackCatalog
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            TrackCatalog.load("data/track_pieces.yaml")
-            deprecations = [x for x in w if issubclass(x.category, DeprecationWarning)]
-            assert deprecations, "loading v1 YAML should emit DeprecationWarning"
-            assert "v1" in str(deprecations[0].message).lower() or \
-                   "legacy" in str(deprecations[0].message).lower()

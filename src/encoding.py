@@ -66,7 +66,7 @@ DC_N_ROUTES = 4
 
 
 # =============================================================================
-# Piece Index Constants (from track_pieces.yaml piece_index mapping)
+# Piece Index Constants — must match _CANONICAL_PIECE_INDEX in src/catalog/catalog.py
 # =============================================================================
 
 class PieceIndex(IntEnum):

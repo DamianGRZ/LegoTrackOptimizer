@@ -75,7 +75,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         F[1] = -slowest_route_speed (maximize the slowest route's avg speed
                                      at safety_margin=0.95)
 
-    Constraints (V2 shape, g <= 0 feasible, Deb's CV rules):
+    Constraints (g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
         G[1]: closure_y    = abs(dy) / closure_tolerance - 1
         G[2]: closure_theta= abs(dtheta_deg) / angle_tolerance - 1  (wrapped to (-180, 180])
@@ -109,7 +109,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         super().__init__(
             n_var=self.dims.n_var,
             n_obj=2,
-            n_ieq_constr=5 + catalog.n_pieces,  # Stage B: 3 closure + boundary + collisions + per-type inventory
+            n_ieq_constr=5 + catalog.n_pieces,  # 3 closure + boundary + collisions + per-type inventory
             xl=xl,
             xu=xu,
             **kwargs,
@@ -178,10 +178,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
         out["n_cross_comm"] = layout.n_cross_pieces
         out["n_dc_comm"] = len(getattr(layout, "dbl_crossovers", []))
 
-        # Constraints (V2 shape: 5 + n_piece_types inequalities, g <= 0 feasible).
-        # G[0..2]: closure split into per-axis inequalities (shim: degrees for theta
-        #   until Phase 5 decoder ships radian-native closure residuals).
-        # G[3]: boundary violation (project extension; V2 spec drops boundary).
+        # Constraints: 5 + n_piece_types inequalities, g <= 0 feasible.
+        # G[0..2]: per-axis closure residuals (dx, dy, dtheta in degrees).
+        # G[3]: boundary violation.
         # G[4]: collision count (unresolved self-intersections).
         # G[5..4+T]: per-type inventory excess for each catalog piece index.
         main_path = layout.get_main_path()

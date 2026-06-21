@@ -1,10 +1,15 @@
-"""Track catalog package — V1 (legacy) and V2 (port-centric) surfaces."""
+"""Track catalog: validate the piece-catalog YAML and expose it to the optimizer.
 
-# V1 (legacy) — kept for backward compatibility during migration
+The catalog lives in a port-centric YAML (data/track_pieces_v2.yaml). The specs +
+loader modules validate it with Pydantic; TrackCatalog then builds the vectorized
+FK / speed / topology tables the optimizer consumes at runtime.
+"""
+
+# Runtime catalog + piece dataclasses consumed by the optimizer.
 from .catalog import TrackCatalog
 from .pieces import FKDeltas, Port, TrackPiece
 
-# V2 — new port-centric domain model + loader
+# Port-centric YAML schema: Pydantic models + loader/validator.
 from .specs import (
     PortDef,
     TrackPieceSpec,
@@ -20,9 +25,9 @@ from .loader import load_catalog_spec, CatalogLoadError
 
 
 __all__ = [
-    # V1
+    # Runtime catalog
     "TrackCatalog", "FKDeltas", "Port", "TrackPiece",
-    # V2
+    # Schema + loader
     "PortDef", "TrackPieceSpec", "CatalogMeta", "TrackCatalogSpec",
     "SchemaVersionError", "check_schema_version",
     "load_catalog_spec", "CatalogLoadError",

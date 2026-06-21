@@ -65,10 +65,7 @@ class InventoryTracker:
 
     def can_use_batch(self, requirements: Dict[int, int]) -> bool:
         """Check if all pieces in a requirements dict are available."""
-        for idx, needed in requirements.items():
-            if self.remaining(idx) < needed:
-                return False
-        return True
+        return all(self.remaining(idx) >= needed for idx, needed in requirements.items())
 
     def use_batch(self, requirements: Dict[int, int]) -> None:
         """Consume a batch of pieces."""
@@ -79,11 +76,6 @@ class InventoryTracker:
     def used(self) -> Dict[int, int]:
         """Current usage snapshot."""
         return dict(self._used)
-
-    @property
-    def available(self) -> Dict[int, int]:
-        """Available inventory snapshot."""
-        return dict(self._available)
 
 
 # =============================================================================
@@ -96,7 +88,7 @@ class ValidatedJunction:
 
     slot: int
     position: int           # Position in main loop (clamped to valid range)
-    handedness: int          # 0-3, maps to TEMPLATES
+    handedness: int          # 0=LEFT, 1=RIGHT, maps to TEMPLATES
     n_straights: int
     template: PassingSidingTemplate
     branch_pieces: List[int]
