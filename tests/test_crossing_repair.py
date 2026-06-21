@@ -12,7 +12,7 @@ import pytest
 
 from src.catalog import TrackCatalog
 from src.decoder.construction import _apply_crossing_repair, fk_array_with_flips
-from src.decoder.types import DecoderConfig, InventoryTracker
+from src.decoder.types import InventoryTracker
 from src.encoding import CROSS_90, R40_CURVE, STRAIGHT_16
 from src.geometry import compute_fk_chain
 
@@ -38,14 +38,14 @@ class TestApplyCrossingRepair:
     def test_no_inventory_no_change(self, cat) -> None:
         pieces = list(STR_CROSS)
         tracker = _make_tracker(cat, {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 0}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
+        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
         assert tracker.used.get(int(CROSS_90), 0) == 0
 
     def test_no_crossings_no_change(self, cat) -> None:
         pieces = [int(R40_CURVE)] * 16  # closed circle, no self-intersection
         tracker = _make_tracker(cat, {"R40_CURVE": 20, "CROSS_90": 20}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
+        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
         assert tracker.used.get(int(CROSS_90), 0) == 0
 
@@ -55,7 +55,7 @@ class TestApplyCrossingRepair:
         before = compute_fk_chain(fk_array_with_flips(cat, pieces, flips))
         tracker = _make_tracker(cat, {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 20}, pieces)
 
-        result, result_flips = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig(), flips=flips)
+        result, result_flips = _apply_crossing_repair(pieces, tracker, cat, flips=flips)
 
         # Exactly one slot of the (1, 18) crossing becomes CROSS_90; the other stays.
         assert result[1] == int(CROSS_90)
@@ -69,7 +69,7 @@ class TestApplyCrossingRepair:
         """Curve-on-curve crossings must NOT be rewritten (would break closure)."""
         pieces = list(CURVE_CROSS)
         tracker = _make_tracker(cat, {"R40_CURVE": 40, "CROSS_90": 20}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat, DecoderConfig())
+        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
         assert tracker.used.get(int(CROSS_90), 0) == 0
         assert all(p != int(CROSS_90) for p in result)

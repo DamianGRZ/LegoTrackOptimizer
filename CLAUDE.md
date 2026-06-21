@@ -10,8 +10,7 @@
 - **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
-- **Known baseline (2026-06-12): 2 failed, 359 passed, 15 skipped.** Pre-existing failures, not regressions:
-  - `test_catalog.py::TestV1Deprecation::test_loading_v1_yaml_warns` — `data/track_pieces.yaml` is absent from disk (see Stale / Needs Action).
+- **Known baseline (2026-06-18): 1 failed, 359 passed, 0 skipped.** Pre-existing failure, not a regression:
   - `test_dbl_crossover_inject.py::TestInjectionHappyPaths::test_two_layer_loop_closes` — tests the two-layer DC pattern that is deliberately disabled in `sampling.py` (`_gen_two_layer_loop_dbl_crossover` returns `[]`; unavoidable self-crossing).
 
 ---
@@ -219,7 +218,7 @@ results -> visualization + run_info.md + category_report.md -> outputs/
 
 ### Adding Track Pieces
 1. Add to `data/track_pieces_v2.yaml` (V2 port-centric schema: `ports`, `routes`, `kind`)
-2. Add to `_LEGACY_PIECE_INDEX` in `src/catalog/catalog.py` and `PieceIndex` in `src/encoding.py` with the next index
+2. Add to `_CANONICAL_PIECE_INDEX` in `src/catalog/catalog.py` and `PieceIndex` in `src/encoding.py` with the next index
 3. If switch: add template to `src/templates.py`
 4. Run `/test catalog` and `/test templates` to validate
 
@@ -275,14 +274,14 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 
 ### Stale / Needs Action (NOT auto-delete)
 
-- **`data/track_pieces.yaml` is missing on disk.** Only `data/track_pieces_v2.yaml` exists. The v1 filename is referenced by `tests/test_catalog.py` (1 failing test) and `tests/test_catalog_parity.py` (15 skips). Either restore the v1 file, or retire the parity/deprecation tests.
+- **The v1 catalog `data/track_pieces.yaml` is gone; the kit is v2-only** (`data/track_pieces_v2.yaml`). The v1 deprecation test and the `test_catalog_parity.py` v1↔v2 parity suite have both been retired.
 - **Phase-1 `Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
 - **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
 
 ### Test Suite Notes (2026-06-12)
 
-- 35 `tests/test_*.py` files, 342 `def test_` functions, 376 collected tests. Baseline: **2 failed, 359 passed, 15 skipped** (see Testing & Verification for the two known failures).
-- The 5-way `test_catalog*.py` split (catalog / geometry / loader / parity / specs) is justified — distinct scopes.
+- 34 `tests/test_*.py` files, 335 `def test_` functions, 360 collected tests. Baseline: **1 failed, 359 passed, 0 skipped** (see Testing & Verification for the known failure).
+- The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
 - All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
 
 ### Untouched (Run Artifacts — Do Not Delete)

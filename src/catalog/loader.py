@@ -1,4 +1,4 @@
-"""ruamel.yaml + Pydantic v2 catalog loader with file+line error UX."""
+"""ruamel.yaml + Pydantic catalog loader with file+line error UX."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class CatalogLoadError(ValueError):
 
 
 def load_catalog_spec(path: str | Path) -> TrackCatalogSpec:
-    """Load a V2 catalog from YAML and return a validated TrackCatalogSpec.
+    """Load the port-centric catalog YAML and return a validated TrackCatalogSpec.
 
     Uses ruamel.yaml round-trip mode so CommentedMap/CommentedSeq preserve
     .lc (line/column) on each node. Line numbers are re-attached to any

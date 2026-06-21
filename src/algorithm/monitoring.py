@@ -1,13 +1,3 @@
-"""Convergence instrumentation for NSGA-II: HV, IGD, feasibility rate.
-
-HV reference point (+0.10, -0.55) is 10% beyond empirical nadir (0, -0.60) per
-Ishibuchi et al. 2018 / Auger et al. 2009. The callback always filters to
-feasible-only before computing HV/IGD — the +inf infeasibility sentinel never
-reaches the indicators.
-
-See docs/superpowers/plans/2026-04-20-batch-2-implementation-research.md §Problem Q5.
-"""
-
 from __future__ import annotations
 
 import math
@@ -81,9 +71,7 @@ class ConvergenceMonitorCallback(Callback):
                 igd_val = float(IGD(self._best_F).do(F_feas))
 
         # De-normalize closure residuals from G for human-readable logging.
-        # Shim-aware: post-Stage-B, G[0..2] are V2 per-axis closure; pre-Stage-B,
-        # G[0..2] include the current magnitude closure + angle + boundary.
-        # The block runs on any 3+-column G; meanings change with stage.
+        # G[0..2] are the per-axis closure residuals (dx, dy, dtheta).
         mean_cx = mean_cy = mean_ct = float("nan")
         if G is not None and G.shape[1] >= 3 and n_feas > 0:
             G_feas = G[feas_mask]

@@ -89,6 +89,6 @@ class TestSwitchGeometryReference:
         This test documents the gap so future changes trip the right alarm.
         """
         v2_dx, v2_dy, _ = compute_lego_r40_switch_port_c()
-        current_dx, current_dy = 31.0, 6.2   # from data/track_pieces.yaml
+        current_dx, current_dy = 31.0, 6.2   # from data/track_pieces_v2.yaml
         assert abs(v2_dx - current_dx) > 1.0, "If this starts failing, geometry was corrected"
         assert abs(v2_dy - current_dy) > 6.0, "If this starts failing, geometry was corrected"

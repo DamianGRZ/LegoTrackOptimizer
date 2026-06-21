@@ -1,13 +1,15 @@
 """Construction-based decoder: chromosome → MultiPathLayout.
 
 Algorithm:
-1. Read main loop piece types, filter INACTIVE → active_pieces
-2. Read active junctions, sort by position, compute branch pieces from templates
-3. Inject switches into main loop copy (replace, not insert)
-4. Self-intersection repair (inject CROSS_90 at ~90° crossings)
-5. Compute FK for augmented main loop
-6. Enumerate 2^J traversal paths
-7. Auto-center within boundary, return MultiPathLayout
+1.   Read main loop piece types, filter INACTIVE → active_pieces
+2.   Read active junctions, sort by position, compute branch pieces from templates
+3.   Inject switches into main loop copy (replace, not insert)
+3.5  Inject cross-junctions (CROSS_90 at descriptor-named perpendicular slots)
+3.6  Inject double-crossovers (DOUBLE_CROSSOVER replacing two straight slots)
+4.   Self-intersection repair (inject CROSS_90 at emergent ~90° crossings)
+5.   Compute FK for augmented main loop
+6.   Enumerate 2^J traversal paths
+7.   Auto-center within boundary, return MultiPathLayout
 """
 
 from itertools import product
@@ -121,8 +123,7 @@ def decode_chromosome(
 
     # Step 2: Read and validate junctions
     junctions = _read_junctions(
-        x, dims, main_pieces, tracker, catalog, config,
-        main_flips=main_flips, drop_log=drop_log,
+        x, dims, main_pieces, tracker, drop_log=drop_log,
     )
 
     # Step 3: Inject switches into main loop, build switch pairs
@@ -131,11 +132,13 @@ def decode_chromosome(
         main_flips=main_flips, drop_log=drop_log,
     )
 
+    # Step 3.5: Inject deliberate cross-junctions (CROSS_90 self-crossings)
     cross_junctions = _inject_cross_junctions(
-        augmented_pieces, x, dims, tracker, catalog, config,
+        augmented_pieces, x, dims, tracker, catalog,
         main_flips=augmented_flips, drop_log=drop_log,
     )
 
+    # Step 3.6: Inject double-crossovers
     dbl_crossovers, dbl_route_map = _inject_double_crossovers(
         augmented_pieces, x, dims, tracker, catalog, config,
         main_flips=augmented_flips, drop_log=drop_log,
@@ -143,7 +146,7 @@ def decode_chromosome(
 
     # Step 4: Self-intersection repair (CROSS_90 injection)
     augmented_pieces, augmented_flips = _apply_crossing_repair(
-        augmented_pieces, tracker, catalog, config, flips=augmented_flips,
+        augmented_pieces, tracker, catalog, flips=augmented_flips,
     )
 
     # Step 5 + 6: Build multi-path layout with FK and 2^J paths
@@ -204,9 +207,6 @@ def _read_junctions(
     dims: PartitionedDimensions,
     main_pieces: List[int],
     tracker: InventoryTracker,
-    catalog: TrackCatalog,
-    config: DecoderConfig,
-    main_flips: Optional[List[int]] = None,
     drop_log: Optional[List[str]] = None,
 ) -> List[ValidatedJunction]:
     """Read active junctions, validate inventory, deactivate if insufficient.
@@ -351,12 +351,8 @@ def _inject_switches(
         augmented[out_pos] = exit_switch_idx
         augmented_flips[out_pos] = 0
 
-        used_positions.add(in_pos)
-        used_positions.add(out_pos)
-
-        # Mark positions between IN and OUT as occupied (no overlapping junctions)
-        for p in range(in_pos, out_pos + 1):
-            used_positions.add(p)
+        # Mark IN, OUT, and everything between as occupied (no overlapping junctions)
+        used_positions.update(range(in_pos, out_pos + 1))
 
         switch_pairs.append(SwitchPair(
             pair_id=pair_id,
@@ -382,7 +378,6 @@ def _inject_cross_junctions(
     dims: PartitionedDimensions,
     tracker: InventoryTracker,
     catalog: TrackCatalog,
-    config: DecoderConfig,
     *,
     main_flips: Optional[List[int]] = None,
     drop_log: Optional[List[str]] = None,
@@ -680,7 +675,6 @@ def _apply_crossing_repair(
     pieces: List[int],
     tracker: InventoryTracker,
     catalog: TrackCatalog,
-    config: DecoderConfig,
     flips: Optional[List[int]] = None,
 ) -> Tuple[List[int], List[int]]:
     """Mark emergent perpendicular STRAIGHT_16-on-STRAIGHT_16 self-crossings as CROSS_90.
@@ -788,9 +782,12 @@ def _compute_single_path(
 
     Args:
         main_pieces: Augmented main loop with switches.
+        main_flips: Per-slot R40_CURVE flip bits, parallel to main_pieces.
         switch_pairs: Sorted switch pairs.
         route_choices: Binary tuple, one per switch pair.
         catalog: Track catalog for FK lookup.
+        main_loop_routes: Map of main-loop position -> catalog-route index for
+            multi-route slots (DOUBLE_CROSSOVER); other slots default to through.
 
     Returns:
         TraversalPath with piece sequence, states, and closure metrics.
@@ -901,6 +898,8 @@ def _compute_path_fk(
                       for an index, takes precedence over the catalog route.
                       Used for OUT-position branch traversal where the catalog
                       can't express reversed-installation FK (see SwitchPair).
+        flips: Per-piece R40_CURVE flip bits; a set bit negates dy/dtheta for
+               R40_CURVE pieces (other piece types ignore it).
 
     Returns:
         (n+1, 3) state array [x, y, theta].

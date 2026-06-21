@@ -3,13 +3,10 @@
 Produces a PhysicalEvaluation across five physical domains (geometry,
 stability, kinematics, dynamics, energy) in a single O(n) pass per chromosome.
 Pure function; no side effects.
-
-Spec: docs/superpowers/specs/2026-05-08-comprehensive-physical-model-design.md
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -17,7 +14,7 @@ from numpy.typing import NDArray
 
 from ..catalog import TrackCatalog
 from ..geometry import Layout
-from .physics import DEFAULT_TRAIN_CONFIG, TrainConfig
+from .physics import DEFAULT_TRAIN_CONFIG, TrainConfig, derailment_caps
 from .scoring import SpeedProfile, compute_speed_profile
 
 
@@ -88,22 +85,10 @@ def _compute_stability(
 ]:
     """Per-segment v_slide, v_tip, v_nadal, v_eff, binding-cap label.
 
-    Mirrors physics.v_eff_array but materializes the four caps separately so
-    the binding cap can be labelled per segment.
+    Reuses physics.derailment_caps for the three derailment formulas and adds
+    the motor cap so the binding cap can be labelled per segment.
     """
-    g = train_config.g
-    mu = train_config.mu_design
-
-    v_slide = np.sqrt(mu * g * radii_m)
-    v_tip = np.sqrt(g * radii_m * (train_config.gauge_b / 2.0) / train_config.cog_height_h)
-
-    tan_d = math.tan(math.radians(train_config.flange_angle_deg))
-    lv_crit = (tan_d - mu) / (1.0 + mu * tan_d)
-    if lv_crit <= 0:
-        v_nadal = np.full_like(radii_m, np.inf)
-    else:
-        v_nadal = np.sqrt(g * radii_m * lv_crit)
-
+    v_slide, v_tip, v_nadal = derailment_caps(train_config, radii_m)
     v_motor = np.full_like(radii_m, train_config.v_motor_max)
 
     caps = np.stack([v_slide, v_tip, v_nadal, v_motor], axis=0)  # shape (4, n)

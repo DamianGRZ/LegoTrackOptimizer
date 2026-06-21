@@ -1,4 +1,4 @@
-"""Pydantic v2 domain models for the track catalog (V2 schema)."""
+"""Pydantic domain models for the port-centric track catalog schema."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ class PortDef(BaseModel):
     dtheta: float = Field(description="heading delta in radians, CCW positive")
 
 
-ATOMIC_ANGLE_RAD = math.pi / 32  # 5.625°; see V2 catalog report §Atomic angle
-LATTICE_TOLERANCE = 1e-6         # corrected from V2 spec's 1e-9 per research finding
+ATOMIC_ANGLE_RAD = math.pi / 32  # 5.625° = π/32, the track geometry's atomic angle
+LATTICE_TOLERANCE = 1e-6         # tolerance for the π/32 angle-lattice check
 
 
 class TrackPieceSpec(BaseModel):
@@ -165,8 +165,8 @@ def check_schema_version(file_version_str: str, path: str = "<catalog>") -> None
         raise SchemaVersionError(
             f"{path}: schema MAJOR version mismatch — "
             f"file is {file_ver}, code supports {code_ver}. "
-            f"Run migration: python -m legotrack.catalog.migrations."
-            f"v{file_ver.major}_to_v{code_ver.major}"
+            f"Regenerate the catalog for schema v{code_ver.major} "
+            f"(see data/track_pieces_v2.yaml)."
         )
     if file_ver.minor > code_ver.minor:
         log.warning(

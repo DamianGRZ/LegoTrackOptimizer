@@ -19,10 +19,10 @@ from .specs import TrackCatalogSpec, TrackPieceSpec
 log = logging.getLogger(__name__)
 
 
-# Canonical piece_id -> chromosome index mapping (legacy v1 encoding).
-# V2 YAML is order-agnostic; this map preserves the chromosome-index contract
-# so existing GA code (sampling, operators, repair) keeps working unchanged.
-_LEGACY_PIECE_INDEX: Dict[str, int] = {
+# Canonical piece_id -> chromosome index. The GA encoding is tied to these exact
+# indices, so the mapping is pinned here rather than read from YAML piece order;
+# sampling, operators and repair all rely on it staying stable.
+_CANONICAL_PIECE_INDEX: Dict[str, int] = {
     "STRAIGHT_16": 0,
     "STRAIGHT_24": 1,
     "R40_CURVE": 2,
@@ -32,33 +32,24 @@ _LEGACY_PIECE_INDEX: Dict[str, int] = {
     "DOUBLE_CROSSOVER": 6,
 }
 
-# V2 kind -> legacy piece_type string used by PIECE_TYPE_TO_CLASS.
-_V2_KIND_TO_LEGACY_TYPE: Dict[str, str] = {
-    "straight": "straight",
-    "curve": "curve",
-    "crossing": "crossing",
-    "switch": "switch",
-    "wye": "switch",
-}
-
-# Per-piece (v1) radius_mm / speed_limit for multi-route pieces on their
-# *default* route (the one whose exit port is the FK row of the legacy table).
-# V2 does not encode per-route physics; we supply v1-equivalent values so
-# fk_table/radius_table/speed_table stay bit-identical across schemas.
+# Default-route radius_mm / speed_limit per piece. The runtime tables store one
+# physics row per piece — its *default* route, whose exit port is the FK row.
+# The port-centric YAML doesn't carry per-route physics, so these constants fill
+# fk_table / radius_table / speed_table.
 #
 # Default route for each piece (see _default_route_name):
 #   switches:  "through"  -> straight-through -> speed 1.57, radius=inf
 #   CROSS_90:  "horizontal" -> speed 1.57, radius=inf
 #   DBL_CROSS: "track1_through" -> speed 1.57, radius=inf
-# Curves keep their 0.97 / 320mm from v1.
-_V2_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
+# Curves keep their 0.97 / 320mm.
+_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
     # piece_id -> (radius_mm, speed_limit_ms) on the default route
     "R40_CURVE": (320.0, 0.97),
 }
 
-# Per-route physics overrides for multi-route pieces, used to reconstruct the
-# legacy routes_data list in v1-parity form.
-_V2_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
+# Per-route physics for multi-route pieces, used to build each piece's
+# routes_data list (radius/speed keyed by route name).
+_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
     "R40_SWITCH_LEFT":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
     "R40_SWITCH_RIGHT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
     "CROSS_90": {
@@ -76,14 +67,6 @@ _V2_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
 
 class TrackCatalog:
     """Manages track piece inventory with vectorized access."""
-
-    SECTION_TYPES = {
-        "straights": "straight",
-        "curves": "curve",
-        "crossings": "crossing",
-        "r40_switch_components": "switch",
-        "bumpers": "bumper",
-    }
 
     PIECE_TYPE_TO_CLASS = {
         "straight": PieceClass.SIMPLE_2PORT,
@@ -111,45 +94,35 @@ class TrackCatalog:
 
     @classmethod
     def load(cls, path: str | Path) -> "TrackCatalog":
-        """Load catalog from YAML. Auto-detects v1 (section-keyed) vs v2 (port-centric)."""
+        """Load the port-centric catalog YAML into runtime numpy tables."""
         path = Path(path)
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
 
-        if _is_v2_schema(data):
-            spec = load_catalog_spec(path)
-            return cls._from_v2_spec(spec)
-
-        import warnings
-        warnings.warn(
-            f"Loading legacy v1 catalog format from {path}. "
-            f"Migrate to V2 port-centric schema (see data/track_pieces_v2.yaml). "
-            f"v1 support will be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        catalog = cls()
-        catalog._parse_yaml(data)
-        catalog._build_tables()
-        return catalog
+        if not _is_port_centric_schema(data):
+            raise ValueError(
+                f"{path}: not a port-centric catalog. Expected a top-level "
+                f"`pieces:` list and `meta.schema_version` (see data/track_pieces_v2.yaml)."
+            )
+        return cls._from_spec(load_catalog_spec(path))
 
     @classmethod
-    def _from_v2_spec(cls, spec: TrackCatalogSpec) -> "TrackCatalog":
-        """Build a legacy-surface TrackCatalog from a V2 TrackCatalogSpec.
+    def _from_spec(cls, spec: TrackCatalogSpec) -> "TrackCatalog":
+        """Build a TrackCatalog (runtime numpy tables) from a validated TrackCatalogSpec.
 
-        Translates port-centric V2 data into the v1 numpy tables by picking
-        each piece's default route and converting radians -> degrees for the
-        legacy angle convention used by geometry.compute_fk_chain.
+        Flattens the port-centric spec into the runtime tables by picking each
+        piece's default route and converting radians -> degrees for the angle
+        convention geometry.compute_fk_chain expects.
         """
         catalog = cls()
         catalog.stud_mm = spec.meta.stud_mm
 
         for ps in spec.pieces:
-            if ps.piece_id not in _LEGACY_PIECE_INDEX:
+            if ps.piece_id not in _CANONICAL_PIECE_INDEX:
                 # Unknown piece — skip rather than invent an index; the chromosome
                 # encoding is tied to the canonical map.
                 continue
-            index = _LEGACY_PIECE_INDEX[ps.piece_id]
+            index = _CANONICAL_PIECE_INDEX[ps.piece_id]
             catalog._max_index = max(catalog._max_index, index)
 
             main_route_name = _default_route_name(ps)
@@ -159,7 +132,7 @@ class TrackCatalog:
             fk = FKDeltas(
                 dx=exit_port.dx,
                 dy=exit_port.dy,
-                # Legacy _fk_table stores DEGREES (geometry.py converts via np.radians).
+                # The runtime _fk_table stores angles in DEGREES (geometry.py converts via np.radians).
                 dtheta=math.degrees(exit_port.dtheta),
             )
 
@@ -173,7 +146,7 @@ class TrackCatalog:
                 for name, port in ps.ports.items()
             )
 
-            piece_type = _V2_KIND_TO_LEGACY_TYPE[ps.kind]
+            piece_type = ps.kind
             radius_mm, speed_limit = _default_physics_for(ps)
 
             piece = TrackPiece(
@@ -196,7 +169,7 @@ class TrackCatalog:
                 radius_mm=radius_mm,
                 speed_limit_ms=speed_limit,
                 is_terminator=False,
-                routes_data=_build_legacy_routes(ps),
+                routes_data=_build_routes_data(ps),
             )
 
             catalog._pieces[ps.piece_id] = piece
@@ -211,86 +184,6 @@ class TrackCatalog:
         """Construct PieceTopology entries for all registered pieces."""
         for piece in self._index_to_piece.values():
             self._topologies[piece.index] = self._create_topology(piece)
-
-    def _parse_yaml(self, data: Dict[str, Any]) -> None:
-        """Parse YAML structure."""
-        metadata = data.get("metadata", {}) or {}
-        self.stud_mm = float(metadata.get("stud_mm", 8.0))
-
-        piece_index = data.get("piece_index", {})
-        id_to_index: Dict[str, int] = {}
-        for idx, piece_id in piece_index.items():
-            if piece_id is not None and idx != -1:
-                id_to_index[piece_id] = int(idx)
-                self._max_index = max(self._max_index, int(idx))
-
-        self._id_to_index = id_to_index
-
-        for section, piece_type in self.SECTION_TYPES.items():
-            if section in data:
-                for piece_data in data[section]:
-                    piece = self._parse_piece(piece_data, piece_type, id_to_index)
-                    if piece:
-                        self._register_piece(piece)
-
-    def _parse_piece(
-        self, data: Dict[str, Any], piece_type: str, id_to_index: Dict[str, int]
-    ) -> Optional[TrackPiece]:
-        """Parse single piece from YAML data."""
-        piece_id = data.get("id")
-        if not piece_id or piece_id not in id_to_index:
-            return None
-
-        index = id_to_index[piece_id]
-
-        fk_data = data.get("fk", {})
-        fk = FKDeltas(
-            dx=fk_data.get("dx", 0.0),
-            dy=fk_data.get("dy", 0.0),
-            dtheta=fk_data.get("dtheta", 0.0),
-        )
-
-        ports_data = data.get("ports", [])
-        ports: List[Port] = []
-        for p in ports_data:
-            pos = p.get("pos", [0, 0])
-            ports.append(
-                Port(
-                    x=pos[0],
-                    y=pos[1],
-                    heading=p.get("heading", 0.0),
-                    gender=p.get("gender", "M"),
-                )
-            )
-
-        physics = data.get("physics", {})
-        radius_mm = physics.get("radius_mm")
-        speed_limit = physics.get("speed_limit_ms", self.DEFAULT_SPEED)
-
-        return TrackPiece(
-            id=piece_id,
-            name=data.get("name", piece_id),
-            piece_type=piece_type,
-            fk=fk,
-            ports=tuple(ports),
-            index=index,
-            length=data.get("length", data.get("footprint", {}).get("length", 16.0)),
-            radius=data.get("radius"),
-            angle=data.get("angle"),
-            direction=data.get("direction"),
-            radius_mm=radius_mm,
-            speed_limit_ms=speed_limit if speed_limit else self.DEFAULT_SPEED,
-            is_terminator=(piece_type == "bumper"),
-            routes_data=data.get("routes"),
-        )
-
-    def _register_piece(self, piece: TrackPiece) -> None:
-        """Add piece to catalog."""
-        self._pieces[piece.id] = piece
-        self._index_to_piece[piece.index] = piece
-
-        topology = self._create_topology(piece)
-        self._topologies[piece.index] = topology
 
     def _create_topology(self, piece: TrackPiece) -> PieceTopology:
         """Create topology metadata for piece."""
@@ -504,12 +397,12 @@ class TrackCatalog:
 
 
 # =============================================================================
-# V2 schema compatibility shim
+# Port-centric schema: detection + translation into the runtime tables
 # =============================================================================
 
 
-def _is_v2_schema(data: Any) -> bool:
-    """V2 has top-level `pieces:` list and `meta.schema_version`; v1 has `straights:` etc."""
+def _is_port_centric_schema(data: Any) -> bool:
+    """A valid catalog has a top-level `pieces:` list and `meta.schema_version`."""
     if not isinstance(data, dict):
         return False
     meta = data.get("meta")
@@ -521,9 +414,9 @@ def _is_v2_schema(data: Any) -> bool:
 
 
 def _default_route_name(ps: TrackPieceSpec) -> str:
-    """Pick the route whose exit port is the 'main FK' row for the legacy table.
+    """Pick the route whose exit port is the 'main FK' row for the runtime table.
 
-    Preferences match v1 behavior:
+    Preference order:
       - simple 2-port pieces use "main"
       - switches use "through" (straight-through FK is the default)
       - crossings use whichever of "horizontal"/"track1_through" exists first
@@ -538,33 +431,32 @@ def _default_route_name(ps: TrackPieceSpec) -> str:
 def _default_physics_for(ps: TrackPieceSpec) -> Tuple[Optional[float], float]:
     """Return (radius_mm, speed_limit_ms) for ps's default route.
 
-    V2 does not encode per-route physics; we map known piece_ids to v1 values.
-    Falls back to (None, DEFAULT_SPEED) for pieces without an explicit entry.
+    The port-centric YAML doesn't encode per-route physics; we map known
+    piece_ids to their physics values, falling back to (None, DEFAULT_SPEED).
     """
     default_speed = TrackCatalog.DEFAULT_SPEED
     default_route = _default_route_name(ps)
-    per_route = _V2_ROUTE_PHYSICS.get(ps.piece_id)
+    per_route = _ROUTE_PHYSICS.get(ps.piece_id)
     if per_route and default_route in per_route:
         return per_route[default_route]
-    if ps.piece_id in _V2_DEFAULT_PHYSICS:
-        return _V2_DEFAULT_PHYSICS[ps.piece_id]
+    if ps.piece_id in _DEFAULT_PHYSICS:
+        return _DEFAULT_PHYSICS[ps.piece_id]
     return (None, default_speed)
 
 
-def _build_legacy_routes(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
-    """Reconstruct the legacy routes_data list the v1 parser produces.
+def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
+    """Build the routes_data list the runtime parser consumes.
 
-    Single-route 2-port pieces: return None (v1 emits a synthesized default
-    route in _parse_routes when routes_data is falsy). Multi-route pieces
-    emit one dict per route with entry_port/exit_port as integer indices
-    matching the order ports appear in ps.ports, and dtheta converted to
-    degrees for legacy parity.
+    Single-route 2-port pieces: return None (_parse_routes then synthesizes a
+    default route when routes_data is falsy). Multi-route pieces emit one dict
+    per route with entry_port/exit_port as integer indices matching the order
+    ports appear in ps.ports, and dtheta converted to degrees.
     """
     if len(ps.routes) <= 1:
         return None
 
     port_names = list(ps.ports)
-    per_route_physics = _V2_ROUTE_PHYSICS.get(ps.piece_id, {})
+    per_route_physics = _ROUTE_PHYSICS.get(ps.piece_id, {})
 
     out: List[Dict[str, Any]] = []
     for name, port_seq in ps.routes.items():
@@ -574,13 +466,11 @@ def _build_legacy_routes(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
         exit_port_spec = ps.ports[exit_name]
 
         # Route FK = exit pose in piece-local frame with entry port as origin.
-        # All V2 routes start from port A (origin), so exit pose equals the
-        # exit port's pose; when entry is non-A (e.g. CROSS_90 vertical),
-        # the legacy fk is still defined in the train's own frame as a
-        # straight-through (dx=length, dy=0, dtheta=0). V1 encodes this by
-        # storing dx=length,dy=0,dtheta=0 for vertical route of CROSS_90;
-        # we preserve that by using exit-relative-to-entry in the train's
-        # local frame along the route.
+        # All routes start from port A (origin), so exit pose equals the exit
+        # port's pose; when entry is non-A (e.g. CROSS_90 vertical) the FK is
+        # still defined in the train's own frame as a straight-through
+        # (dx=length, dy=0, dtheta=0). We preserve that by measuring exit
+        # relative to entry in the train's local frame along the route.
         dx, dy, dtheta_rad = _route_fk_in_train_frame(
             entry_port_spec, exit_port_spec
         )
@@ -609,7 +499,7 @@ def _route_fk_in_train_frame(entry, exit) -> Tuple[float, float, float]:
 
     Both arguments are PortDef instances giving SE(2) pose in the piece-local
     frame. The result is the rigid transform from entry frame to exit frame,
-    which is what the legacy fk_table stores for each route.
+    which is what the fk_table stores for each route.
     """
     c = math.cos(-entry.dtheta)
     s = math.sin(-entry.dtheta)

@@ -12,7 +12,7 @@ import pytest
 
 from src.catalog import TrackCatalog
 from src.decoder.construction import _inject_cross_junctions, fk_array_with_flips
-from src.decoder.types import DecoderConfig, InventoryTracker
+from src.decoder.types import InventoryTracker
 from src.encoding import (
     CROSS_90,
     R40_CURVE,
@@ -73,7 +73,7 @@ class TestInjectCrossJunctionSuccess:
         tracker = _make_tracker(cat, _INV, pieces)
 
         result = _inject_cross_junctions(
-            pieces, x, dims, tracker, cat, DecoderConfig(), main_flips=flips,
+            pieces, x, dims, tracker, cat, main_flips=flips,
         )
 
         assert len(result) == 1
@@ -87,7 +87,7 @@ class TestInjectCrossJunctionSuccess:
         set_cross_junction(x, dims, slot=0, active=1, pos_1=CROSS_SLOT_1, pos_2=CROSS_SLOT_2)
         tracker = _make_tracker(cat, _INV, pieces)
 
-        _inject_cross_junctions(pieces, x, dims, tracker, cat, DecoderConfig(),
+        _inject_cross_junctions(pieces, x, dims, tracker, cat,
                                 main_flips=list(CROSSING_FLIPS))
 
         assert tracker.used.get(int(CROSS_90), 0) == 1
@@ -100,7 +100,7 @@ class TestInjectCrossJunctionSuccess:
         set_cross_junction(x, dims, slot=0, active=1, pos_1=CROSS_SLOT_1, pos_2=CROSS_SLOT_2)
         tracker = _make_tracker(cat, _INV, pieces)
 
-        _inject_cross_junctions(pieces, x, dims, tracker, cat, DecoderConfig(),
+        _inject_cross_junctions(pieces, x, dims, tracker, cat,
                                 main_flips=flips)
 
         after = compute_fk_chain(fk_array_with_flips(cat, pieces, flips))
@@ -114,7 +114,7 @@ class TestInjectCrossJunctionFailurePaths:
         x = create_empty_chromosome(dims)  # all descriptors inactive
         tracker = _make_tracker(cat, _INV, pieces)
         result = _inject_cross_junctions(pieces, x, dims, tracker, cat,
-                                         DecoderConfig(), main_flips=list(CROSSING_FLIPS))
+                                         main_flips=list(CROSSING_FLIPS))
         assert result == []
         assert tracker.used.get(int(CROSS_90), 0) == 0
 
@@ -126,7 +126,7 @@ class TestInjectCrossJunctionFailurePaths:
         set_cross_junction(x, dims, slot=0, active=1, pos_1=5, pos_2=CROSS_SLOT_2)
         tracker = _make_tracker(cat, _INV, pieces)
         result = _inject_cross_junctions(pieces, x, dims, tracker, cat,
-                                         DecoderConfig(), main_flips=list(CROSSING_FLIPS))
+                                         main_flips=list(CROSSING_FLIPS))
         assert result == []
         assert pieces == original
         assert tracker.used.get(int(CROSS_90), 0) == 0
@@ -139,7 +139,7 @@ class TestInjectCrossJunctionFailurePaths:
         inv = {"STRAIGHT_16": 120, "R40_CURVE": 80, "CROSS_90": 0}
         tracker = _make_tracker(cat, inv, pieces)
         result = _inject_cross_junctions(pieces, x, dims, tracker, cat,
-                                         DecoderConfig(), main_flips=list(CROSSING_FLIPS))
+                                         main_flips=list(CROSSING_FLIPS))
         assert result == []
         assert pieces == original
 
@@ -151,7 +151,7 @@ class TestInjectCrossJunctionFailurePaths:
         set_cross_junction(x, dims, slot=0, active=1, pos_1=1, pos_2=8)
         tracker = _make_tracker(cat, _INV, pieces)
         result = _inject_cross_junctions(pieces, x, dims, tracker, cat,
-                                         DecoderConfig(), main_flips=[0] * 16)
+                                         main_flips=[0] * 16)
         assert result == []
         assert pieces == original
         assert tracker.used.get(int(CROSS_90), 0) == 0
@@ -164,6 +164,6 @@ class TestInjectCrossJunctionFailurePaths:
         set_cross_junction(x, dims, slot=0, active=1, pos_1=CROSS_SLOT_1, pos_2=CROSS_SLOT_2)
         tracker = _make_tracker(cat, _INV, pieces)
         result = _inject_cross_junctions(pieces, x, dims, tracker, cat,
-                                         DecoderConfig(), main_flips=list(CROSSING_FLIPS))
+                                         main_flips=list(CROSSING_FLIPS))
         assert result == []
         assert pieces == original

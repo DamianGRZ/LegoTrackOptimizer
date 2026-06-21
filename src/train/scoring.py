@@ -48,7 +48,7 @@ def compute_speed_profile(
         train_config: Portable locomotive physics (default: DEFAULT_TRAIN_CONFIG)
         safety_margin: Multiplier (in (0, 1]) applied to every Pass-1 cap so
             the operating speed stays strictly below the derailment cap.
-            Default 1.0 preserves legacy behavior.
+            Default 1.0 applies no margin.
 
     Returns:
         SpeedProfile with speeds, avg_speed, lap_time, etc.
