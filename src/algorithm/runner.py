@@ -63,7 +63,7 @@ def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
 
     logger.info("Piece usage:")
     for piece_id, count in sorted(inventory.items()):
-        idx = catalog._id_to_index.get(piece_id)
+        idx = catalog.id_to_index.get(piece_id)
         if idx is not None:
             used = piece_counts.get(idx, 0)
             logger.info(f"  {piece_id}: {used}/{count}")

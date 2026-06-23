@@ -1,4 +1,4 @@
-"""Run V1 optimization on all shared configs at matched V2 parameters."""
+"""Batch-run the shared configs at matched parameters (one outputs/<config> dir each)."""
 
 import logging
 import time
@@ -13,6 +13,8 @@ from src.decoder import decode_chromosome
 
 
 CONFIGS = ["default", "with_switches", "with_crossing"]
+# Batch override: every config runs at these matched parameters so results are
+# comparable across configs, intentionally ignoring each config's own pop/gen.
 POP_SIZE = 500
 N_GEN = 200
 HEURISTIC_RATIO = 0.30
@@ -24,7 +26,7 @@ def run_one(config_name: str) -> dict:
     config.algorithm.n_gen = N_GEN
     config.algorithm.heuristic_ratio = HEURISTIC_RATIO
 
-    print(f"\n{'='*70}\nV1 {config_name}: pop={POP_SIZE}, gen={N_GEN}\n{'='*70}")
+    print(f"\n{'='*70}\n{config_name}: pop={POP_SIZE}, gen={N_GEN}\n{'='*70}")
     catalog = TrackCatalog.load("data/track_pieces_v2.yaml")
     output_dir = Path(f"outputs/{config_name}")
 
@@ -72,7 +74,7 @@ def main() -> None:
         summaries.append(run_one(cfg))
     total_elapsed = time.time() - total_t0
 
-    print(f"\n\n{'='*70}\nV1 SUMMARY (total {total_elapsed:.1f}s)\n{'='*70}")
+    print(f"\n\n{'='*70}\nSUMMARY (total {total_elapsed:.1f}s)\n{'='*70}")
     for s in summaries:
         print(f"\n{s['config']}:")
         print(f"  elapsed:        {s['elapsed_sec']:.1f}s")

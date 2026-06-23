@@ -190,7 +190,7 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
 
     rows: list[str] = []
     for piece_id, capacity in sorted(inventory.items()):
-        idx = catalog._id_to_index.get(piece_id)
+        idx = catalog.id_to_index.get(piece_id)
         if idx is None:
             continue
         used = counts.get(idx, 0)

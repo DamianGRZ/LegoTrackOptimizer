@@ -10,8 +10,8 @@
 - **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
-- **Known baseline (2026-06-18): 1 failed, 359 passed, 0 skipped.** Pre-existing failure, not a regression:
-  - `test_dbl_crossover_inject.py::TestInjectionHappyPaths::test_two_layer_loop_closes` — tests the two-layer DC pattern that is deliberately disabled in `sampling.py` (`_gen_two_layer_loop_dbl_crossover` returns `[]`; unavoidable self-crossing).
+- **Known baseline (2026-06-21): 0 failed, 360 passed, 0 skipped** (clean).
+  - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
 
 ---
 
@@ -280,7 +280,7 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 
 ### Test Suite Notes (2026-06-12)
 
-- 34 `tests/test_*.py` files, 335 `def test_` functions, 360 collected tests. Baseline: **1 failed, 359 passed, 0 skipped** (see Testing & Verification for the known failure).
+- 34 `tests/test_*.py` files, 335 `def test_` functions, 360 collected tests. Baseline: **0 failed, 360 passed, 0 skipped** (clean).
 - The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
 - All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
 

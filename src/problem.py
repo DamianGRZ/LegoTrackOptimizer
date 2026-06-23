@@ -4,7 +4,7 @@ Bi-objective NSGA-II with Deb's constraint handling:
 - F[0] = -utilization (maximize piece usage)
 - F[1] = -(avg speed of the slowest traversal route) at safety_margin=0.95
          (maximize the worst route's pace; see _slowest_route_speed)
-- 5 inequality constraints via Deb's CV rules
+- 5 + per-piece-type inequality constraints via Deb's CV rules
 """
 
 from __future__ import annotations
@@ -295,11 +295,11 @@ class TrackOptimizationProblem(ElementwiseProblem):
                 if 0 <= piece_idx < n_types:
                     census[piece_idx] += 1
         census[CROSS_90_INDEX] += len(layout.cross_junctions)
-        census[DOUBLE_CROSSOVER_INDEX] += len(getattr(layout, "dbl_crossovers", []))
+        census[DOUBLE_CROSSOVER_INDEX] += len(layout.dbl_crossovers)
 
-        result = np.zeros(n_types, dtype=np.float64)
-        for t in range(n_types):
-            max_occ_t = self.inventory_by_index.get(t, 0)
-            excess = max(0, int(census[t]) - int(max_occ_t))
-            result[t] = excess / max(1, max_occ_t)
-        return result
+        max_occ = np.array(
+            [self.inventory_by_index.get(t, 0) for t in range(n_types)],
+            dtype=np.float64,
+        )
+        excess = np.maximum(0.0, census.astype(np.float64) - max_occ)
+        return excess / np.maximum(1.0, max_occ)

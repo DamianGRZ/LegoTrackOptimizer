@@ -1,4 +1,5 @@
-"""Track layout geometry using forward kinematics (FK) and multi-phase topology."""
+"""Track layout geometry: vectorized forward kinematics (FK), closure metrics,
+and the single-loop ``Layout`` view consumed by the train physics and renderer."""
 
 from __future__ import annotations
 
@@ -50,7 +51,11 @@ def compute_fk_chain(fk_deltas: NDArray[np.float64]) -> NDArray[np.float64]:
 
 @dataclass
 class Layout:
-    """Legacy single-loop layout representation (Phase 1 compatibility)."""
+    """Single-loop layout view (one piece sequence + FK states).
+
+    A simpler representation than MultiPathLayout, consumed by the train
+    physics (per-route views) and the switchless renderer path.
+    """
 
     indices: NDArray[np.int32]
     states: NDArray[np.float64]

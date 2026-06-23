@@ -1,7 +1,7 @@
 # LEGO Track Optimizer - Source Package
 #
-# NOTE: Imports reduced during partitioned encoding migration.
-# Will be restored once all modules are updated.
+# Curated top-level re-exports; import submodules directly for everything else
+# (e.g. `from src.encoding import ...`).
 
 from .config import OptimizationConfig
 from .catalog import TrackCatalog, TrackPiece

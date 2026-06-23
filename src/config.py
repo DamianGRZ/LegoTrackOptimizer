@@ -57,8 +57,8 @@ class AlgorithmConfig(BaseModel):
     pop_size: int = Field(default=1000, ge=10, description="Population size")
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
     heuristic_ratio: float = Field(default=0.20, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")
-    crossover_prob: float = Field(default=0.9, ge=0, le=1, description="Crossover probability")
-    mutation_prob: float = Field(default=0.1, ge=0, le=1, description="Mutation probability")
+    crossover_prob: float = Field(default=0.2, ge=0, le=1, description="Crossover probability")
+    mutation_prob: float = Field(default=0.8, ge=0, le=1, description="Mutation probability")
     eliminate_duplicates: bool = Field(default=True, description="Remove duplicate solutions")
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     termination: TerminationConfig = Field(default_factory=TerminationConfig)
@@ -116,9 +116,3 @@ class OptimizationConfig(BaseModel):
         if self.train_config_path is None:
             return TrainConfig()
         return TrainConfig.from_yaml(self._base_dir / self.train_config_path)
-
-    def save(self, path: str | Path) -> None:
-        """Save configuration to YAML file."""
-        path = Path(path)
-        with open(path, "w") as f:
-            yaml.dump(self.model_dump(), f, default_flow_style=False)

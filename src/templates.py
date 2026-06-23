@@ -188,38 +188,12 @@ DC_R_TRACK2_THROUGH = 1
 DC_R_CROSS_1_TO_2 = 2
 DC_R_CROSS_2_TO_1 = 3
 
-# Train-frame FK (dx, dy, dtheta_deg) per route, with entry port as origin and
-# entry heading = 0. dtheta is in DEGREES to match catalog _fk_table convention.
-DC_ROUTE_FK: Dict[int, Tuple[float, float, float]] = {
-    DC_R_TRACK1_THROUGH: (DC_LENGTH_STUDS,  0.0,                0.0),
-    DC_R_TRACK2_THROUGH: (DC_LENGTH_STUDS,  0.0,                0.0),
-    DC_R_CROSS_1_TO_2:   (DC_LENGTH_STUDS,  DC_LATERAL_STUDS,   0.0),
-    DC_R_CROSS_2_TO_1:   (DC_LENGTH_STUDS, -DC_LATERAL_STUDS,   0.0),
-}
-
 # Which port the train enters at for each route.
 DC_ROUTE_ENTRY_PORT: Dict[int, str] = {
     DC_R_TRACK1_THROUGH: "A",
     DC_R_TRACK2_THROUGH: "C",
     DC_R_CROSS_1_TO_2:   "A",
     DC_R_CROSS_2_TO_1:   "C",
-}
-
-# Port positions in piece-local frame (port_A at origin, piece heading = +x).
-DC_PORT_LOCAL: Dict[str, Tuple[float, float]] = {
-    "A": (0.0,              0.0),
-    "B": (DC_LENGTH_STUDS,  0.0),
-    "C": (0.0,              DC_LATERAL_STUDS),
-    "D": (DC_LENGTH_STUDS,  DC_LATERAL_STUDS),
-}
-
-# Port set covered by each catalog route (0=A, 1=B, 2=C, 3=D).
-DC_PORT_INDEX: Dict[str, int] = {"A": 0, "B": 1, "C": 2, "D": 3}
-DC_ROUTE_PORT_SET: Dict[int, frozenset] = {
-    DC_R_TRACK1_THROUGH: frozenset({0, 1}),
-    DC_R_TRACK2_THROUGH: frozenset({2, 3}),
-    DC_R_CROSS_1_TO_2:   frozenset({0, 3}),
-    DC_R_CROSS_2_TO_1:   frozenset({2, 1}),
 }
 
 # Valid 2-route covers of {A,B,C,D} — these are the only route pairs that
@@ -463,11 +437,7 @@ def compute_out_switch_alignment_error(
     position_error = float(np.sqrt(
         (after_merge[0] - target_x) ** 2 + (after_merge[1] - target_y) ** 2
     ))
-    angle_diff = after_merge[2] - target_theta
-    while angle_diff > 180:
-        angle_diff -= 360
-    while angle_diff < -180:
-        angle_diff += 360
+    angle_diff = (after_merge[2] - target_theta + 180.0) % 360.0 - 180.0
     angle_error = float(abs(angle_diff))
 
     return (position_error, angle_error)
