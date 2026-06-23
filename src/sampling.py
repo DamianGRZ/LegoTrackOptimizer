@@ -435,20 +435,19 @@ def _gen_figure_eight_dbl_crossover(
 def _gen_two_layer_loop_dbl_crossover(
     inv: Dict[int, int], dims: PartitionedDimensions,
 ) -> List[Pattern]:
-    """Disabled: the naive two-layer pattern has an unavoidable self-crossing
-    on the east side of the DOUBLE_CROSSOVER.
+    """Disabled: the naive two-layer (both-through) DC pattern is geometrically
+    infeasible as a single closed loop, and NOT for an inventory reason.
 
-    Train geometry: exiting port B of track 1 heading east, the first 4
-    R40_CURVE arc passes through (~72, 8) on its way up; exiting port D of
-    track 2 heading east, the first 4 R40_CURVE arc passes through (~72, 8)
-    on its way down. The two arcs cross at one external point. Repairing the
-    crossing needs a CROSS_90 piece, but the ``with_double_crossover``
-    inventory carries no CROSS_90s and a heuristic seed that consumes a
-    CROSS_90 it doesn't own is not useful.
+    Its two nested ovals self-cross at 22.5deg OBLIQUE angles, which no catalog
+    piece can legalize -- a CROSS_90 only legalizes perpendicular (90deg)
+    crossings, so adding CROSS_90 inventory would not help. The pattern also
+    fails to close (~32-stud vertical gap). The only DC topology that closes as
+    a single loop is the figure-8 (cross routes), where the DC body itself is
+    the crossing -- see _gen_figure_eight_dbl_crossover.
 
-    Left as a stub so the seeder pipeline retains the slot for a future
-    redesign that uses extra straights/curves to lift one arc clear of the
-    other (or that ships a config with CROSS_90 inventory).
+    Left as a stub so the seeder pipeline retains the slot; reviving it needs a
+    fundamentally different, non-self-crossing geometry (e.g. vertically stacked
+    ovals), not extra inventory.
     """
     return []
 

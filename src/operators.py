@@ -651,9 +651,10 @@ _DBL_CROSSOVER_OPS = [
 _DBL_CROSSOVER_WEIGHTS = np.array([0.25, 0.25, 0.25, 0.25])
 _DBL_CROSSOVER_WEIGHTS /= _DBL_CROSSOVER_WEIGHTS.sum()
 
-# Probability that a DC-bearing individual grows its figure-8 (vs. passing
-# through unmutated) when it clears the per-individual mutation gate.
-_DC_GROW_PROB = 0.5
+# DC-bearing individuals split their mutation budget between two closure-safe
+# grows; the rest pass through unmutated and rely on crossover (DC parents intact).
+_DC_GROW_PROB = 0.5            # P(compensated-pair grow)
+_DC_FIGURE8_GROW_PROB = 0.25   # P(figure-8 grow), applied after _DC_GROW_PROB
 
 
 class PartitionedMutation(Mutation):
@@ -700,7 +701,7 @@ class PartitionedMutation(Mutation):
                 r = np.random.random()
                 if r < _DC_GROW_PROB:
                     _compensated_pair_grow(X[i], self.dims, catalog)
-                elif r < _DC_GROW_PROB + 0.25:
+                elif r < _DC_GROW_PROB + _DC_FIGURE8_GROW_PROB:
                     _grow_dc_figure_eight(X[i], self.dims, catalog)
                 continue
 

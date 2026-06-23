@@ -1,20 +1,20 @@
 """Partitioned chromosome encoding for track layout optimization.
 
-Kia-inspired ingredient-based encoding with three segments:
+A fixed-length int16 vector partitioned into six contiguous segments
+(see PartitionedDimensions):
 
-  [Main Loop: N genes] [Junction Descriptors: J×4 genes] [Start Position: 2 genes]
+  [main-loop types | main-loop flips | siding junctions | cross-junctions |
+   double-crossovers | start position]
 
-- Ingredient 1 (Main Loop): piece type indices for the sequential track backbone
-- Ingredient 2 (Junctions): metadata descriptors for passing sidings (switch pairs)
-- Ingredient 3 (Start Position): layout offset within boundary
-
-All dimensions scale dynamically from inventory configuration.
-Branch content is template-determined (guaranteed closure by construction).
+All segment sizes scale dynamically from inventory/config — n_var is never
+hardcoded. Switches, crossings and double-crossovers enter via their descriptor
+blocks (not as main-loop alleles); branch content is template-determined for
+closure by construction.
 """
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -96,16 +96,11 @@ SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
 DOUBLE_CROSSOVER = PieceIndex.DOUBLE_CROSSOVER
 
 # Piece categories
-SIMPLE_PIECE_INDICES = {STRAIGHT_16, STRAIGHT_24, R40_CURVE}
 SWITCH_INDICES = {SWITCH_LEFT, SWITCH_RIGHT}
-CROSSING_INDICES = {CROSS_90, DOUBLE_CROSSOVER}
 
-# Main loop piece types: simple pieces + crossings (no switches, no double crossover)
+# Main loop piece types: simple pieces only (switches/crossings enter via descriptors).
 MAIN_LOOP_PIECE_INDICES = {STRAIGHT_16, STRAIGHT_24, R40_CURVE}
 MAX_MAIN_LOOP_PIECE = max(MAIN_LOOP_PIECE_INDICES)
-
-# Switch ID set used by inventory computation (one entry per handedness now).
-SWITCH_IDS = {"R40_SWITCH_LEFT", "R40_SWITCH_RIGHT"}
 
 
 # =============================================================================
@@ -200,7 +195,7 @@ def compute_dimensions(config, catalog) -> PartitionedDimensions:
     # Main loop: all non-switch pieces
     n_main = 0
     for piece_id, count in inv.items():
-        idx = catalog._id_to_index.get(piece_id)
+        idx = catalog.id_to_index.get(piece_id)
         if idx is not None and idx not in SWITCH_INDICES:
             n_main += count
     n_main = max(1, n_main)
@@ -309,7 +304,7 @@ def generate_bounds(dims: PartitionedDimensions) -> Tuple[NDArray, NDArray]:
 # =============================================================================
 
 def get_main_loop_types(x: NDArray, dims: PartitionedDimensions) -> NDArray:
-    """Read main loop piece types as array. Values: -1 (inactive) or 0-9."""
+    """Read main loop piece types as array. Values: -1 (inactive) or 0-2."""
     return x[:dims.n_main].copy()
 
 
@@ -328,11 +323,6 @@ def get_active_main_pieces(x: NDArray, dims: PartitionedDimensions) -> NDArray:
 def get_main_loop_flips(x: NDArray, dims: PartitionedDimensions) -> NDArray:
     """Per-slot flip bits for the main loop."""
     return x[dims.main_flips_start:dims.main_flips_end].copy()
-
-
-def get_flip(x: NDArray, dims: PartitionedDimensions, pos: int) -> int:
-    """Flip bit for main-loop slot ``pos`` (0 = catalog default, 1 = mirrored)."""
-    return int(x[dims.main_flips_start + pos])
 
 
 def set_flip(x: NDArray, dims: PartitionedDimensions, pos: int, value: int) -> None:
@@ -670,27 +660,3 @@ def validate_chromosome(x: NDArray, dims: PartitionedDimensions) -> List[str]:
     ]
 
 
-# =============================================================================
-# Chromosome Statistics
-# =============================================================================
-
-def chromosome_stats(x: NDArray, dims: PartitionedDimensions) -> Dict:
-    """Compute summary statistics for a chromosome."""
-    main_types = get_main_loop_types(x, dims)
-    active_main = main_types[main_types != INACTIVE]
-
-    piece_counts: Dict[int, int] = {}
-    for pt in active_main:
-        pt_int = int(pt)
-        piece_counts[pt_int] = piece_counts.get(pt_int, 0) + 1
-
-    active_juncs = get_active_junctions(x, dims)
-
-    return {
-        "n_main_genes": dims.n_main,
-        "n_active_main": len(active_main),
-        "n_junctions": dims.max_junctions,
-        "n_active_junctions": len(active_juncs),
-        "piece_counts": piece_counts,
-        "n_var": dims.n_var,
-    }

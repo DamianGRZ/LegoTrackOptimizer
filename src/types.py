@@ -72,27 +72,6 @@ class PieceTopology:
     port_positions: Tuple[Tuple[float, float], ...] = ()
     port_headings: Tuple[float, ...] = ()
 
-    def get_default_fk(self) -> FKRoute:
-        """Get default route FK."""
-        return self.routes[self.default_route_idx]
-
-    def get_route(self, entry_port: int, exit_port: int) -> Optional[FKRoute]:
-        """Find route by entry and exit ports."""
-        for route in self.routes:
-            if route.entry_port == entry_port and route.exit_port == exit_port:
-                return route
-        return None
-
-    def get_route_by_index(self, route_idx: int) -> FKRoute:
-        """Get route by index with fallback to default."""
-        if 0 <= route_idx < len(self.routes):
-            return self.routes[route_idx]
-        return self.routes[self.default_route_idx]
-
-    def is_simple_through(self) -> bool:
-        """Check if single route through piece."""
-        return len(self.routes) == 1
-
     def is_switch(self) -> bool:
         """Check if piece is a switch."""
         return self.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
@@ -140,18 +119,6 @@ class SwitchPair:
     # because catalog routes can't express reversed-installation traversal.
     merge_fk: Tuple[float, float, float] = (0.0, 0.0, 0.0)
 
-    def is_valid(self) -> bool:
-        return (
-            self.in_position >= 0
-            and self.out_position > self.in_position
-            and self.handedness in ("LEFT", "RIGHT")
-        )
-
-    @property
-    def span(self) -> int:
-        """Number of main loop positions between IN and OUT."""
-        return self.out_position - self.in_position - 1
-
 
 @dataclass
 class DblCrossover:
@@ -168,13 +135,6 @@ class DblCrossover:
     positions: Tuple[int, int]
     routes: Tuple[int, int]
     origin: Tuple[float, float, float]  # world pose of port A
-
-    def is_valid(self) -> bool:
-        return (
-            self.positions[0] >= 0
-            and self.positions[1] >= 0
-            and self.positions[0] != self.positions[1]
-        )
 
 
 @dataclass
@@ -259,7 +219,6 @@ class MultiPathLayout:
     paths: List[TraversalPath] = field(default_factory=list)
     start_position: Tuple[float, float] = (0.0, 0.0)
     loose_port_count: int = 0
-    secondary_closure_error: float = 0.0
     # Human-readable reasons for descriptors the decoder skipped (empty when
     # everything committed). Consumed by the per-category run report.
     drop_log: List[str] = field(default_factory=list)
@@ -303,10 +262,6 @@ class MultiPathLayout:
     @property
     def n_paths(self) -> int:
         return len(self.paths)
-
-    @property
-    def all_paths_closed(self) -> bool:
-        return all(path.is_closed for path in self.paths)
 
     @property
     def max_closure_error(self) -> float:

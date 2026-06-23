@@ -197,15 +197,27 @@ class TestInjectionHappyPaths:
         assert layout.main_loop_pieces[20] == int(DOUBLE_CROSSOVER)
         assert layout.is_closed()
 
-    def test_two_layer_loop_closes(self, cat, dims):
+    def test_two_layer_both_through_is_infeasible(self, cat, dims):
+        """The naive two-layer (both-through) DC pattern injects correctly but is
+        geometrically infeasible as a single closed loop: its two nested ovals
+        self-cross at 22.5deg OBLIQUE angles (unlegalizable by any catalog piece
+        -- CROSS_90 only handles 90deg) and the loop fails to close (~32-stud
+        gap). This documents why _gen_two_layer_loop_dbl_crossover is a stub; the
+        only single-loop DC topology that closes is the figure-8 (cross routes).
+
+        Tripwire: if a future redesign makes this close, update this test.
+        """
         pieces = _two_layer_pieces()
         descriptors = [(1, 0, DC_ROUTE_TRACK1_THROUGH, 21, DC_ROUTE_TRACK2_THROUGH)]
         x = create_chromosome_from_pieces(dims, pieces, double_crossovers=descriptors)
         layout = decode_chromosome(x, cat, _FULL_INV, dims, DecoderConfig())
 
+        # DC injection mechanics work...
         assert len(layout.dbl_crossovers) == 1
         assert layout.main_loop_routes == {0: DC_ROUTE_TRACK1_THROUGH, 21: DC_ROUTE_TRACK2_THROUGH}
-        assert layout.is_closed()
+        # ...but the pattern does not form a closed loop (oblique self-crossing,
+        # ~32-stud gap; see docstring).
+        assert not layout.is_closed()
 
 
 class TestDanglingConstraint:
