@@ -50,10 +50,10 @@ max_accel: 0.68                  # MEASURED: 1.35 m / 2.0 s starting from 0
                                  # This value is a "kinematic mean equivalent" - real DC
                                  # motor dynamics are exponential, not linear. Adequate
                                  # for Pass 1 (F[1]=min_speed) which doesn't use max_accel
-                                 # anyway (Golden Rule 22). Becomes binding for any future
-                                 # Phase 9 lap_time objective.
+                                 # anyway (Golden Rule 22). Becomes binding only if a future
+                                 # lap-time / throughput objective is added.
                                  # Rolling resistance ~0.03-0.10 m/s^2 not deducted (would
-                                 # raise raw motor a by 4-15% if Phase 9 needs it).
+                                 # raise raw motor a by 4-15% if such an objective needs it).
                                  # Pre-thesis: redo with Tracker software for tighter bounds.
 
 # --- Consist (measured) ---

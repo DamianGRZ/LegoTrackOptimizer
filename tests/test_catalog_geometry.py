@@ -4,7 +4,7 @@ These tests verify the REFERENCE derivation from V2's catalog report; they do
 NOT assert that the current YAML matches these values. The current YAML
 preserves historical switch FK values (~31.0, ±6.2) which differ from the
 strict V2 derivation (~32.71, ±12.96). Correcting the catalog is a separate
-task (see roadmap Phase 5 follow-up).
+task.
 """
 
 import math

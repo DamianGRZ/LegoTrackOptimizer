@@ -253,7 +253,7 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - `problem.py` — `TrackOptimizationProblem`: weighted-utilization + slowest-route-speed objectives, 5+T inequality constraints.
 - `encoding.py` — `PartitionedDimensions`, `compute_dimensions`, `generate_bounds`, gene accessors (`get_junction`, `get_cross_junction`, `get_double_crossover`, flips), chromosome construction + validation.
 - `decoder/construction.py` — `decode_chromosome()`: injection pipeline + 2^J path enumeration; `decoder/types.py` — `DecoderConfig`, `InventoryTracker`, `ValidatedJunction`.
-- `geometry.py` — `compute_fk_chain` (vectorized FK), `compute_closure_metrics`, plus legacy Phase-1 `Layout`/`build_layout()` still consumed by tests, train/, and viz.
+- `geometry.py` — `compute_fk_chain` (vectorized FK), `compute_closure_metrics`, plus the single-loop `Layout`/`build_layout()` still consumed by tests, train/, and viz.
 - `intersection.py` — vectorized self-intersection scan (`find_crossing_pairs`, `count_segment_crossings`), `cross_pair_perpendicular` (single definition of a valid CROSS_90 crossing), dangling-port counters.
 - `templates.py` — passing-siding templates (LEFT/RIGHT), reversed-OUT merge-FK derivation, DC route/port tables, siding geometry validation + inventory helpers.
 - `sampling.py` — `IntegerSampling`: heuristic seed families (loops/ovals/racetracks/sidings/figure-8s) + random chromosomes; `_figure_eight_main_loop` is shared with operators.
@@ -275,7 +275,7 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 ### Stale / Needs Action (NOT auto-delete)
 
 - **The v1 catalog `data/track_pieces.yaml` is gone; the kit is v2-only** (`data/track_pieces_v2.yaml`). The v1 deprecation test and the `test_catalog_parity.py` v1↔v2 parity suite have both been retired.
-- **Phase-1 `Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
+- **`Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
 - **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
 
 ### Test Suite Notes (2026-06-12)

@@ -1,7 +1,7 @@
 # LEGO/4DBrix Track Piece Catalog — V2 port-centric schema
 # Source: data/track_pieces.yaml (v1 SECTION_TYPES form); derived per V2 spec.
 # Units: studs internal; degrees in v1 source converted to radians below.
-# FK values preserved verbatim — no geometry corrections in Phase 1.
+# FK values preserved verbatim from the source; no geometry corrections applied.
 
 meta:
   schema_version: "1.0.0"
