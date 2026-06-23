@@ -54,7 +54,7 @@ class TestTrackOptimizationProblem:
 
         assert "F" in out
         assert "G" in out
-        # V2 sentinel: empty layout → +inf F (infeasibles never dominate)
+        # Infeasibility sentinel: empty layout → +inf F (infeasibles never dominate)
         assert np.isinf(out["F"][0]) and out["F"][0] > 0
         assert np.isinf(out["F"][1]) and out["F"][1] > 0
 
@@ -171,10 +171,10 @@ class TestTrackOptimizationProblem:
 
 
 class TestInfeasibilitySentinel:
-    """Phase 6 Stage A: empty/infeasible layouts must emit +inf F, not 0.0.
+    """Empty/infeasible layouts must emit +inf F, not 0.0.
 
-    Current bug: F=[0.0, 0.0] looks like a valid zero-piece solution.
-    V2 fix: F=[+inf, +inf] — infeasibles never dominate in F-space.
+    F=[+inf, +inf] keeps a zero-piece layout from looking like a valid
+    solution and dominating real ones in F-space.
     """
 
     def test_empty_layout_f_is_positive_infinity(self, catalog, default_config):
@@ -405,7 +405,7 @@ class TestF1MultiPathSlowestRoute:
 
 
 class TestGShapeV2:
-    """Phase 6 Stage B: G has 5 + n_piece_types entries."""
+    """G has 5 + n_piece_types entries."""
 
     def test_n_ieq_constr_is_5_plus_piece_types(self, catalog, default_config):
         from src.problem import TrackOptimizationProblem

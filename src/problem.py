@@ -138,7 +138,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
             dims=self.dims, config=self.decoder_config,
         )
 
-        # V2 infeasibility sentinel: +inf F so feasibles dominate,
+        # Infeasibility sentinel: +inf F so feasibles dominate,
         # large finite G so CV orders infeasibles by total violation.
         # Never NaN — pymoo tolerates +inf in HV when filtered to feasible-only,
         # but NaN breaks dominance comparison and requires replace_nan_values_by.
@@ -205,7 +205,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # Two failure modes contribute to this constraint with different
         # weights:
         #  - segment crossings without any CROSS_90 placement: scaled by
-        #    /5 (legacy weight, mild penalty per unresolved crossing)
+        #    /5 (mild penalty per unresolved crossing)
         #  - CROSS_90 slots whose perpendicular partner doesn't exist
         #    (2 dangling ports): each one contributes 1.0 directly, so a
         #    single dangling-port cross is enough to keep g_collisions > 0

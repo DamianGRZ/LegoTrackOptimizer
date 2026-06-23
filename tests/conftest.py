@@ -11,7 +11,7 @@ from src.train import TrainConfig
 
 @pytest.fixture
 def catalog() -> TrackCatalog:
-    """Load track catalog from YAML (v2 schema to avoid deprecation noise)."""
+    """Load the track catalog (v2 port-centric schema)."""
     return TrackCatalog.load("data/track_pieces_v2.yaml")
 
 

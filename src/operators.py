@@ -59,7 +59,7 @@ def _protected_positions(x: NDArray, dims: PartitionedDimensions) -> set:
     present, we treat every active main-loop slot as sticky; the GA can
     still explore via DC mutations and uniform crossover slot swap.
 
-    Layouts without any active DC keep the legacy behaviour (empty set), so
+    Layouts without any active DC keep the default behaviour (empty set), so
     non-DC heuristics still mutate normally.
     """
     if not get_active_double_crossovers(x, dims):

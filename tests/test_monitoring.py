@@ -82,8 +82,8 @@ class TestConvergenceMonitorCallback:
         assert np.isfinite(cb.data["igd"][1])
 
     def test_mean_closure_populates_when_g_has_three_entries(self):
-        """Pre-Phase-B, G has 6 entries — first three are legacy closure scalars.
-        This de-normalization block executes when G is available and has ≥ 3 entries.
+        """G's first three entries are the closure scalars (dx, dy, dθ); the
+        de-normalization block runs whenever G is available and has ≥ 3 entries.
         The test just verifies the code path runs without crashing.
         """
         from src.algorithm.monitoring import ConvergenceMonitorCallback
