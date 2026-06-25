@@ -120,6 +120,44 @@ class TestIntegerSampling:
             for p in patterns
         )
 
+    def test_two_siding_seed_decodes_to_two_committed_sidings(
+        self, catalog, switches_config,
+    ):
+        """The 2-siding seed must DECODE to a layout committing BOTH sidings —
+        not merely exist as a pattern. Before the per-section walk-fit gate was
+        added, the decoder dropped both junctions ("no OUT position at the
+        required main distance")."""
+        from src.decoder import decode_chromosome
+        from src.encoding import create_chromosome_from_pieces
+        from src.sampling import _gen_oval_two_sidings
+
+        dims = compute_dimensions(switches_config, catalog)
+        inv = catalog.inventory_by_index(switches_config.inventory)
+        patterns = _gen_oval_two_sidings(inv, dims)
+        assert patterns, "expected at least one 2-siding seed for switches_config"
+
+        for pieces, flips, junctions, cross, dc in patterns:
+            x = create_chromosome_from_pieces(
+                dims, pieces, main_loop_flips=flips,
+                junctions=junctions, cross_junctions=cross, double_crossovers=dc,
+            )
+            layout = decode_chromosome(x, catalog, switches_config.inventory, dims=dims)
+            assert layout.drop_log == [], f"decoder dropped descriptors: {layout.drop_log}"
+            assert len(layout.switch_pairs) == 2, (
+                f"expected 2 committed sidings, got {len(layout.switch_pairs)}"
+            )
+            assert layout.max_closure_error < switches_config.closure_tolerance
+
+    def test_seed_makes_initial_population_reproducible(self, catalog, switches_config):
+        """config.algorithm.seed must control the initial population: same seed ->
+        identical X, different seed -> different X. (seed=None stays random.)"""
+        problem = TrackOptimizationProblem(catalog, switches_config)
+        x_a = IntegerSampling(catalog, switches_config, seed=1234)._do(problem, 40)
+        x_b = IntegerSampling(catalog, switches_config, seed=1234)._do(problem, 40)
+        x_c = IntegerSampling(catalog, switches_config, seed=9999)._do(problem, 40)
+        assert np.array_equal(x_a, x_b)
+        assert not np.array_equal(x_a, x_c)
+
     def test_seeds_respect_inventory(self, catalog, switches_config):
         """No heuristic seed overuses any main-loop piece type."""
         sampling = IntegerSampling(catalog, switches_config)

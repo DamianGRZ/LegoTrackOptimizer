@@ -588,9 +588,16 @@ def run_optimization(
     problem = TrackOptimizationProblem(catalog, config, **problem_kwargs)
     dims = problem.dims
 
+    # Seed the global numpy RNG so the custom operators (PartitionedCrossover /
+    # PartitionedMutation in src/operators.py), which draw from the global RNG,
+    # are reproducible. seed=null leaves the run non-deterministic.
+    if config.algorithm.seed is not None:
+        np.random.seed(config.algorithm.seed)
+
     sampler = IntegerSampling(
         catalog, config,
         heuristic_ratio=config.algorithm.heuristic_ratio,
+        seed=config.algorithm.seed,
     )
 
     repair = TrackRepairPipeline(
@@ -657,7 +664,7 @@ def run_optimization(
     if eval_pool is not None:
         logger.info(f"Parallel evaluation: {config.n_workers} workers")
 
-    minimize_kwargs = dict(verbose=False, save_history=False)
+    minimize_kwargs = dict(verbose=False, save_history=False, seed=config.algorithm.seed)
     if callback is not None:
         minimize_kwargs["callback"] = callback
 
