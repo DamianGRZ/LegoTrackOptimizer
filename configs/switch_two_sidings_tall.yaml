@@ -1,0 +1,39 @@
+# Two passing sidings — tall boundary.
+# Two opposite-handed switch pairs (2 LEFT + 2 RIGHT) and no crossing/DC. A
+# 320 x 360 box keeps a tall aspect while giving each of the oval's two
+# horizontal straight runs enough length (~10 straights) to host a siding's
+# IN -> walk -> OUT span. Keeps the topology siding-only vs the crossing/DC configs.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_16: 80
+  R40_CURVE: 40
+  # Two passing sidings = 2 LEFT + 2 RIGHT.
+  R40_SWITCH_LEFT: 2
+  R40_SWITCH_RIGHT: 2
+
+boundary:
+  min_x: -160.0
+  max_x: 160.0
+  min_y: -180.0
+  max_y: 180.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 600
+  n_gen: 200
+  heuristic_ratio: 0.30
+  crossover_prob: 0.8
+  mutation_prob: 0.2
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+special_piece_weight: 6.0
+n_workers: 16

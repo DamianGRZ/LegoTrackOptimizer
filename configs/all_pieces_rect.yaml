@@ -1,0 +1,41 @@
+# Full kit — large rectangular boundary.
+# Every special piece is available in a 460 x 300 box (the rectangular
+# counterpart to the square all_pieces variants). The richest search: sidings,
+# crossings and a double-crossover can all contribute, so the Pareto front spans
+# several topologies rather than one.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_24: 10
+  STRAIGHT_16: 130
+  R40_CURVE: 64
+  R40_SWITCH_LEFT: 2
+  R40_SWITCH_RIGHT: 2
+  CROSS_90: 2
+  DOUBLE_CROSSOVER: 2
+
+boundary:
+  min_x: -230.0
+  max_x: 230.0
+  min_y: -150.0
+  max_y: 150.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 800
+  n_gen: 250
+  heuristic_ratio: 0.30
+  crossover_prob: 0.8
+  mutation_prob: 0.2
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+special_piece_weight: 6.0
+n_workers: 16

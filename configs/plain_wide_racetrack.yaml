@@ -1,0 +1,36 @@
+# Plain loop, no special pieces — wide-short boundary.
+# A 420 x 150 stud rectangle has no vertical room for a second lobe, so the best
+# layout is a single long horizontal racetrack: straights down the long sides,
+# R40 semicircle ends. Exercises the simple-loop / oval seed family and the
+# boundary-as-binding-constraint behaviour on a non-square box.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_24: 12
+  STRAIGHT_16: 90
+  R40_CURVE: 32
+
+boundary:
+  min_x: -210.0
+  max_x: 210.0
+  min_y: -75.0
+  max_y: 75.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 600
+  n_gen: 150
+  heuristic_ratio: 0.20
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 16

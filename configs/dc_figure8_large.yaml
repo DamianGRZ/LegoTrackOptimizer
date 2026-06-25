@@ -1,0 +1,37 @@
+# DOUBLE_CROSSOVER figure-8 — large boundary, richer inventory.
+# More straights/curves and a 400 x 300 box let the DC figure-8 grow its lobes
+# via compensated straight pairs, filling more of the box than the tight DC
+# variants. Still DC-only, so the showcased topology stays the figure-8.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_24: 8
+  STRAIGHT_16: 110
+  R40_CURVE: 56
+  DOUBLE_CROSSOVER: 2
+
+boundary:
+  min_x: -200.0
+  max_x: 200.0
+  min_y: -150.0
+  max_y: 150.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 800
+  n_gen: 250
+  heuristic_ratio: 0.30
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+special_piece_weight: 6.0
+n_workers: 16
