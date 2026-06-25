@@ -549,24 +549,42 @@ def _gen_oval_two_sidings(
         # branch curves cooperate with mainline curvature on at least one siding.
         main_flips = _curve_flips(main_pieces, h1)
         for n_br in branch_sizes:
+            t1, t2 = TEMPLATES[h1], TEMPLATES[h2]
+            # Each siding's IN switch must reach its OUT by walking straights
+            # inside its own m-length section; gate exactly as the single-siding
+            # generator does (_gen_oval_with_siding) so the decoder can place OUT.
+            if not (
+                _siding_fits_in_section(t1, n_br, m)
+                and _siding_fits_in_section(t2, n_br, m)
+            ):
+                continue
             used = dict(main_counts)
-            t1 = TEMPLATES[h1]
             if not check_siding_inventory(
                 t1, n_br, available_inventory=inv, used_inventory=used,
             ):
                 continue
             for idx, need in get_siding_inventory_requirements(t1, n_br).items():
                 used[idx] = used.get(idx, 0) + need
-            t2 = TEMPLATES[h2]
             if not check_siding_inventory(
                 t2, n_br, available_inventory=inv, used_inventory=used,
             ):
                 continue
-            junctions: List[Junction] = [
-                (1, 8, h1, n_br),
-                (1, 16 + m, h2, n_br),
-            ]
-            variants.append((main_pieces, main_flips, junctions, None, None))
+            # Symmetric main loop: first straight run starts at index 8 (after the
+            # first 8-R40 arc), second at 16 + m (after the second arc). Switches
+            # overwrite slots in place (no index shift), so these stay valid starts.
+            section_starts = (8, 16 + m)
+            max_off1 = m - _siding_walk_slots(t1, n_br)
+            max_off2 = m - _siding_walk_slots(t2, n_br)
+            # offset 0 == IN at section start (walk_slots already reserves the
+            # trailing guard); a mid offset adds variety while keeping OUT inside.
+            offsets1 = sorted({0, max(0, max_off1 // 2)})
+            offsets2 = sorted({0, max(0, max_off2 // 2)})
+            for off1, off2 in zip(offsets1, offsets2):
+                junctions: List[Junction] = [
+                    (1, section_starts[0] + off1, h1, n_br),
+                    (1, section_starts[1] + off2, h2, n_br),
+                ]
+                variants.append((main_pieces, main_flips, junctions, None, None))
     return variants
 
 
