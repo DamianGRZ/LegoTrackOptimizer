@@ -1,0 +1,37 @@
+# CROSS_90 figure-8 — wide boundary.
+# Two 90-degree crossings and no switches/DC, so the route to high utilisation is
+# a self-crossing figure-8 (the two lobes cross perpendicularly through a
+# CROSS_90). The 360 x 220 box is wide enough for two side-by-side lobes.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_16: 110
+  R40_CURVE: 48
+  # 90-degree crossing (lets the track cross itself perpendicularly).
+  CROSS_90: 2
+
+boundary:
+  min_x: -180.0
+  max_x: 180.0
+  min_y: -110.0
+  max_y: 110.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 700
+  n_gen: 250
+  heuristic_ratio: 0.30
+  crossover_prob: 0.95
+  mutation_prob: 0.05
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+special_piece_weight: 6.0
+n_workers: 16

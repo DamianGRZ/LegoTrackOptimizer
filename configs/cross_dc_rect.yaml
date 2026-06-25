@@ -1,0 +1,37 @@
+# Crossing + double-crossover — wide boundary, no switches.
+# Both crossing types are available but there is no switch inventory, so
+# multi-path topology comes from a CROSS_90 self-crossing and/or a DC figure-8
+# rather than passing sidings. A 360 x 280 box fits either or both.
+
+train_config_path: trains/default.yaml
+
+inventory:
+  STRAIGHT_16: 110
+  R40_CURVE: 56
+  CROSS_90: 2
+  DOUBLE_CROSSOVER: 2
+
+boundary:
+  min_x: -180.0
+  max_x: 180.0
+  min_y: -140.0
+  max_y: 140.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 800
+  n_gen: 250
+  heuristic_ratio: 0.30
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+special_piece_weight: 6.0
+n_workers: 16
