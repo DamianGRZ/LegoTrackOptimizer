@@ -705,6 +705,17 @@ class PartitionedMutation(Mutation):
                     _grow_dc_figure_eight(X[i], self.dims, catalog)
                 continue
 
+            # Siding-bearing chromosomes get only closure-safe edits, like DC: a
+            # junction op or the compensated-pair grow. The other main-loop ops add
+            # uncompensated pieces that break closure around the siding.
+            if get_active_junctions(X[i], self.dims):
+                if np.random.random() < junc_thresh:
+                    op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
+                    _JUNCTION_OPS[op_idx](X[i], self.dims)
+                else:
+                    _compensated_pair_grow(X[i], self.dims, catalog)
+                continue
+
             r = np.random.random()
             if r < junc_thresh:
                 op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
