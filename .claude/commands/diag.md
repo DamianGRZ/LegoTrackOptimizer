@@ -46,6 +46,8 @@ List files in `outputs/` (or custom dir). If missing, report "No output director
 
 ### 4. Parse chromosomes.csv (best feasible)
 
+- Has a segment-aware header row (`main_0..`, `junc0_active..`, `start_x/y`)
+  — parse with `skiprows=1`. Runs saved before 2026-07-01 have NO header.
 - int16 partitioned genome (NOT random keys): main-loop piece types in
   `[0, n_main)` with `-1` = INACTIVE (0=STRAIGHT_16, 1=STRAIGHT_24,
   2=R40_CURVE; 3+ enter via descriptors/decoder), parallel flip bits,
@@ -59,6 +61,13 @@ List files in `outputs/` (or custom dir). If missing, report "No output director
 
 ### 4b. Check run artifacts beyond the basics
 
+- `convergence.csv` — per-generation HV, IGD, feas_rate, best F, unique-F
+  counts, live `cv_eps`, gen wall-time. Read the feasibility trajectory
+  (collapse = epsilon pathology) and when best_f0 last improved. Note: `igd`
+  without an external reference is against the rolling best front — not
+  comparable across generations.
+- `error.log` — present only if the run crashed; the population CSVs are then
+  a salvaged partial state, not a finished run.
 - `category_report.md` — all three sections (switch / cross / dc) present?
   Which categories have a feasible elite, and how far below the global best?
 - `pareto_archive.csv` — run-cumulative feasible front (distinct trade-off

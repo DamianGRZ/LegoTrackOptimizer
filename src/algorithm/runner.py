@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import copy
 import logging
+import traceback
 from multiprocessing import Pool
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib
 
@@ -27,15 +29,16 @@ from pymoo.termination.max_gen import MaximumGenerationTermination
 from src.algorithm.monitoring import ConvergenceMonitorCallback
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
-from src.decoder import decode_chromosome
+from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import (
+    chromosome_csv_header,
     compute_dimensions,
     get_active_cross_junctions,
     get_active_double_crossovers,
     get_active_junctions,
 )
 from src.operators import PartitionedCrossover, PartitionedMutation
-from src.problem import TrackOptimizationProblem
+from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.sampling import IntegerSampling
 from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
@@ -304,6 +307,7 @@ class SnapshotCallback(Callback):
         self._snap_dir = Path(output_dir) / "snapshots"
         self._catalog = catalog
         self._config = config
+        self._decoder_config = DecoderConfig.from_optimization_config(config)
         self._dims = dims
         self._clean_dir()
 
@@ -371,7 +375,8 @@ class SnapshotCallback(Callback):
         logger = logging.getLogger(__name__)
         try:
             layout = decode_chromosome(
-                entry["X"], self._catalog, self._config.inventory, dims=self._dims,
+                entry["X"], self._catalog, self._config.inventory,
+                dims=self._dims, config=self._decoder_config,
             )
             util = float(-entry["F"][0])
             speed = float(-entry["F"][1])
@@ -417,13 +422,20 @@ class CallbackChain(Callback):
 SOFT_CONSTRAINT_COUNT = 4
 
 # Collisions + inventory are weighted this far above the epsilon cap (max_cv is
-# capped at 30) so the schedule can never relax them: >= 30 / 0.2 (smallest real
-# hard violation) = 150; 1000 leaves ample margin. Weighting (not per-constraint
-# eps) keeps CV independent of the schedule, so pymoo's tournament feasible/
-# infeasible routing -- which reads raw CV -- stays stable generation to
-# generation. Per-constraint eps would make a relaxed individual's CV flip to 0
-# and reach the crowding comparison with crowding=None -> tournament crash.
+# capped at n_soft, i.e. <= 4 in normalized soft-G units) so the schedule can
+# never relax them: >= 4 / 0.2 (smallest real hard violation) = 20; 1000 leaves
+# ample margin. Weighting (not per-constraint eps) keeps CV independent of the
+# schedule, so pymoo's tournament feasible/infeasible routing -- which reads raw
+# CV -- stays stable generation to generation. Per-constraint eps would make a
+# relaxed individual's CV flip to 0 and reach the crowding comparison with
+# crowding=None -> tournament crash.
 HARD_CONSTRAINT_WEIGHT = 1000.0
+
+# CVs at or above this are degenerate sentinels (0-piece layouts get every G set
+# to DEGENERATE_G), not gradations of real infeasibility. They must be excluded
+# from any population statistic (epsilon_0 calibration) or they inflate it by
+# orders of magnitude.
+DEGENERATE_CV_FLOOR = DEGENERATE_G / 10.0
 
 
 def _epsilon_alpha(t: float, hold_until: float, perc_eps_until: float) -> float:
@@ -489,12 +501,14 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
         Phase B (hold_until to perc_eps_until): linear decay to 0
         Phase C (perc_eps_until to end): strict feasibility
 
-    Epsilon_0 auto-initialized from the 10th percentile of infeasible CVs in
-    the initial population, clipped to 30 (see _initialize_advance below).
-    This narrower band targets siding closure errors (~15-30 CV) without
-    letting random garbage (CV > 100) survive selection. Differs from the
-    original Takahama & Sakai (2006) prescription (80th percentile) — adapted
-    to this problem's heavy-tailed CV distribution.
+    Epsilon_0: Takahama & Sakai (2006) order statistic — CV of the theta-th
+    individual sorted by CV descending (theta=0.2N) — over non-degenerate CVs,
+    floored at the 10th percentile of real infeasible CVs and capped at
+    n_soft (all soft constraints at ~2x tolerance simultaneously).
+
+    Recovery ratchet: when the strictly-feasible fraction falls below
+    ``ratchet_trigger`` of its running peak while epsilon is active, epsilon_0
+    is halved. Tighten-only; the strict phase stays exactly 0.
 
     Note: the class-level default ``perc_eps_until=0.7`` is overridden by
     callers in :func:`run_optimization`, which passes ``perc_eps_until=0.9``.
@@ -502,11 +516,18 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
 
     def __init__(self, algorithm, n_ieq_constr, hold_until=0.2,
                  perc_eps_until=0.7, n_soft=SOFT_CONSTRAINT_COUNT,
-                 n_gen_planned=None):
+                 n_gen_planned=None, theta=0.2, ratchet_trigger=0.25,
+                 ratchet_cooldown=5):
         super().__init__(algorithm, perc_eps_until=perc_eps_until)
         self.hold_until = hold_until
         self.n_ieq_constr = int(n_ieq_constr)
         self.n_soft = int(n_soft)
+        self.theta = float(theta)
+        self.ratchet_trigger = float(ratchet_trigger)
+        self.ratchet_cooldown = int(ratchet_cooldown)
+        self._feas_frac_peak = 0.0
+        self._last_ratchet_gen: int | None = None
+        self.last_cv_eps = float("nan")  # read by the convergence monitor
         # Schedule driver: planned generation count. With the improvement-aware
         # termination, termination.perc is max(ftol-window, n_gen, ...) progress
         # and jumps nonlinearly; the epsilon schedule must keep tracking the
@@ -521,35 +542,61 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
             return min(1.0, (self.n_gen or 0) / self.n_gen_planned)
         return self.termination.perc
 
+    def _calibrate_epsilon0(self, cv: np.ndarray) -> float:
+        """Epsilon_0 from initial-population CVs (degenerate sentinels excluded)."""
+        real = cv[cv < DEGENERATE_CV_FLOOR]
+        infeas = real[real > 0]
+        if len(infeas) == 0:
+            return 0.0
+        order = np.sort(real)[::-1]
+        order_stat = float(order[min(len(order) - 1, int(self.theta * len(order)))])
+        floor = float(np.percentile(infeas, 10))
+        return min(max(order_stat, floor), float(self.n_soft))
+
     def _initialize_advance(self, infills=None, **kwargs):
-        # Target: cover siding closure errors (~15-30 CV) without letting
-        # random garbage (CV > 100) compete with feasible circles.
-        # Use 10th percentile of infeasible CVs, capped at 30.
         cv = None
         if infills is not None and infills.has("cv"):
             cv = infills.get("cv").flatten()
         elif self.pop is not None and self.pop.has("cv"):
             cv = self.pop.get("cv").flatten()
 
-        if cv is not None:
-            infeas_cv = cv[cv > 0]
-            if len(infeas_cv) > 0:
-                self.max_cv = float(np.percentile(infeas_cv, 10))
-                self.max_cv = min(self.max_cv, 30.0)
-            else:
-                self.max_cv = 1.0
-        else:
-            self.max_cv = 15.0
-
+        self.max_cv = self._calibrate_epsilon0(cv) if cv is not None and len(cv) else 1.0
         self._logger.info(f"Epsilon-constraint: epsilon_0={self.max_cv:.3f}")
         return super(AdaptiveEpsilonConstraintHandling, self)._initialize_advance(infills, **kwargs)
 
+    def _ratchet_check(self, alpha: float, cv: np.ndarray | None, gen: int) -> None:
+        """Halve epsilon_0 on strict-feasibility collapse (tighten-only)."""
+        if alpha <= 0.0 or self.max_cv <= 0.0 or cv is None or len(cv) == 0:
+            return
+        feas_frac = float(np.mean(cv <= 0.0))
+        self._feas_frac_peak = max(self._feas_frac_peak, feas_frac)
+        if self._feas_frac_peak <= 0.0:
+            return
+        if (self._last_ratchet_gen is not None
+                and gen - self._last_ratchet_gen < self.ratchet_cooldown):
+            return
+        if feas_frac < self.ratchet_trigger * self._feas_frac_peak:
+            self.max_cv *= 0.5
+            self._last_ratchet_gen = gen
+            self._logger.info(
+                f"Epsilon ratchet at gen {gen}: feasible {feas_frac:.1%} < "
+                f"{self.ratchet_trigger:.0%} of peak {self._feas_frac_peak:.1%}; "
+                f"epsilon_0 halved to {self.max_cv:.3f}"
+            )
+
     def _adapt_constraint_handling(self, config, **kwargs):
         alpha = _epsilon_alpha(self._progress(), self.hold_until, self.perc_eps_until)
+
+        pop = self.pop
+        pop_cv = (pop.get("cv").flatten()
+                  if pop is not None and pop.has("cv") else None)
+        self._ratchet_check(alpha, pop_cv, int(getattr(self, "n_gen", 0) or 0))
+
         # Relax ONLY the soft constraints (closure + boundary): the scheduled
         # epsilon is the scalar FEAS threshold (CV <= cv_eps), as in the original
         # design. Used by the feasibility-first survival, not the tournament.
         config["cv_eps"] = alpha * self.max_cv
+        self.last_cv_eps = float(config["cv_eps"])
 
         # Keep collisions + inventory HARD by weighting them >> the epsilon cap,
         # so the smallest real hard violation already exceeds any cv_eps and can
@@ -565,6 +612,33 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
 # =============================================================================
 # Optimization
 # =============================================================================
+
+def _salvage_failed_run(algorithm, monitor, output_dir, logger):
+    """Write error.log and build a partial result from the live population.
+
+    Returns None (caller re-raises) when there is no population to salvage.
+    """
+    tb = traceback.format_exc()
+    gens = monitor.data.get("n_gen") or []
+    reached = gens[-1] if gens else 0
+    logger.error(f"Optimization crashed at generation {reached}:\n{tb}")
+    if output_dir is not None:
+        try:
+            (Path(output_dir) / "error.log").write_text(
+                f"Optimization crashed at generation {reached}.\n\n{tb}",
+                encoding="utf-8",
+            )
+        except OSError:
+            logger.warning("Could not write error.log")
+
+    pop = getattr(algorithm, "pop", None)
+    if pop is None or len(pop) == 0:
+        return None
+    res = SimpleNamespace(pop=pop, algorithm=algorithm, opt=None,
+                          X=None, F=None, G=None, CV=None, exec_time=None)
+    res.crashed = True
+    return res
+
 
 def run_optimization(
     config: OptimizationConfig,
@@ -639,7 +713,9 @@ def run_optimization(
     # After FeasibleEliteCallback: the global elite's slot is no longer
     # "worst", so category injection never clobbers it.
     category_archive = CategoryEliteArchive()
-    monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55))
+    monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55),
+                                         output_dir=output_dir)
+    monitor.epsilon_source = algorithm
     chain: list[Callback] = [elite_callback, category_archive, monitor]
     if output_dir is not None:
         snapshot_cb = SnapshotCallback(
@@ -664,12 +740,19 @@ def run_optimization(
     if eval_pool is not None:
         logger.info(f"Parallel evaluation: {config.n_workers} workers")
 
-    minimize_kwargs = dict(verbose=False, save_history=False, seed=config.algorithm.seed)
+    # copy_algorithm=False: minimize's default deepcopy would detach the
+    # running algorithm from monitor.epsilon_source and from the salvage path.
+    minimize_kwargs = dict(verbose=False, save_history=False,
+                           seed=config.algorithm.seed, copy_algorithm=False)
     if callback is not None:
         minimize_kwargs["callback"] = callback
 
     try:
         res = minimize(problem, algorithm, termination, **minimize_kwargs)
+    except Exception:
+        res = _salvage_failed_run(algorithm, monitor, output_dir, logger)
+        if res is None:
+            raise
     finally:
         if eval_pool is not None:
             # terminate(), not close()+join(): after a KeyboardInterrupt the
@@ -701,13 +784,14 @@ def run_optimization(
                 feasible_indices = np.where(feasible_mask)[0]
                 best_idx = feasible_indices[np.argmin(feasible_F[:, 0])]
                 best_layout = decode_chromosome(
-                    X[best_idx], catalog, config.inventory, dims=dims,
+                    X[best_idx], catalog, config.inventory,
+                    dims=dims, config=problem.decoder_config,
                 )
                 logger.info(
                     f"Best feasible: {best_layout.n_physical_pieces}/"
                     f"{sum(config.inventory.values())} pieces, "
                     f"score={-F[best_idx, 0]:.1%}, speed={-F[best_idx, 1]:.2f} m/s, "
-                    f"switches={best_layout.n_switch_pairs}"
+                    f"switch_pairs={best_layout.n_switch_pairs}"
                 )
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
 
@@ -736,7 +820,8 @@ _CATEGORY_GENOTYPE = {
 }
 
 
-def _collect_drop_reasons(category, X, catalog, config, dims, limit=5):
+def _collect_drop_reasons(category, X, catalog, config, dims, decoder_cfg,
+                          limit=5):
     """Decode up to ``limit`` final-population genomes whose descriptor block
     is active for ``category`` and aggregate the decoder's drop reasons."""
     reader, prefix = _CATEGORY_GENOTYPE[category]
@@ -749,7 +834,8 @@ def _collect_drop_reasons(category, X, catalog, config, dims, limit=5):
         if not reader(x, dims):
             continue
         sampled += 1
-        layout = decode_chromosome(x, catalog, config.inventory, dims=dims)
+        layout = decode_chromosome(x, catalog, config.inventory,
+                                   dims=dims, config=decoder_cfg)
         reasons.extend(e for e in layout.drop_log if e.startswith(prefix))
     deduped: list[str] = []
     for r in reasons:
@@ -758,7 +844,7 @@ def _collect_drop_reasons(category, X, catalog, config, dims, limit=5):
     return deduped[:10]
 
 
-def _write_category_report(res, output_dir, catalog, config, dims,
+def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                            F, X, feasible_mask, plot_fn) -> None:
     """Render best_with_<cat>.png + category_report.md from the elite archive."""
     archive = getattr(res, "category_elites", None)
@@ -778,7 +864,7 @@ def _write_category_report(res, output_dir, catalog, config, dims,
             ind = elite["ind"]
             layout = decode_chromosome(
                 np.asarray(ind.X, dtype=np.int16), catalog,
-                config.inventory, dims=dims,
+                config.inventory, dims=dims, config=decoder_cfg,
             )
             util = elite["util"]
             n_element = {
@@ -812,7 +898,8 @@ def _write_category_report(res, output_dir, catalog, config, dims,
                 lines.append(
                     f"- best infeasible: util {infeas['util']:.1%}, CV={cv:.2f}"
                 )
-            reasons = _collect_drop_reasons(category, X, catalog, config, dims)
+            reasons = _collect_drop_reasons(category, X, catalog, config,
+                                            dims, decoder_cfg)
             if reasons:
                 lines.append("- decoder drop reasons (final-population sample):")
                 lines.extend(f"  - {r}" for r in reasons)
@@ -832,6 +919,10 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     logger = logging.getLogger(__name__)
     output_dir.mkdir(parents=True, exist_ok=True)
     dims = compute_dimensions(config, catalog)
+    decoder_cfg = DecoderConfig.from_optimization_config(config)
+
+    if getattr(res, "crashed", False):
+        logger.warning("Saving partial results from a crashed run")
 
     if res.pop is None:
         logger.warning("No population to save")
@@ -841,9 +932,10 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     F = res.pop.get("F")
     G = res.pop.get("G")
 
-    np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d")
+    np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d",
+               header=chromosome_csv_header(dims), comments="")
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header="neg_utilization,neg_avg_speed", comments="")
+               header="neg_utilization,neg_slowest_route_speed", comments="")
     if G is not None:
         # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
@@ -881,58 +973,75 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             fig = plot_layout(layout, catalog, config.boundary, title, path)
         plt.close(fig)
 
-    best_overall_idx = np.argmin(F[:, 0])
-    best_overall_layout = decode_chromosome(
-        X[best_overall_idx], catalog, config.inventory, dims=dims,
-    )
-    best_overall_util = -F[best_overall_idx, 0]
-    best_overall_speed = -F[best_overall_idx, 1]
-    best_overall_cv = float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
-    is_feasible = feasible_mask[best_overall_idx] if G is not None else True
-
-    logger.info(
-        f"Best overall: {best_overall_layout.n_physical_pieces}/"
-        f"{sum(config.inventory.values())} pieces, "
-        f"score={best_overall_util:.1%}, speed={best_overall_speed:.2f} m/s, "
-        f"switches={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
-        f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
-    )
-
-    if len(feasible_indices) > 0:
-        best_feas_idx = feasible_indices[np.argmin(F[feasible_indices, 0])]
-        best_feas_layout = decode_chromosome(
-            X[best_feas_idx], catalog, config.inventory, dims=dims,
+    # Each artifact block is isolated: a decode/render failure in one must not
+    # cost the remaining artifacts of the run.
+    try:
+        best_overall_idx = np.argmin(F[:, 0])
+        best_overall_layout = decode_chromosome(
+            X[best_overall_idx], catalog, config.inventory,
+            dims=dims, config=decoder_cfg,
         )
-        best_feas_util = -F[best_feas_idx, 0]
-        best_feas_speed = -F[best_feas_idx, 1]
-        _plot_layout(
-            best_feas_layout,
-            f"Best Feasible ({best_feas_layout.n_physical_pieces}/"
-            f"{sum(config.inventory.values())} pcs, score {best_feas_util:.1%}, "
-            f"{best_feas_speed:.2f} m/s)",
-            output_dir / "best_layout.png",
-        )
-    else:
-        logger.warning("No feasible solutions found")
+        best_overall_util = -F[best_overall_idx, 0]
+        best_overall_speed = -F[best_overall_idx, 1]
+        best_overall_cv = float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
+        is_feasible = feasible_mask[best_overall_idx] if G is not None else True
 
-    infeasible_indices = np.where(~feasible_mask)[0] if G is not None else np.array([], dtype=int)
-    if len(infeasible_indices) > 0:
-        best_infeas_idx = infeasible_indices[np.argmin(F[infeasible_indices, 0])]
-        best_infeas_layout = decode_chromosome(
-            X[best_infeas_idx], catalog, config.inventory, dims=dims,
+        logger.info(
+            f"Best overall: {best_overall_layout.n_physical_pieces}/"
+            f"{sum(config.inventory.values())} pieces, "
+            f"score={best_overall_util:.1%}, speed={best_overall_speed:.2f} m/s, "
+            f"switch_pairs={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
+            f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
         )
-        best_infeas_util = -F[best_infeas_idx, 0]
-        best_infeas_speed = -F[best_infeas_idx, 1]
-        best_infeas_cv = float(np.sum(np.maximum(0, G[best_infeas_idx])))
-        _plot_layout(
-            best_infeas_layout,
-            f"Best Infeasible ({best_infeas_layout.n_physical_pieces}/"
-            f"{sum(config.inventory.values())} pcs, score {best_infeas_util:.1%}, "
-            f"{best_infeas_speed:.2f} m/s, CV={best_infeas_cv:.2f})",
-            output_dir / "best_infeasible.png",
-        )
+    except Exception as e:
+        logger.warning(f"Could not summarize best overall individual: {e}")
 
-    _write_category_report(res, output_dir, catalog, config, dims,
-                           F, X, feasible_mask, _plot_layout)
+    try:
+        if len(feasible_indices) > 0:
+            best_feas_idx = feasible_indices[np.argmin(F[feasible_indices, 0])]
+            best_feas_layout = decode_chromosome(
+                X[best_feas_idx], catalog, config.inventory,
+                dims=dims, config=decoder_cfg,
+            )
+            best_feas_util = -F[best_feas_idx, 0]
+            best_feas_speed = -F[best_feas_idx, 1]
+            _plot_layout(
+                best_feas_layout,
+                f"Best Feasible ({best_feas_layout.n_physical_pieces}/"
+                f"{sum(config.inventory.values())} pcs, score {best_feas_util:.1%}, "
+                f"{best_feas_speed:.2f} m/s)",
+                output_dir / "best_layout.png",
+            )
+        else:
+            logger.warning("No feasible solutions found")
+    except Exception as e:
+        logger.warning(f"Could not render best_layout.png: {e}")
+
+    try:
+        infeasible_indices = np.where(~feasible_mask)[0] if G is not None else np.array([], dtype=int)
+        if len(infeasible_indices) > 0:
+            best_infeas_idx = infeasible_indices[np.argmin(F[infeasible_indices, 0])]
+            best_infeas_layout = decode_chromosome(
+                X[best_infeas_idx], catalog, config.inventory,
+                dims=dims, config=decoder_cfg,
+            )
+            best_infeas_util = -F[best_infeas_idx, 0]
+            best_infeas_speed = -F[best_infeas_idx, 1]
+            best_infeas_cv = float(np.sum(np.maximum(0, G[best_infeas_idx])))
+            _plot_layout(
+                best_infeas_layout,
+                f"Best Infeasible ({best_infeas_layout.n_physical_pieces}/"
+                f"{sum(config.inventory.values())} pcs, score {best_infeas_util:.1%}, "
+                f"{best_infeas_speed:.2f} m/s, CV={best_infeas_cv:.2f})",
+                output_dir / "best_infeasible.png",
+            )
+    except Exception as e:
+        logger.warning(f"Could not render best_infeasible.png: {e}")
+
+    try:
+        _write_category_report(res, output_dir, catalog, config, dims,
+                               decoder_cfg, F, X, feasible_mask, _plot_layout)
+    except Exception as e:
+        logger.warning(f"Could not write category report: {e}")
 
     logger.info(f"Results saved to {output_dir}")

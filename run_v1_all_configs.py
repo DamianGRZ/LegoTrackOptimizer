@@ -9,7 +9,8 @@ import numpy as np
 from src.algorithm import run_optimization, save_results
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
-from src.decoder import decode_chromosome
+from src.decoder import DecoderConfig, decode_chromosome
+from src.encoding import compute_dimensions
 
 
 CONFIGS = ["default", "with_switches", "with_crossing"]
@@ -50,10 +51,10 @@ def run_one(config_name: str) -> dict:
     if n_feasible > 0:
         feas_idx = np.where(feasible)[0]
         best_idx = feas_idx[np.argmin(F[feas_idx, 0])]
-        from src.encoding import compute_dimensions
         dims = compute_dimensions(config, catalog)
         layout = decode_chromosome(
-            res.pop.get("X")[best_idx], catalog, config.inventory, dims=dims,
+            res.pop.get("X")[best_idx], catalog, config.inventory,
+            dims=dims, config=DecoderConfig.from_optimization_config(config),
         )
         summary.update({
             "best_util": float(-F[best_idx, 0]),
@@ -71,12 +72,21 @@ def main() -> None:
     summaries = []
     total_t0 = time.time()
     for cfg in CONFIGS:
-        summaries.append(run_one(cfg))
+        # One config's crash must not kill the rest of the batch; the run's
+        # own error.log (written by run_optimization) has the details.
+        try:
+            summaries.append(run_one(cfg))
+        except Exception as exc:
+            logging.exception(f"{cfg} failed")
+            summaries.append({"config": cfg, "error": str(exc)})
     total_elapsed = time.time() - total_t0
 
     print(f"\n\n{'='*70}\nSUMMARY (total {total_elapsed:.1f}s)\n{'='*70}")
     for s in summaries:
         print(f"\n{s['config']}:")
+        if "error" in s:
+            print(f"  FAILED: {s['error']}")
+            continue
         print(f"  elapsed:        {s['elapsed_sec']:.1f}s")
         print(f"  feasible:       {s['n_feasible']}/{s['pop_size']}")
         if "best_util" in s:

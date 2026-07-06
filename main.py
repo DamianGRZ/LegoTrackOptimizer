@@ -7,6 +7,8 @@ Maximizes piece utilization and train speed with template-based passing sidings.
 import argparse
 import logging
 import re
+import sys
+import traceback
 from pathlib import Path
 
 from src.algorithm import run_optimization, save_results
@@ -61,6 +63,8 @@ def main() -> None:
                              "existing run for that config (never overwrites).")
     parser.add_argument("--quick-test", action="store_true",
                         help="Run quick test (20 generations, pop_size=20)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Override algorithm.seed (seeded replications)")
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -74,15 +78,29 @@ def main() -> None:
         config.algorithm.pop_size = 20
         logger.info("Quick test mode: 20 generations, pop_size=20")
 
+    if args.seed is not None:
+        config.algorithm.seed = args.seed
+        logger.info(f"Seed override: {args.seed}")
+
     logger.info("Loading track catalog from data/track_pieces_v2.yaml")
     catalog = TrackCatalog.load("data/track_pieces_v2.yaml")
 
     output_dir = Path(args.output) if args.output else next_output_dir(args.config)
     logger.info(f"Saving results to {output_dir}")
     write_run_info_header(output_dir, args.config, config, quick_test=args.quick_test)
-    res = run_optimization(config, catalog, verbose=args.verbose, output_dir=output_dir)
-    save_results(res, output_dir, catalog, config)
-    append_run_summary(output_dir, res, catalog, config)
+    try:
+        res = run_optimization(config, catalog, verbose=args.verbose, output_dir=output_dir)
+        save_results(res, output_dir, catalog, config)
+        append_run_summary(output_dir, res, catalog, config)
+    except Exception:
+        # run_optimization already salvages what it can; this catches failures
+        # it could not recover from (and failures in the save path itself).
+        (output_dir / "error.md").write_text(
+            f"# Run failed\n\n```\n{traceback.format_exc()}\n```\n",
+            encoding="utf-8",
+        )
+        logger.exception("Run failed; traceback saved to error.md")
+        sys.exit(1)
 
     logger.info("Done!")
 

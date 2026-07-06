@@ -31,6 +31,29 @@ class DecoderConfig:
     boundary_min_y: float = -100.0
     boundary_max_y: float = 100.0
 
+    @classmethod
+    def from_optimization_config(cls, config) -> "DecoderConfig":
+        """Decoder geometry mirroring what evaluation uses.
+
+        Every decode outside the evaluation pipeline (renderers, reports,
+        run summaries) must build its config here: the dataclass defaults
+        above (boundary ±100, tolerances 8.0/15.0) are NOT the configured
+        values, so a default-constructed config auto-centers and classifies
+        paths differently than the constraints judged them.
+
+        ``config`` is an ``OptimizationConfig`` (duck-typed to avoid a
+        circular import): needs ``closure_tolerance``, ``angle_tolerance``
+        and a ``boundary`` with min/max x/y.
+        """
+        return cls(
+            position_tolerance=config.closure_tolerance,
+            angle_tolerance=config.angle_tolerance,
+            boundary_min_x=config.boundary.min_x,
+            boundary_max_x=config.boundary.max_x,
+            boundary_min_y=config.boundary.min_y,
+            boundary_max_y=config.boundary.max_y,
+        )
+
 
 # =============================================================================
 # Inventory Tracker

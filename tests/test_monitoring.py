@@ -1,5 +1,7 @@
 """Tests for ConvergenceMonitorCallback: HV, IGD, feasibility rate."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -104,3 +106,65 @@ class TestConvergenceMonitorCallback:
         assert np.isfinite(cb.data["mean_closure_x"][0])
         assert np.isfinite(cb.data["mean_closure_y"][0])
         assert np.isfinite(cb.data["mean_closure_theta"][0])
+
+
+class TestConvergenceCsv:
+    @staticmethod
+    def _algo(n_gen):
+        return FakeAlgo(
+            n_gen=n_gen,
+            F=np.array([[-0.5, -1.0], [-0.6, -0.9], [-0.6, -0.9]]),
+            CV=np.array([[0.0], [0.0], [0.3]]),
+        )
+
+    @staticmethod
+    def _rows(path):
+        lines = path.read_text(encoding="utf-8").strip().splitlines()
+        header = lines[0].split(",")
+        return header, [dict(zip(header, line.split(","))) for line in lines[1:]]
+
+    def test_appends_one_row_per_generation(self, tmp_path):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback(output_dir=tmp_path)
+        for gen in (1, 2, 3):
+            cb.notify(self._algo(gen))
+
+        header, rows = self._rows(tmp_path / "convergence.csv")
+        assert header[0] == "n_gen"
+        assert {"hv", "feas_rate", "best_f0", "n_unique_F", "cv_eps"} <= set(header)
+        assert [row["n_gen"] for row in rows] == ["1", "2", "3"]
+        assert all(len(row) == len(header) for row in rows)
+
+    def test_unique_f_and_best_f_columns(self, tmp_path):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback(output_dir=tmp_path)
+        cb.notify(self._algo(1))
+
+        _, [row] = self._rows(tmp_path / "convergence.csv")
+        assert row["n_unique_F"] == "2"       # duplicate F rows collapse
+        assert row["n_unique_F_feas"] == "2"  # both feasible points distinct
+        assert float(row["best_f0"]) == pytest.approx(-0.6)
+        assert float(row["best_f1"]) == pytest.approx(-1.0)
+
+    def test_cv_eps_column_reads_epsilon_source(self, tmp_path):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback(output_dir=tmp_path)
+        cb.epsilon_source = SimpleNamespace(last_cv_eps=2.5)
+        cb.notify(self._algo(1))
+
+        _, [row] = self._rows(tmp_path / "convergence.csv")
+        assert float(row["cv_eps"]) == 2.5
+        assert cb.data["cv_eps"] == [2.5]
+
+    def test_fresh_run_discards_previous_trajectory(self, tmp_path):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        (tmp_path / "convergence.csv").write_text("stale", encoding="utf-8")
+        ConvergenceMonitorCallback(output_dir=tmp_path)
+        assert not (tmp_path / "convergence.csv").exists()
+
+    def test_no_output_dir_writes_nothing(self, tmp_path):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+        cb.notify(self._algo(1))
+        assert cb.data["n_unique_F"] == [2]
+        assert not (tmp_path / "convergence.csv").exists()
