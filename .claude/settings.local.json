@@ -54,7 +54,17 @@
       "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe run_v2.py default --pop 50 --gen 4 --heuristic 0.30 2>&1 | Select-Object -Last 12)",
       "WebFetch(domain:www.pololu.com)",
       "WebFetch(domain:www.philohome.com)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(git grep *)",
+      "Bash(git check-ignore *)",
+      "Bash(echo \"\\(exit: $?\\)\")",
+      "Bash(./.venv/Scripts/python.exe main.py --config configs/switch_two_sidings_tall.yaml --verbose)",
+      "Bash(./.venv/Scripts/python.exe main.py --config configs/cross_figure8_tall.yaml --verbose)",
+      "Bash(./.venv/Scripts/python.exe:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(cd \"S:/Programming/Repo/DamianGRZ/LegoTrackOptimizer - V1 kind of worked - Copy\":*)",
+      "WebFetch(domain:ar5iv.labs.arxiv.org)"
     ]
   },
   "enabledPlugins": {
