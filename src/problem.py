@@ -31,6 +31,12 @@ from .intersection import (
 # a layout's bottleneck independently use the same margin the objective does.
 SPEED_SAFETY_MARGIN = 0.95
 
+# G value assigned to every constraint of a degenerate (0-piece) layout. Large
+# finite (never NaN — NaN breaks dominance comparison), so CV orders degenerates
+# below every real individual. Consumers (e.g. epsilon calibration) must exclude
+# CVs derived from this sentinel before computing population statistics.
+DEGENERATE_G = 1.0e6
+
 
 def _slowest_route_speed(
     layout,
@@ -144,7 +150,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # but NaN breaks dominance comparison and requires replace_nan_values_by.
         if layout.n_pieces == 0:
             out["F"] = np.array([np.inf, np.inf])
-            out["G"] = np.full(self.n_ieq_constr, 1e6)
+            out["G"] = np.full(self.n_ieq_constr, DEGENERATE_G)
             out["n_sw_pairs"] = 0
             out["n_cross_comm"] = 0
             out["n_dc_comm"] = 0

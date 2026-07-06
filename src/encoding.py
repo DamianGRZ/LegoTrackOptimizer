@@ -26,7 +26,7 @@ from numpy.typing import NDArray
 
 INACTIVE = -1
 GENES_PER_JUNCTION = 4  # passing siding: (active, position, handedness, n_straights)
-GENES_PER_CROSS_JUNCTION = 3  # cross junction: (active, position_W, handedness)
+GENES_PER_CROSS_JUNCTION = 3  # cross junction: (active, pos_1, pos_2)
 GENES_PER_DBL_CROSSOVER = 5  # double crossover: (active, pos_1, route_1, pos_2, route_2)
 
 # Passing-siding junction gene offsets within a 4-gene descriptor
@@ -229,6 +229,26 @@ def compute_dimensions(config, catalog) -> PartitionedDimensions:
         boundary_min_y=config.boundary.min_y,
         boundary_max_y=config.boundary.max_y,
     )
+
+
+def chromosome_csv_header(dims: PartitionedDimensions) -> str:
+    """Segment-aware column names for chromosomes.csv, one per gene.
+
+    Order mirrors the chromosome partition exactly, so the header length
+    always equals ``dims.n_var``.
+    """
+    names = [f"main_{i}" for i in range(dims.n_main)]
+    names += [f"flip_{i}" for i in range(dims.n_main)]
+    for k in range(dims.max_junctions):
+        names += [f"junc{k}_active", f"junc{k}_pos", f"junc{k}_hand",
+                  f"junc{k}_nstr"]
+    for k in range(dims.max_cross_junctions):
+        names += [f"cross{k}_active", f"cross{k}_p1", f"cross{k}_p2"]
+    for k in range(dims.max_double_crossovers):
+        names += [f"dc{k}_active", f"dc{k}_p1", f"dc{k}_r1",
+                  f"dc{k}_p2", f"dc{k}_r2"]
+    names += ["start_x", "start_y"]
+    return ",".join(names)
 
 
 # =============================================================================

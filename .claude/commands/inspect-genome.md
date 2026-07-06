@@ -43,6 +43,9 @@ G = np.loadtxt(d + "constraints.csv", delimiter=",", skiprows=1)
 feas = np.all(G <= 0, axis=1)
 with open(d + "chromosomes.csv") as f:
     X = np.array(list(csv.reader(f))[1:], dtype=float).astype(np.int16)
+# chromosomes.csv has a segment-aware header row (main_*, flip_*, junc*_*,
+# cross*_*, dc*_*, start_x/y) — the [1:] above skips it. Runs saved before
+# 2026-07-01 have NO header: drop the [1:] there or row 0 (the champion) is lost.
 
 row = np.where(feas)[0][np.argmin(F[feas, 0])]  # best feasible (or --row N)
 lay = decode_chromosome(X[row], cat, cfg.inventory, dims=dims)

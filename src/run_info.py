@@ -22,7 +22,7 @@ import numpy as np
 
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
-from src.decoder import decode_chromosome
+from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import compute_dimensions
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -201,10 +201,39 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
 def _format_individual(label: str, layout, util: float, speed: float,
                        cv: float | None) -> list[str]:
     line = (f"- **{label}**: {layout.n_pieces} pieces, util={util:.1%}, "
-            f"speed={speed:.2f} m/s, switches={layout.n_switch_pairs}")
+            f"speed={speed:.2f} m/s, switch_pairs={layout.n_switch_pairs}")
     if cv is not None:
         line += f", CV={cv:.2f}"
     return [line]
+
+
+def _termination_reason(res, executed: int, config: OptimizationConfig) -> str:
+    """Why the run stopped at ``executed`` generations."""
+    if getattr(res, "crashed", False):
+        return "crashed — partial results"
+    if executed < config.algorithm.n_gen and config.algorithm.termination.period > 0:
+        return "early-stop (improvement window)"
+    return "max-generations"
+
+
+def _executed_generations(res) -> int | None:
+    """Last generation that actually ran (monitor is the ground truth)."""
+    monitor = getattr(res, "monitor", None)
+    generations = monitor.data.get("n_gen") if monitor is not None else None
+    if generations:
+        return int(generations[-1])
+    algorithm = getattr(res, "algorithm", None)
+    return getattr(algorithm, "n_gen", None)
+
+
+def _termination_lines(res, config: OptimizationConfig) -> list[str]:
+    """Markdown bullets for executed vs planned generations."""
+    planned = config.algorithm.n_gen
+    executed = _executed_generations(res)
+    if executed is None:
+        return [f"- Generations planned: {planned}"]
+    reason = _termination_reason(res, executed, config)
+    return [f"- Generations executed: {executed}/{planned} ({reason})"]
 
 
 def append_run_summary(
@@ -225,7 +254,7 @@ def append_run_summary(
         return
 
     lines: list[str] = ["", "## Run Summary", ""]
-    lines.append(f"- Generations: {config.algorithm.n_gen}")
+    lines += _termination_lines(res, config)
     lines.append(f"- Population: {config.algorithm.pop_size}")
 
     pop = getattr(res, "pop", None)
@@ -248,13 +277,15 @@ def append_run_summary(
     lines.append(f"- Feasible solutions: {n_feasible}/{len(X)}")
 
     dims = compute_dimensions(config, catalog)
+    decoder_cfg = DecoderConfig.from_optimization_config(config)
 
     best_feas_layout = None
     if n_feasible > 0:
         feas_idx = np.where(feasible_mask)[0]
         best_feas = int(feas_idx[int(np.argmin(F[feas_idx, 0]))])
         best_feas_layout = decode_chromosome(
-            X[best_feas], catalog, config.inventory, dims=dims,
+            X[best_feas], catalog, config.inventory,
+            dims=dims, config=decoder_cfg,
         )
         lines += _format_individual(
             "Best feasible", best_feas_layout,
@@ -263,7 +294,8 @@ def append_run_summary(
 
     best_overall = int(np.argmin(F[:, 0]))
     overall_layout = decode_chromosome(
-        X[best_overall], catalog, config.inventory, dims=dims,
+        X[best_overall], catalog, config.inventory,
+        dims=dims, config=decoder_cfg,
     )
     overall_cv = (float(np.sum(np.maximum(0, G[best_overall])))
                   if G is not None else 0.0)
