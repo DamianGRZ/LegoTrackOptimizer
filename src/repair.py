@@ -175,11 +175,13 @@ class MainLoopClosureRepair(Repair):
         deficit = target - total_angle
 
         # Stage 1: angular closure — add/remove R40 curves toward the target.
+        # Deficits are R40 multiples up to float dust (catalog angles round-trip
+        # through radians), so gate with tolerance and round to whole curves.
         if abs(deficit) >= CLOSURE_TOLERANCE:
             usage = Counter(int(t) for t in types[active_mask])
-            if deficit > R40_ANGLE:
+            if deficit >= R40_ANGLE - CLOSURE_TOLERANCE:
                 self._add_curves(x, types, flips, usage, deficit)
-            elif deficit < -R40_ANGLE:
+            elif deficit <= -(R40_ANGLE - CLOSURE_TOLERANCE):
                 self._remove_curves(x, types, flips, deficit)
             active_mask = types != INACTIVE
             total_angle = self._compute_total_angle(types[active_mask], flips[active_mask])
@@ -225,7 +227,7 @@ class MainLoopClosureRepair(Repair):
         if available <= 0:
             return
 
-        n_needed = int(abs(deficit) / R40_ANGLE)
+        n_needed = round(abs(deficit) / R40_ANGLE)
         n_add = min(n_needed, available, self.max_corrections)
 
         added = 0
@@ -251,7 +253,7 @@ class MainLoopClosureRepair(Repair):
         # Excess in the LEFT direction (deficit < 0 → total > 360) is cured by
         # dropping flip=0 curves; symmetric for RIGHT excess.
         target_flip = 0 if deficit < 0 else 1
-        n_needed = int(abs(deficit) / R40_ANGLE)
+        n_needed = round(abs(deficit) / R40_ANGLE)
         n_remove = min(n_needed, self.max_corrections)
 
         removed = 0
