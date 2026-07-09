@@ -61,6 +61,7 @@ def _curve_flips(pieces: List[int], default_flip: int) -> List[int]:
     r40 = int(R40_CURVE)
     return [default_flip if p == r40 else 0 for p in pieces]
 
+
 _PIECE_LEN = 16       # Stud length of STRAIGHT_16 (also a proxy for axial step)
 _END_CAP = 80         # ~2 * R40 diameter: half-circle end cap along axial dir
 _CORNER_SPAN = 40     # ~90° corner footprint (4 R40 curves)

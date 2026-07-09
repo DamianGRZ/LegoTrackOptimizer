@@ -151,6 +151,7 @@ def switch_indices_for(template: PassingSidingTemplate) -> Tuple[int, int]:
         return (R40_SWITCH_LEFT, R40_SWITCH_RIGHT)
     return (R40_SWITCH_RIGHT, R40_SWITCH_LEFT)
 
+
 # Template lookup by handedness index (0=LEFT, 1=RIGHT)
 TEMPLATES = {
     0: LEFT_SIDING,

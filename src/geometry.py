@@ -161,5 +161,3 @@ def compute_closure_metrics(states: NDArray[np.float64]) -> Tuple[float, float]:
         angle_error = min(remainder, 360 - remainder)
 
     return (closure_error, angle_error)
-
-

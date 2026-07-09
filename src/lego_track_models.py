@@ -18,10 +18,9 @@ ARC1_ANGLE = math.degrees(math.atan2(3, 4))  # 36.87° (3-4-5 triple)
 ARC2_ANGLE = ARC1_ANGLE - CURVE_ANGLE         # 14.37°
 
 COL_RAIL = '#95a5a6'                # gray
-BED_WIDTH_STUD = 8.0               # full physical piece width in studs;
-                                    # adjacent parallel tracks at the
-                                    # canonical 8-stud siding spacing now
-                                    # touch with no false overlap.
+# Full physical piece width in studs: adjacent parallel tracks at the
+# canonical 8-stud siding spacing touch with no false overlap.
+BED_WIDTH_STUD = 8.0
 RAIL_LW = 1.8                      # rail line width
 N_ARC_PTS = 60                     # arc interpolation points
 
@@ -44,5 +43,5 @@ def offset_path(x, y, offset):
     length = np.sqrt(dx**2 + dy**2)
     length[length == 0] = 1e-9
     nx = -dy / length  # perpendicular normal
-    ny =  dx / length
+    ny = dx / length
     return x + offset * nx, y + offset * ny

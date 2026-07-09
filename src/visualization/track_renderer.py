@@ -571,13 +571,13 @@ def plot_layout(
             # Diamond marker for switches
             legend_elements.append(
                 plt.Line2D([0], [0], marker="D", color=color, linestyle="-",
-                          linewidth=3, markersize=6, markeredgecolor="black", label=name)
+                           linewidth=3, markersize=6, markeredgecolor="black", label=name)
             )
         elif piece_idx == PIECE_IDX_CROSS_90:
             # Square marker for CROSS_90 (matches the square position markers).
             legend_elements.append(
                 plt.Line2D([0], [0], marker="s", color=color, linestyle="-",
-                          linewidth=3, markersize=6, markeredgecolor="black", label=name)
+                           linewidth=3, markersize=6, markeredgecolor="black", label=name)
             )
         else:
             # Straights, curves, and the DOUBLE_CROSSOVER (drawn as its own body)
@@ -714,7 +714,7 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, boundary, title):
                 mid_x = (x[pos] + x[pos + 1]) / 2
                 mid_y = (y[pos] + y[pos + 1]) / 2
                 ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
-                       markeredgecolor="black", markeredgewidth=1.5, zorder=8)
+                        markeredgecolor="black", markeredgewidth=1.5, zorder=8)
 
     # Draw the DIVERGENT section of each branched switch pair, deduplicated.
     # Source-of-truth for the slice is path.divergent_ranges, populated by the
@@ -838,7 +838,7 @@ def _plot_single_path(ax, path, boundary, path_idx):
         mid_x = (x[sw_pos] + x[sw_pos + 1]) / 2
         mid_y = (y[sw_pos] + y[sw_pos + 1]) / 2
         ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=8,
-               markeredgecolor="black", markeredgewidth=1, zorder=6)
+                markeredgecolor="black", markeredgewidth=1, zorder=6)
 
     # Mark start/end (end may be a drifted position — that's intentional, it
     # visualizes closure-failure magnitude).

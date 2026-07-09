@@ -125,7 +125,7 @@ class PartitionedDimensions:
     """
     n_main: int              # Max main loop pieces (non-switch inventory)
     max_junctions: int       # Max passing-siding junction slots
-    max_cross_junctions: int # Max cross-junction slots (from CROSS_90 inventory)
+    max_cross_junctions: int  # Max cross-junction slots (from CROSS_90 inventory)
     max_double_crossovers: int  # Max DOUBLE_CROSSOVER pieces (from inventory)
     n_straights_16: int      # STRAIGHT_16 pieces in inventory
     n_straights_24: int      # STRAIGHT_24 pieces in inventory
@@ -678,5 +678,3 @@ def validate_chromosome(x: NDArray, dims: PartitionedDimensions) -> List[str]:
         *_range_errors(_junction_specs(x, dims)),
         *_range_errors(_dbl_crossover_specs(x, dims)),
     ]
-
-
