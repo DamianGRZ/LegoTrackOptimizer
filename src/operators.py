@@ -385,6 +385,12 @@ def _compensated_pair_grow(
     if n < 4 or n + 2 > dims.n_main:
         return False
 
+    # Descriptor positions are slot indices while lo/hi below are active-order
+    # gap indices; the two only agree on a compact loop, so decline otherwise.
+    active_idx = np.flatnonzero(x[:dims.n_main] != INACTIVE)
+    if not np.array_equal(active_idx, np.arange(n)):
+        return False
+
     # Per-type budget: sidings consume STRAIGHT_16 (templates.straight_idx),
     # so their straights charge the 16-stud pool.
     usage = Counter(types)
@@ -660,13 +666,13 @@ _DC_FIGURE8_GROW_PROB = 0.25   # P(figure-8 grow), applied after _DC_GROW_PROB
 class PartitionedMutation(Mutation):
     """Segment-aware mutation with weighted sub-operator selection.
 
-    Each individual that passes the probability gate receives exactly one
-    mutation drawn from two categories:
+    Each individual that passes the probability gate receives at most one edit:
 
-    - **Main loop mutations** (80% when junctions exist, 100% otherwise):
-      piece_type_change, activate_position, deactivate_position, swap_positions.
-    - **Junction mutations** (20% when junctions exist):
-      toggle_active, reposition, change_handedness, adjust_straights.
+    - **DC-bearing**: closure-safe grows only (50% compensated pair, 25%
+      figure-8 regrow, 25% untouched) — anything else breaks the FK-tuned loop.
+    - **Siding-bearing**: 10% junction op, else the compensated-pair grow.
+    - **Otherwise**: 10% junction op (when junction slots exist), else one of
+      the seven weighted _MAIN_LOOP_OPS.
 
     Args:
         dims: Chromosome partition dimensions.
