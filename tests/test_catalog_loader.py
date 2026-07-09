@@ -122,7 +122,7 @@ class TestV2YamlCrossings:
         assert x.kind == "crossing"
         assert x.length_studs == 48.0
         assert set(x.routes.keys()) == {"track1_through", "track2_through",
-                                         "cross_1_to_2", "cross_2_to_1"}
+                                        "cross_1_to_2", "cross_2_to_1"}
 
     def test_v2_catalog_has_all_8_pieces(self):
         """Post-refactor: 8 piece types (4 switch entries collapsed to 2)."""

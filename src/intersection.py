@@ -286,5 +286,3 @@ def count_dangling_double_crossover_ports(
     # Each solo slot represents a single traversal — 2 ports used, 2 dangle.
     dangling += 2 * solo_slots
     return dangling
-
-

@@ -9,8 +9,10 @@ import pytest
 class FakePop:
     def __init__(self, F, CV, G=None):
         self._F, self._CV, self._G = F, CV, G
+
     def get(self, key):
         return {"F": self._F, "CV": self._CV, "G": self._G}.get(key)
+
     def __len__(self):
         return len(self._F)
 

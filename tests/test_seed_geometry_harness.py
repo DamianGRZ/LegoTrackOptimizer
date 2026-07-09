@@ -82,8 +82,10 @@ def assert_valid_closed(layout, cfg, *, n_cross=0, n_dc=0):
     xs, ys = [], []
     for p in layout.paths:
         if len(p.states):
-            xs.append(p.states[:, 0]); ys.append(p.states[:, 1])
-    xs = np.concatenate(xs); ys = np.concatenate(ys)
+            xs.append(p.states[:, 0])
+            ys.append(p.states[:, 1])
+    xs = np.concatenate(xs)
+    ys = np.concatenate(ys)
     b = cfg.boundary
     assert (xs.max() - xs.min()) <= (b.max_x - b.min_x), "too wide for boundary"
     assert (ys.max() - ys.min()) <= (b.max_y - b.min_y), "too tall for boundary"

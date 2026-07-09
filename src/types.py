@@ -372,4 +372,3 @@ class MultiPathLayout:
     def area(self) -> float:
         min_x, min_y, max_x, max_y = self.bounding_box
         return (max_x - min_x) * (max_y - min_y)
-
