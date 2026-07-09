@@ -130,8 +130,6 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
         self.decoder_config = DecoderConfig(
-            position_tolerance=self.closure_tolerance,
-            angle_tolerance=self.angle_tolerance,
             boundary_min_x=config.boundary.min_x,
             boundary_max_x=config.boundary.max_x,
             boundary_min_y=config.boundary.min_y,
@@ -224,7 +222,6 @@ class TrackOptimizationProblem(ElementwiseProblem):
         dangling = count_dangling_cross_ports(layout.states, main_pieces_list)
         dangling_dc = count_dangling_double_crossover_ports(
             main_pieces_list,
-            getattr(layout, "main_loop_routes", {}),
             getattr(layout, "dbl_crossovers", []),
         )
         # Each dangling DBL_CROSSOVER port is structurally unbuildable, same

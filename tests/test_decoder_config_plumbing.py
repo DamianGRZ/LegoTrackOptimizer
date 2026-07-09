@@ -13,14 +13,13 @@ def test_from_optimization_config_matches_evaluation(compact_config, catalog):
 
 
 def test_default_decoder_config_is_not_the_configured_one(compact_config):
-    # compact's boundary is asymmetric ([-100, 60]); the dataclass defaults
-    # (±100, tolerances 8/15) would auto-center 20 studs away from where the
-    # boundary constraint judged the layout.
+    # compact's boundary is asymmetric ([-100, 60]); the dataclass default
+    # (±100) would auto-center 20 studs away from where the boundary
+    # constraint judged the layout.
     default_cfg = DecoderConfig()
     eval_cfg = DecoderConfig.from_optimization_config(compact_config)
     assert default_cfg != eval_cfg
     assert eval_cfg.boundary_max_x == compact_config.boundary.max_x
-    assert eval_cfg.position_tolerance == compact_config.closure_tolerance
 
 
 def test_postrun_decode_reproduces_evaluation_geometry(compact_config, catalog):

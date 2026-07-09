@@ -9,7 +9,6 @@ from src.encoding import (
     CROSS_90,
     GENES_PER_JUNCTION,
     R40_CURVE,
-    R40_CURVE,
     STRAIGHT_16,
     PartitionedDimensions,
     create_empty_chromosome,

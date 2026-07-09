@@ -12,8 +12,6 @@ import pytest
 from src.geometry import compute_fk_chain
 from src.intersection import count_segment_crossings, find_crossing_pairs
 
-RNG = np.random.default_rng(42)
-
 # Catalog-like FK rows: STR16, STR24, R40 left, R40 right (flip pre-applied).
 _PIECE_DELTAS = np.array([
     [16.0, 0.0, 0.0],

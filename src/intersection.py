@@ -243,7 +243,6 @@ def count_dangling_cross_ports(
 
 def count_dangling_double_crossover_ports(
     main_loop_pieces: List[int],
-    main_loop_routes: Dict[int, int],
     dbl_crossover_records,
 ) -> int:
     """Count dangling ports across all DOUBLE_CROSSOVER chromosome slots.
@@ -261,8 +260,6 @@ def count_dangling_double_crossover_ports(
 
     Args:
         main_loop_pieces: Augmented main-loop piece indices.
-        main_loop_routes: Map main-loop position -> catalog route index for
-            DOUBLE_CROSSOVER slots.
         dbl_crossover_records: Sequence of DblCrossover records (typed loosely
             to avoid a cross-module import from src.types).
 

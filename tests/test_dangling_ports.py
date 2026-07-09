@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from src.catalog import TrackCatalog
-from src.encoding import CROSS_90, R40_CURVE, R40_CURVE, STRAIGHT_16
+from src.encoding import CROSS_90, R40_CURVE, STRAIGHT_16
 from src.geometry import compute_fk_chain
 from src.intersection import count_dangling_cross_ports
 
