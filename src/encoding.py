@@ -640,6 +640,16 @@ def _junction_specs(x, dims):
         yield (f"junction[{k}].n_straights", n_str, 0, str_hi)
 
 
+def _cross_junction_specs(x, dims):
+    """Per-slot cross-junction (name, value, lo, hi) range specs."""
+    n_main_hi = dims.n_main - 1
+    for k in range(dims.max_cross_junctions):
+        active, p1, p2 = get_cross_junction(x, dims, k)
+        yield (f"cross_junction[{k}].active", active, 0, 1)
+        yield (f"cross_junction[{k}].pos_1", p1, 0, n_main_hi)
+        yield (f"cross_junction[{k}].pos_2", p2, 0, n_main_hi)
+
+
 def _dbl_crossover_specs(x, dims):
     """Per-slot DOUBLE_CROSSOVER (name, value, lo, hi) range specs."""
     n_main_hi = dims.n_main - 1
@@ -676,5 +686,6 @@ def validate_chromosome(x: NDArray, dims: PartitionedDimensions) -> List[str]:
     return [
         *_main_loop_errors(x, dims),
         *_range_errors(_junction_specs(x, dims)),
+        *_range_errors(_cross_junction_specs(x, dims)),
         *_range_errors(_dbl_crossover_specs(x, dims)),
     ]
