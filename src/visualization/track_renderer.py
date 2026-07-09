@@ -4,10 +4,6 @@ from pathlib import Path
 from typing import Optional, Union
 
 import matplotlib
-
-# Headless pipeline: PNGs only (Tk + Pool result-handler threads crash Tcl).
-matplotlib.use("Agg", force=True)
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch, Polygon
@@ -42,6 +38,10 @@ from src.lego_track_models import (
     arc_points,
     offset_path,
 )
+
+# Headless pipeline: PNGs only (Tk + Pool result-handler threads crash Tcl).
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt  # noqa: E402
 
 # Color palette for piece types (index-based, post-R40-collapse)
 # Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE,

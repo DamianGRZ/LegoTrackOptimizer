@@ -10,12 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import matplotlib
-
-# Headless pipeline: PNGs only. The interactive Tk backend crashes when its
-# objects are garbage-collected from a multiprocessing.Pool result-handler
-# thread (Tcl_AsyncDelete: async handler deleted by the wrong thread).
-matplotlib.use("Agg", force=True)
-import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
@@ -42,6 +36,12 @@ from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.sampling import IntegerSampling
 from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
+
+# Headless pipeline: PNGs only. The interactive Tk backend crashes when its
+# objects are garbage-collected from a multiprocessing.Pool result-handler
+# thread (Tcl_AsyncDelete: async handler deleted by the wrong thread).
+matplotlib.use("Agg", force=True)
+import matplotlib.pyplot as plt  # noqa: E402
 
 
 def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
