@@ -60,7 +60,8 @@ class TestIntegerSampling:
 
         # With 50% heuristic ratio, at least some samples should be non-trivial
         # (not all inactive/-1)
-        active_counts = np.sum(X[:, ::3] >= 0, axis=1)  # piece_type genes every 3
+        dims = compute_dimensions(default_config, catalog)
+        active_counts = np.sum(X[:, :dims.n_main] >= 0, axis=1)  # main-loop type genes
         has_pieces = np.sum(active_counts > 0)
         assert has_pieces > 0
 
@@ -77,7 +78,7 @@ class TestIntegerSampling:
 
     def test_oval_size_scales_with_boundary(self, catalog):
         """Larger boundary -> larger seeded layouts. Proves hardcoded caps are gone."""
-        inventory = {"STRAIGHT_16": 80, "R40_CURVE": 20, "R40_CURVE": 20}
+        inventory = {"STRAIGHT_16": 80, "R40_CURVE": 20}
         small = OptimizationConfig(
             inventory=inventory,
             boundary=BoundaryConfig(min_x=-100, max_x=100, min_y=-100, max_y=100),
@@ -104,7 +105,10 @@ class TestIntegerSampling:
             np.random.default_rng()
         )
         assert patterns, "expected non-empty heuristic patterns for switches_config"
-        with_switch = sum(1 for p in patterns if p[1])
+        with_switch = sum(
+            1 for _pieces, _flips, junctions, _cross, _dc in patterns
+            if junctions and any(active == 1 for active, _pos, _hand, _n_str in junctions)
+        )
         assert with_switch / len(patterns) >= 0.33
 
     def test_two_siding_pattern_present_when_junctions_ge_2(
@@ -180,7 +184,7 @@ class TestCrossJunctionSeeder:
     pos_1, pos_2) cross descriptor at the perpendicular crossing slots. The
     geometry validates immediately, so the decoder places a real CROSS_90."""
 
-    def _config_with_cross(self, tmp_path) -> OptimizationConfig:
+    def _config_with_cross(self) -> OptimizationConfig:
         """Build a config with switches + spurs + CROSS_90 inventory and a
         boundary large enough to host the seeded oval."""
         from src.config import AlgorithmConfig
@@ -188,7 +192,6 @@ class TestCrossJunctionSeeder:
             train_config_path="trains/default.yaml",
             inventory={
                 "STRAIGHT_16": 80,
-                "R40_CURVE": 40,
                 "R40_CURVE": 40,
                 "R40_SWITCH_LEFT": 4,
                 "R40_SWITCH_RIGHT": 4,
@@ -199,8 +202,8 @@ class TestCrossJunctionSeeder:
         )
         return cfg
 
-    def test_cross_junction_pattern_emitted(self, catalog, tmp_path):
-        cfg = self._config_with_cross(tmp_path)
+    def test_cross_junction_pattern_emitted(self, catalog):
+        cfg = self._config_with_cross()
         sampling = IntegerSampling(catalog, cfg)
         patterns = sampling._get_heuristic_patterns(np.random.default_rng())
 
@@ -223,7 +226,6 @@ class TestCrossJunctionSeeder:
             train_config_path="trains/default.yaml",
             inventory={
                 "STRAIGHT_16": 80,
-                "R40_CURVE": 40,
                 "R40_CURVE": 40,
                 # No switches, no CROSS_90.
             },

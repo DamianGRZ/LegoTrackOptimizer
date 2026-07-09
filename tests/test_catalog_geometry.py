@@ -1,10 +1,8 @@
 """Derivation tests: V2 spec's Pythagorean-triple switch geometry.
 
-These tests verify the REFERENCE derivation from V2's catalog report; they do
-NOT assert that the current YAML matches these values. The current YAML
-preserves historical switch FK values (~31.0, ±6.2) which differ from the
-strict V2 derivation (~32.71, ±12.96). Correcting the catalog is a separate
-task.
+The shipped YAML carries the canonical PHYSICAL MEASUREMENTS of the kit
+(port C at 32.75, ±13.0); the two-arc derivation verified here lands within
+~0.05 stud of them, corroborating the measurements independently.
 """
 
 import math
@@ -82,13 +80,16 @@ class TestSwitchGeometryReference:
         assert abs(dy - 12.955) < 0.01, f"dy={dy:.4f}, expected ~12.955"
         assert abs(dtheta - math.pi / 8) < 1e-9
 
-    def test_current_yaml_values_differ_from_v2_derivation(self):
-        """
-        REGRESSION GUARD: the YAML we ship has (31.0, 6.2) not (32.71, 12.96).
-        This is a KNOWN divergence; correcting it is a separate task.
-        This test documents the gap so future changes trip the right alarm.
-        """
+    def test_shipped_yaml_matches_canonical_measurements(self):
+        """REGRESSION GUARD: port C ships the measured kit values (32.75, 13.0);
+        the two-arc derivation corroborates them to within 0.1 stud."""
+        from pathlib import Path
+        from src.catalog.loader import load_catalog_spec
+        cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
+        port_c = cat.by_id["R40_SWITCH_LEFT"].ports["C"]
+        assert port_c.dx == 32.75, f"port C dx {port_c.dx} drifted from the measured 32.75"
+        assert port_c.dy == 13.0, f"port C dy {port_c.dy} drifted from the measured 13.0"
+
         v2_dx, v2_dy, _ = compute_lego_r40_switch_port_c()
-        current_dx, current_dy = 31.0, 6.2   # from data/track_pieces_v2.yaml
-        assert abs(v2_dx - current_dx) > 1.0, "If this starts failing, geometry was corrected"
-        assert abs(v2_dy - current_dy) > 6.0, "If this starts failing, geometry was corrected"
+        assert abs(port_c.dx - v2_dx) < 0.1
+        assert abs(port_c.dy - v2_dy) < 0.1

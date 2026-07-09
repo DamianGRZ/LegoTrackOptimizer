@@ -210,7 +210,6 @@ class TestInventoryRequirements:
             R40_SWITCH_LEFT: 1,
             R40_SWITCH_RIGHT: 1,
             R40_CURVE: 2,
-            R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
         assert check_siding_inventory(LEFT_SIDING, n_straights=2,
@@ -221,7 +220,6 @@ class TestInventoryRequirements:
             # Missing R40_SWITCH_LEFT
             R40_SWITCH_RIGHT: 1,
             R40_CURVE: 2,
-            R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
         assert not check_siding_inventory(LEFT_SIDING, n_straights=0,
@@ -231,7 +229,6 @@ class TestInventoryRequirements:
         available = {
             R40_SWITCH_LEFT: 1,
             R40_SWITCH_RIGHT: 1,
-            R40_CURVE: 1,
             R40_CURVE: 1,
             STRAIGHT_16: 2,
         }

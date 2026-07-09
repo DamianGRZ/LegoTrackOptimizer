@@ -125,13 +125,12 @@ class TestV2YamlCrossings:
         assert set(x.routes.keys()) == {"track1_through", "track2_through",
                                         "cross_1_to_2", "cross_2_to_1"}
 
-    def test_v2_catalog_has_all_8_pieces(self):
-        """Post-refactor: 8 piece types (4 switch entries collapsed to 2)."""
+    def test_v2_catalog_has_all_7_pieces(self):
+        """Post-refactor: 7 piece types (4 switch entries collapsed to 2)."""
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         expected = {
-            "STRAIGHT_16", "STRAIGHT_24",
-            "R40_CURVE", "R40_CURVE",
+            "STRAIGHT_16", "STRAIGHT_24", "R40_CURVE",
             "R40_SWITCH_LEFT", "R40_SWITCH_RIGHT",
             "CROSS_90", "DOUBLE_CROSSOVER",
         }

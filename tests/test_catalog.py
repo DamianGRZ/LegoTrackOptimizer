@@ -64,7 +64,7 @@ class TestVectorizedLookup:
 
     def test_get_fk_valid_indices(self, catalog: TrackCatalog):
         """Vectorized FK retrieval works."""
-        indices = np.array([0, 1, 2, 3])  # STRAIGHT_16, STRAIGHT_24, R40_CURVE, R40_CURVE
+        indices = np.array([0, 1, 2, 3])  # STRAIGHT_16, STRAIGHT_24, R40_CURVE, CROSS_90
         fk = catalog.get_fk(indices)
 
         assert fk.shape == (4, 3)
@@ -149,7 +149,7 @@ class TestTopologyAndRoutes:
 
     def test_switch_has_multiple_routes(self, catalog: TrackCatalog):
         """Switch pieces have multiple routes."""
-        topo = catalog.get_topology(5)  # R40_SWITCH_LEFT
+        topo = catalog.get_topology(5)  # R40_SWITCH_RIGHT
         assert topo is not None
         assert len(topo.routes) >= 2  # through and diverging
 
@@ -173,14 +173,16 @@ class TestTopologyAndRoutes:
         assert fk[0] == pytest.approx(16.0)
 
     def test_get_fk_with_routes(self, catalog: TrackCatalog):
-        """Can get FK with route selection for each piece."""
-        piece_indices = np.array([0, 4, 4])  # STRAIGHT_16, CROSS_90, CROSS_90
-        route_indices = np.array([0, 0, 1])  # Default routes, then alternate
+        """Route selection changes the returned FK row per piece."""
+        piece_indices = np.array([0, 4, 4])  # STRAIGHT_16, R40_SWITCH_LEFT x2
+        route_indices = np.array([0, 0, 1])  # default, through, diverging
 
         fk = catalog.get_fk_with_routes(piece_indices, route_indices)
 
         assert fk.shape == (3, 3)
         assert fk[0, 0] == pytest.approx(16.0)  # STRAIGHT_16
+        assert fk[1] == pytest.approx([32.0, 0.0, 0.0])     # switch through
+        assert fk[2] == pytest.approx([32.75, 13.0, 22.5])  # switch diverging
 
 
 class TestPieceClassification:
