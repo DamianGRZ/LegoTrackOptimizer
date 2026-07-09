@@ -24,7 +24,8 @@ class TestGeometryDomain:
     """coupler-phi per segment + per-switch + max."""
 
     def test_phi_R40_matches_user_sanity_check(self, catalog, measured_train_config):
-        """Single R40_CURVE, measured coupler_offset=0.106, R=0.32 m -> phi == 0.106/(2*0.32) ~ 9.49 deg."""
+        """Single R40_CURVE, measured coupler_offset=0.106, R=0.32 m
+        -> phi == 0.106/(2*0.32) ~ 9.49 deg."""
         layout = _make_layout([R40_CURVE], catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config)
         expected_rad = 0.106 / (2.0 * 0.32)
@@ -104,7 +105,8 @@ class TestKinematicsDomain:
         assert phys.safety_factor_min == pytest.approx(0.95, abs=1e-3)
 
     def test_safety_factor_min_above_margin_on_brake_bound(self, catalog, measured_train_config):
-        """Layout with curve before short straight -> brake-bound segments below 0.95 cap (so factor > 0.95)."""
+        """Layout with curve before short straight -> brake-bound segments below
+        0.95 cap (so factor > 0.95)."""
         layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 2, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         # Some segments forced below v_limit by accel/brake -> safety_factor > 0.95 there
@@ -170,7 +172,8 @@ class TestEnergyDomain:
     """motor_work_per_lap, rolling_dissipation, ke_roundtrip."""
 
     def test_rolling_dissipation_constant_speed(self, catalog, measured_train_config):
-        """All-straight closed loop at v=1.197: rolling_diss = mu_roll * m_total * g * total_distance."""
+        """All-straight closed loop at v=1.197:
+        rolling_diss = mu_roll * m_total * g * total_distance."""
         layout = _make_layout([STRAIGHT_16] * 8, catalog)
         phys = evaluate_layout(layout, catalog, measured_train_config, safety_margin=0.95)
         m_total = measured_train_config.mass_total

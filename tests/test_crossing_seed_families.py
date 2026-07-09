@@ -63,7 +63,9 @@ def test_uncapped_dc_weave_reaches_competitive_size(inv, dims, prob, cfg, cat):
         assert_seed_feasible(pat, prob, cfg, cat, dims, n_cross=0, n_dc=1).n_pieces
         for pat in variants
     )
-    assert best >= 120, f"largest DC figure-8 only {best} pieces (expected boundary-limited >= 120)"
+    assert best >= 120, (
+        f"largest DC figure-8 only {best} pieces (expected boundary-limited >= 120)"
+    )
 
 
 # =============================================================================

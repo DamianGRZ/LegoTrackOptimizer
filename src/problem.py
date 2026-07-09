@@ -115,7 +115,8 @@ class TrackOptimizationProblem(ElementwiseProblem):
         super().__init__(
             n_var=self.dims.n_var,
             n_obj=2,
-            n_ieq_constr=5 + catalog.n_pieces,  # 3 closure + boundary + collisions + per-type inventory
+            # 3 closure + boundary + collisions + per-type inventory
+            n_ieq_constr=5 + catalog.n_pieces,
             xl=xl,
             xu=xu,
             **kwargs,

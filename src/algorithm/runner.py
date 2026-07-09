@@ -108,7 +108,8 @@ class ProgressCallback(Callback):
 
         logger.info(
             f"Gen {gen:4d} | "
-            f"best_feas={feas_util:.1%} ({int(feas_util * self.total_inventory)} pcs) {feas_speed:.2f} m/s | "
+            f"best_feas={feas_util:.1%} ({int(feas_util * self.total_inventory)} pcs) "
+            f"{feas_speed:.2f} m/s | "
             f"best_infeas={infeas_util:.1%} ({int(infeas_util * self.total_inventory)} pcs) | "
             f"feasible={n_feasible}/{len(pop)}"
         )
@@ -158,7 +159,9 @@ class FeasibleEliteCallback(Callback):
         if self._elite is None:
             return
 
-        current_best_util = float(np.max(-F[feasible_mask, 0])) if np.any(feasible_mask) else -np.inf
+        current_best_util = (
+            float(np.max(-F[feasible_mask, 0])) if np.any(feasible_mask) else -np.inf
+        )
         if self._elite_util <= current_best_util:
             return
 
@@ -562,7 +565,9 @@ class LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling):
 
         self.max_cv = self._calibrate_epsilon0(cv) if cv is not None and len(cv) else 1.0
         self._logger.info(f"Epsilon-constraint: epsilon_0={self.max_cv:.3f}")
-        return super(AdaptiveEpsilonConstraintHandling, self)._initialize_advance(infills, **kwargs)
+        return super(AdaptiveEpsilonConstraintHandling, self)._initialize_advance(
+            infills, **kwargs
+        )
 
     def _ratchet_check(self, alpha: float, cv: np.ndarray | None, gen: int) -> None:
         """Halve epsilon_0 on strict-feasibility collapse (tighten-only)."""
@@ -735,7 +740,9 @@ def run_optimization(
     logger.info("Objectives: utilization + speed (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
-    logger.info(f"Chromosome: {dims.n_var} genes (main={dims.n_main}, junctions={dims.max_junctions})")
+    logger.info(
+        f"Chromosome: {dims.n_var} genes (main={dims.n_main}, junctions={dims.max_junctions})"
+    )
     logger.info(f"Total inventory: {config.total_inventory} pieces")
     logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
 
@@ -780,7 +787,9 @@ def run_optimization(
             logger.info(f"Feasible solutions: {n_feasible}/{len(res.pop)}")
 
         if X is not None and len(X) > 0 and F is not None:
-            feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
+            feasible_mask = (
+                np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
+            )
             if np.any(feasible_mask):
                 feasible_F = F[feasible_mask]
                 feasible_indices = np.where(feasible_mask)[0]
@@ -985,7 +994,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         )
         best_overall_util = -F[best_overall_idx, 0]
         best_overall_speed = -F[best_overall_idx, 1]
-        best_overall_cv = float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
+        best_overall_cv = (
+            float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
+        )
         is_feasible = feasible_mask[best_overall_idx] if G is not None else True
 
         logger.info(
@@ -1020,7 +1031,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         logger.warning(f"Could not render best_layout.png: {e}")
 
     try:
-        infeasible_indices = np.where(~feasible_mask)[0] if G is not None else np.array([], dtype=int)
+        infeasible_indices = (
+            np.where(~feasible_mask)[0] if G is not None else np.array([], dtype=int)
+        )
         if len(infeasible_indices) > 0:
             best_infeas_idx = infeasible_indices[np.argmin(F[infeasible_indices, 0])]
             best_infeas_layout = decode_chromosome(

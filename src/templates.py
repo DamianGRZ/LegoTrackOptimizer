@@ -306,7 +306,9 @@ def piece_fk(piece_idx: int, flip: int = 0) -> Tuple[float, float, float]:
     return fk
 
 
-def apply_fk(state: Tuple[float, float, float], fk: Tuple[float, float, float]) -> Tuple[float, float, float]:
+def apply_fk(
+    state: Tuple[float, float, float], fk: Tuple[float, float, float],
+) -> Tuple[float, float, float]:
     """Apply FK delta to a state (x, y, theta).
 
     FK transformation:
@@ -496,12 +498,13 @@ def get_siding_inventory_requirements(
     requirements[R40_SWITCH_RIGHT] = requirements.get(R40_SWITCH_RIGHT, 0) + 1
 
     # Curves (approach + return are same handedness, so two of the same curve type)
-    requirements[template.approach_curve_idx] = requirements.get(template.approach_curve_idx, 0) + 1
-    requirements[template.return_curve_idx] = requirements.get(template.return_curve_idx, 0) + 1
+    for curve_idx in (template.approach_curve_idx, template.return_curve_idx):
+        requirements[curve_idx] = requirements.get(curve_idx, 0) + 1
 
     # Straights
     if n_straights > 0:
-        requirements[template.straight_idx] = requirements.get(template.straight_idx, 0) + n_straights
+        straight = template.straight_idx
+        requirements[straight] = requirements.get(straight, 0) + n_straights
 
     return requirements
 

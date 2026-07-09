@@ -213,7 +213,8 @@ class TestInventoryRequirements:
             R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
-        assert check_siding_inventory(LEFT_SIDING, n_straights=2, available_inventory=available, used_inventory={})
+        assert check_siding_inventory(LEFT_SIDING, n_straights=2,
+                                      available_inventory=available, used_inventory={})
 
     def test_check_inventory_fails_when_left_switch_missing(self):
         available = {
@@ -223,7 +224,8 @@ class TestInventoryRequirements:
             R40_CURVE: 2,
             STRAIGHT_16: 10,
         }
-        assert not check_siding_inventory(LEFT_SIDING, n_straights=0, available_inventory=available, used_inventory={})
+        assert not check_siding_inventory(LEFT_SIDING, n_straights=0,
+                                          available_inventory=available, used_inventory={})
 
     def test_check_inventory_considers_used(self):
         available = {
@@ -234,7 +236,8 @@ class TestInventoryRequirements:
             STRAIGHT_16: 2,
         }
         used = {R40_SWITCH_LEFT: 1}  # already used the only LEFT switch
-        assert not check_siding_inventory(LEFT_SIDING, n_straights=0, available_inventory=available, used_inventory=used)
+        assert not check_siding_inventory(LEFT_SIDING, n_straights=0,
+                                          available_inventory=available, used_inventory=used)
 
 
 class TestAlignmentError:

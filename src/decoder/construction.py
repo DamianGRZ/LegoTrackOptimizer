@@ -754,7 +754,9 @@ def _build_multi_path_layout(
 
     paths: List[TraversalPath] = []
     for path_id, choices in enumerate(product([0, 1], repeat=n_pairs)):
-        path = _compute_single_path(main_pieces, main_flips, sorted_pairs, choices, catalog, routes)
+        path = _compute_single_path(
+            main_pieces, main_flips, sorted_pairs, choices, catalog, routes,
+        )
         path.path_id = path_id
         paths.append(path)
 
@@ -851,7 +853,10 @@ def _compute_single_path(
             route_indices.extend([THROUGH] * len(pair.branch_pieces))
             # Branch flips come from the template (per-curve flip already encoded
             # in SwitchPair.branch_flips by _inject_switches).
-            branch_flips = list(pair.branch_flips) if pair.branch_flips else [0] * len(pair.branch_pieces)
+            branch_flips = (
+                list(pair.branch_flips) if pair.branch_flips
+                else [0] * len(pair.branch_pieces)
+            )
             if len(branch_flips) < len(pair.branch_pieces):
                 branch_flips = branch_flips + [0] * (len(pair.branch_pieces) - len(branch_flips))
             flip_sequence.extend(branch_flips[:len(pair.branch_pieces)])

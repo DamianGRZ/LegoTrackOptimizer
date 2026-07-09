@@ -201,7 +201,9 @@ class TestInfeasibilitySentinel:
         G = np.asarray(out["G"])
         assert np.all(np.isfinite(G)), f"G must be finite: {G}"
         assert np.all(G > 0), f"All G entries must be positive for infeasible: {G}"
-        assert G.max() >= 1e5, f"Sentinel too small; CV won't dominate real violations: max={G.max()}"
+        assert G.max() >= 1e5, (
+            f"Sentinel too small; CV won't dominate real violations: max={G.max()}"
+        )
         assert len(G) == problem.n_ieq_constr, f"G length mismatch"
 
     def test_infeasibility_sentinel_dominated_by_feasible(self):
@@ -429,7 +431,8 @@ class TestGShapeV2:
         assert len(G) == problem.n_ieq_constr
 
     def test_g_entries_order_and_ranges(self, catalog, default_config):
-        """Verify G[0..2]=closure_x/y/theta, G[3]=boundary, G[4]=collisions, G[5:]=per-type inventory."""
+        """Verify G[0..2]=closure_x/y/theta, G[3]=boundary, G[4]=collisions,
+        G[5:]=per-type inventory."""
         import numpy as np
         from src.problem import TrackOptimizationProblem
 
@@ -476,7 +479,9 @@ class TestGShapeV2:
 class TestFeasibilityParity:
     """Stage B must NOT regress existing configs."""
 
-    @pytest.mark.parametrize("config_name", ["default", "with_switches", "with_crossing", "compact"])
+    @pytest.mark.parametrize(
+        "config_name", ["default", "with_switches", "with_crossing", "compact"]
+    )
     def test_config_smoke_still_runs(self, config_name):
         """Each config's --quick-test must exit 0 (feasible count is config-dependent)."""
         import subprocess

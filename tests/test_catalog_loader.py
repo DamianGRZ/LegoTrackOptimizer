@@ -93,7 +93,8 @@ class TestV2YamlSwitches:
         ("R40_SWITCH_LEFT",  32.75,  13.0,  0.39269908),
         ("R40_SWITCH_RIGHT", 32.75, -13.0, -0.39269908),
     ])
-    def test_switch_port_c_matches_canonical_geometry(self, piece_id, port_c_dx, port_c_dy, port_c_dtheta):
+    def test_switch_port_c_matches_canonical_geometry(self, piece_id, port_c_dx, port_c_dy,
+                                                      port_c_dtheta):
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         sw = cat.by_id[piece_id]

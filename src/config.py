@@ -53,10 +53,15 @@ class TerminationConfig(BaseModel):
 class AlgorithmConfig(BaseModel):
     """NSGA-II algorithm parameters."""
 
-    name: Literal["NSGA2"] = Field(default="NSGA2", description="Algorithm: NSGA2 (Deb's feasibility-first via ConstrRankAndCrowding)")
+    name: Literal["NSGA2"] = Field(
+        default="NSGA2",
+        description="Algorithm: NSGA2 (Deb's feasibility-first via ConstrRankAndCrowding)",
+    )
     pop_size: int = Field(default=1000, ge=10, description="Population size")
     n_gen: int = Field(default=1000, ge=1, description="Number of generations")
-    heuristic_ratio: float = Field(default=0.20, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics")
+    heuristic_ratio: float = Field(
+        default=0.20, ge=0.0, le=0.5, description="Fraction of initial pop from heuristics",
+    )
     crossover_prob: float = Field(default=0.2, ge=0, le=1, description="Crossover probability")
     mutation_prob: float = Field(default=0.8, ge=0, le=1, description="Mutation probability")
     eliminate_duplicates: bool = Field(default=True, description="Remove duplicate solutions")
@@ -67,11 +72,19 @@ class AlgorithmConfig(BaseModel):
 class OptimizationConfig(BaseModel):
     """Complete optimization configuration."""
 
-    inventory: Dict[str, int] = Field(default_factory=dict, description="Available pieces {piece_id: count}")
+    inventory: Dict[str, int] = Field(
+        default_factory=dict, description="Available pieces {piece_id: count}",
+    )
     boundary: BoundaryConfig = Field(default_factory=BoundaryConfig)
-    closure_tolerance: float = Field(default=4.0, ge=0.1, description="Position closure tolerance in studs")
-    angle_tolerance: float = Field(default=5.0, ge=0.5, description="Angle closure tolerance in degrees")
-    boundary_tolerance: float = Field(default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs")
+    closure_tolerance: float = Field(
+        default=4.0, ge=0.1, description="Position closure tolerance in studs",
+    )
+    angle_tolerance: float = Field(
+        default=5.0, ge=0.5, description="Angle closure tolerance in degrees",
+    )
+    boundary_tolerance: float = Field(
+        default=2.0, ge=0.0, description="Boundary overshoot tolerance in studs",
+    )
     special_piece_weight: float = Field(
         default=3.0, ge=1.0,
         description="Utilization weight per special piece (switch pair / crossing / "
@@ -93,7 +106,9 @@ class OptimizationConfig(BaseModel):
         """Ensure all inventory counts are non-negative."""
         for piece_id, count in v.items():
             if count < 0:
-                raise ValueError(f"Inventory count for {piece_id} must be non-negative, got {count}")
+                raise ValueError(
+                    f"Inventory count for {piece_id} must be non-negative, got {count}"
+                )
         return v
 
     @property
