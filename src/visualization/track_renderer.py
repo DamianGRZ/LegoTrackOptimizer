@@ -23,7 +23,7 @@ from src.encoding import (
     DOUBLE_CROSSOVER as PIECE_IDX_DBL_CROSSOVER,
 )
 
-# Import geometry helpers from track models (do not modify these)
+# Geometry helpers (arc/offset paths, rail constants) from the track model.
 from src.lego_track_models import (
     R40,
     RAIL_OFFSET,
@@ -89,7 +89,6 @@ DC_CROSS_WIDTH_STUD = 3.6        # thin bed for the double-crossover scissors ro
 
 
 def get_piece_color(piece_idx: int) -> str:
-    """Get color for a piece by index."""
     if piece_idx in PIECE_COLORS:
         return PIECE_COLORS[piece_idx]
     return FALLBACK_COLORS[piece_idx % len(FALLBACK_COLORS)]
@@ -436,7 +435,6 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_r
 
 
 def get_piece_short_name(piece_idx: int) -> str:
-    """Get short name for a piece by index."""
     return PIECE_SHORT_NAMES.get(piece_idx, f"PIECE_{piece_idx}")
 
 
@@ -505,8 +503,8 @@ def plot_layout(
 ) -> Figure:
     """Plot track layout with colored pieces and connection dots.
 
-    Each piece type has a different color. Switches are shown with thicker lines
-    and diamond markers. Crossings shown with square markers.
+    Each piece type has a different color. Switches are drawn as their S-curve
+    body plus a diamond marker; crossings get a square marker.
     Start is marked with green square, end with red circle.
 
     Args:
@@ -526,7 +524,6 @@ def plot_layout(
         ax.set_title(title)
         return fig
 
-    # Extract coordinates for markers
     x = layout.states[:, 0]
     y = layout.states[:, 1]
 
@@ -538,7 +535,6 @@ def plot_layout(
 
     _draw_piece_sequence(ax, indices, layout.states)
 
-    # Mark switch positions with diamond markers
     for i in switch_positions:
         piece_idx = int(layout.indices[i])
         color = get_piece_color(piece_idx)
@@ -547,7 +543,6 @@ def plot_layout(
         ax.plot(mid_x, mid_y, "D", color=color, markersize=8, markeredgecolor="black",
                 markeredgewidth=1, zorder=6)
 
-    # Mark crossing positions with square markers
     for i in crossing_positions:
         piece_idx = int(layout.indices[i])
         color = get_piece_color(piece_idx)
@@ -556,7 +551,6 @@ def plot_layout(
         ax.plot(mid_x, mid_y, "s", color=color, markersize=8, markeredgecolor="black",
                 markeredgewidth=1, zorder=6)
 
-    # Mark start as green square and end as red circle
     ax.plot(x[0], y[0], "gs", markersize=12, label="Start", zorder=10)
     ax.plot(x[-1], y[-1], "ro", markersize=12, label="End", zorder=10)
 
@@ -564,13 +558,11 @@ def plot_layout(
     _setup_axes(ax, label_fontsize=11)
     ax.set_title(title, fontsize=14)
 
-    # Create legend with piece types (sorted by index)
     legend_elements = []
     for piece_idx in sorted(piece_indices_seen):
         color = get_piece_color(piece_idx)
         name = get_piece_short_name(piece_idx)
         if piece_idx in SWITCH_INDICES:
-            # Diamond marker for switches
             legend_elements.append(
                 plt.Line2D([0], [0], marker="D", color=color, linestyle="-",
                            linewidth=3, markersize=6, markeredgecolor="black", label=name)
@@ -620,7 +612,6 @@ def plot_layout(
 
     plt.tight_layout()
 
-    # Save to PNG if path provided
     if save_path is not None:
         fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
 

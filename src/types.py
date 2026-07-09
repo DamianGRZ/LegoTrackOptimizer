@@ -50,18 +50,16 @@ class FKRoute:
     speed_limit: float = 1.57
 
     def to_array(self) -> NDArray[np.float64]:
-        """Return [dx, dy, dtheta] as numpy array."""
         return np.array([self.dx, self.dy, self.dtheta], dtype=np.float64)
 
     @property
     def is_straight(self) -> bool:
-        """Check if this is a straight route (no turning)."""
         return abs(self.dtheta) < 0.01
 
 
 @dataclass(frozen=True)
 class PieceTopology:
-    """Complete metadata for a piece (all phases)."""
+    """All FK/port metadata for one catalog piece."""
 
     piece_id: str
     piece_index: int
@@ -73,15 +71,12 @@ class PieceTopology:
     port_headings: Tuple[float, ...] = ()
 
     def is_switch(self) -> bool:
-        """Check if piece is a switch."""
         return self.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
 
     def is_crossing(self) -> bool:
-        """Check if piece is a crossing."""
         return self.piece_class == PieceClass.CROSSING_4PORT
 
     def is_terminator(self) -> bool:
-        """Check if piece is a bumper/terminator."""
         return self.piece_class == PieceClass.BUMPER_1PORT
 
 
@@ -182,7 +177,6 @@ class TraversalPath:
 
     @property
     def n_pieces(self) -> int:
-        """Number of pieces in this path."""
         return len(self.piece_sequence)
 
     @property
@@ -324,7 +318,8 @@ class MultiPathLayout:
                 drifts.append((path_idx, drift_states))
         return drifts
 
-    # Backward compatibility with Layout interface
+    # These properties expose a geometry.Layout-shaped view for the renderer
+    # and train evaluation.
     @property
     def n_pieces(self) -> int:
         main = self.get_main_path()

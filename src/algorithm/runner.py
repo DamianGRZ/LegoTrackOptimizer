@@ -46,7 +46,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
                     logger: logging.Logger) -> None:
-    """Log piece usage breakdown."""
     piece_counts: dict = {}
 
     if hasattr(layout, 'main_loop_pieces'):
@@ -420,8 +419,7 @@ class CallbackChain(Callback):
 # Closure (G[0:3]) and boundary (G[3]) are SOFT: a near-closed / near-fitting loop
 # can evolve toward satisfying them, so the epsilon schedule may relax them.
 # Collisions (G[4]) and per-type inventory (G[5:]) are HARD: structurally
-# unbuildable, never relaxed. See docs/superpowers/specs/
-# 2026-06-07-selective-epsilon-hard-collisions-design.md.
+# unbuildable, never relaxed.
 SOFT_CONSTRAINT_COUNT = 4
 
 # Collisions + inventory are weighted this far above the epsilon cap (max_cv is
@@ -702,8 +700,6 @@ def run_optimization(
     )
     logger.info("NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)")
 
-    # Wrap with adaptive epsilon-constraint handling
-    # Allows infeasible sidings to survive and evolve toward feasibility
     algorithm = LegoAdaptiveEpsilon(
         base_algorithm,
         n_ieq_constr=problem.n_ieq_constr,

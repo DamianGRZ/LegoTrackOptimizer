@@ -264,7 +264,6 @@ def generate_bounds(dims: PartitionedDimensions) -> Tuple[NDArray, NDArray]:
     xl = np.full(dims.n_var, INACTIVE, dtype=np.int16)
     xu = np.full(dims.n_var, INACTIVE, dtype=np.int16)
 
-    # Main loop types: [-1, MAX_MAIN_LOOP_PIECE]
     xl[:dims.n_main] = INACTIVE
     xu[:dims.n_main] = MAX_MAIN_LOOP_PIECE
 
@@ -372,11 +371,8 @@ def fk_rows_with_flips(fk_table: NDArray, types, flips=None) -> NDArray:
     deltas = fk_table[types]
     if flips is None:
         return deltas
-    # One physical R40 SKU covers BOTH handednesses — there is deliberately no
-    # separate right-curve catalog entry. The catalog stores the LEFT turn;
-    # mirroring it about the piece's own forward (x) axis turns it into the
-    # RIGHT turn exactly. That mirror is: negate the lateral offset dy and the
-    # heading change dtheta, keep dx. So flip=1 reflects LEFT into RIGHT.
+    # flip=1 mirrors the stored LEFT turn into RIGHT about the forward axis:
+    # negate dy and dtheta, keep dx.
     negate = (types == int(R40_CURVE)) & (np.asarray(flips, dtype=np.int32) == 1)
     deltas[negate, 1] *= -1.0  # dy: mirror lateral offset
     deltas[negate, 2] *= -1.0  # dtheta: mirror heading change
@@ -547,7 +543,6 @@ def create_empty_chromosome(dims: PartitionedDimensions) -> NDArray:
     x = np.full(dims.n_var, INACTIVE, dtype=np.int16)
     # Flip array is part of the main-loop region but holds bits, not types — zero it.
     x[dims.main_flips_start:dims.main_flips_end] = 0
-    # Zero out junction descriptors (active=0 by default)
     for k in range(dims.max_junctions):
         set_junction(x, dims, k, active=0, position=0, handedness=0, n_straights=0)
     for k in range(dims.max_cross_junctions):
@@ -555,7 +550,6 @@ def create_empty_chromosome(dims: PartitionedDimensions) -> NDArray:
     for k in range(dims.max_double_crossovers):
         set_double_crossover(x, dims, k, active=0,
                              pos_1=0, route_1=0, pos_2=0, route_2=0)
-    # Zero start position
     x[dims.start_pos_start] = 0
     x[dims.start_pos_start + 1] = 0
     return x

@@ -1,15 +1,14 @@
 """Construction-based decoder: chromosome → MultiPathLayout.
 
-Algorithm:
-1.   Read main loop piece types, filter INACTIVE → active_pieces
-2.   Read active junctions, sort by position, compute branch pieces from templates
-3.   Inject switches into main loop copy (replace, not insert)
-3.5  Inject cross-junctions (CROSS_90 at descriptor-named perpendicular slots)
-3.6  Inject double-crossovers (DOUBLE_CROSSOVER replacing two straight slots)
-4.   Self-intersection repair (inject CROSS_90 at emergent ~90° crossings)
-5.   Compute FK for augmented main loop
-6.   Enumerate 2^J traversal paths
-7.   Auto-center within boundary, return MultiPathLayout
+Pipeline:
+- Read main loop piece types, filter INACTIVE → active_pieces
+- Read active junctions, sort by position, compute branch pieces from templates
+- Inject switches into main loop copy (replace, not insert)
+- Inject cross-junctions (CROSS_90 at descriptor-named perpendicular slots)
+- Inject double-crossovers (DOUBLE_CROSSOVER replacing two straight slots)
+- Self-intersection repair (inject CROSS_90 at emergent ~90° crossings)
+- Compute FK for the augmented main loop and enumerate 2^J traversal paths
+- Auto-center within boundary, return MultiPathLayout
 """
 
 from itertools import product
@@ -115,41 +114,36 @@ def decode_chromosome(
     # the per-category run report.
     drop_log: List[str] = []
 
-    # Step 1: Read main loop active pieces and their flip bits
     main_pieces, main_flips = _read_main_loop(x, dims, tracker)
 
     if not main_pieces:
         return _empty_layout()
 
-    # Step 2: Read and validate junctions
     junctions = _read_junctions(
         x, dims, main_pieces, tracker, drop_log=drop_log,
     )
 
-    # Step 3: Inject switches into main loop, build switch pairs
     augmented_pieces, augmented_flips, switch_pairs = _inject_switches(
         main_pieces, junctions, tracker, catalog, config,
         main_flips=main_flips, drop_log=drop_log,
     )
 
-    # Step 3.5: Inject deliberate cross-junctions (CROSS_90 self-crossings)
+    # Deliberate cross-junctions (CROSS_90 self-crossings)
     cross_junctions = _inject_cross_junctions(
         augmented_pieces, x, dims, tracker, catalog,
         main_flips=augmented_flips, drop_log=drop_log,
     )
 
-    # Step 3.6: Inject double-crossovers
     dbl_crossovers, dbl_route_map = _inject_double_crossovers(
         augmented_pieces, x, dims, tracker, catalog, config,
         main_flips=augmented_flips, drop_log=drop_log,
     )
 
-    # Step 4: Self-intersection repair (CROSS_90 injection)
     augmented_pieces, augmented_flips = _apply_crossing_repair(
         augmented_pieces, tracker, catalog, flips=augmented_flips,
     )
 
-    # Step 5 + 6: Build multi-path layout with FK and 2^J paths
+    # Build multi-path layout with FK and 2^J paths
     multi_path = _build_multi_path_layout(
         augmented_pieces, augmented_flips, switch_pairs, catalog, dbl_route_map,
     )
@@ -158,7 +152,6 @@ def decode_chromosome(
     multi_path.main_loop_routes = dbl_route_map
     multi_path.drop_log = drop_log
 
-    # Step 7: Auto-center within boundary
     start_x, start_y = get_start_position(x, dims)
     _auto_center(multi_path, config, start_x, start_y)
 
@@ -166,7 +159,7 @@ def decode_chromosome(
 
 
 # =============================================================================
-# Step 1: Read Main Loop
+# Read Main Loop
 # =============================================================================
 
 def _read_main_loop(
@@ -199,7 +192,7 @@ def _read_main_loop(
 
 
 # =============================================================================
-# Step 2: Read and Validate Junctions
+# Read and Validate Junctions
 # =============================================================================
 
 def _read_junctions(
@@ -265,7 +258,7 @@ def _read_junctions(
 
 
 # =============================================================================
-# Step 3: Inject Switches Into Main Loop
+# Inject Switches Into Main Loop
 # =============================================================================
 
 def _inject_switches(
@@ -344,7 +337,6 @@ def _inject_switches(
             _release_junction_inventory(junc, tracker)
             continue
 
-        # Release the replaced pieces and complete the OUT injection.
         orig_out = augmented[out_pos]
         tracker.release(orig_in)
         tracker.release(orig_out)
@@ -369,7 +361,7 @@ def _inject_switches(
 
 
 # =============================================================================
-# Step 3.5: Cross-Junction Injection
+# Cross-Junction Injection
 # =============================================================================
 
 def _inject_cross_junctions(
@@ -454,7 +446,7 @@ def _inject_cross_junctions(
 
 
 # =============================================================================
-# Step 3.6: Double-Crossover Injection
+# Double-Crossover Injection
 # =============================================================================
 
 def _inject_double_crossovers(
@@ -543,8 +535,7 @@ def _inject_double_crossovers(
             _log_drop(slot, p1, p2, "piece origins do not coincide (FK mismatch)")
             continue
 
-        # Commit: release the two STRAIGHT_16s, consume one DBL_CROSSOVER, and
-        # record the route at each occupied slot.
+        # Consume one DOUBLE_CROSSOVER, record the route at each occupied slot.
         tracker.release(main_pieces[p1])
         tracker.release(main_pieces[p2])
         tracker.use_batch(get_dbl_crossover_inventory_requirements())
@@ -670,7 +661,7 @@ def _release_junction_inventory(
 
 
 # =============================================================================
-# Step 4: Self-Intersection Repair
+# Self-Intersection Repair
 # =============================================================================
 
 def _apply_crossing_repair(
@@ -729,7 +720,7 @@ def _apply_crossing_repair(
 
 
 # =============================================================================
-# Step 5 + 6: Multi-Path Layout Construction
+# Multi-Path Layout Construction
 # =============================================================================
 
 def _build_multi_path_layout(
@@ -938,7 +929,7 @@ def _compute_path_fk(
 
 
 # =============================================================================
-# Step 7: Auto-Center
+# Auto-Center
 # =============================================================================
 
 def _auto_center(

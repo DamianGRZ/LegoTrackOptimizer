@@ -3,12 +3,9 @@
 Standard LEGO passing siding pattern:
     [IN_switch] -> [approach_curve] -> [straights×N] -> [return_curve] -> [OUT_switch]
 
-The template approach guarantees that branch paths geometrically connect
-the IN switch diverge exit to the OUT switch merge entry, eliminating
-the ~0% feasibility rate of random branch piece placement.
-
-Key insight from Monty's Trains (Track Planning Part 1):
-    "a curved track per switch allows diverging route to align parallel to main route"
+The template guarantees the branch geometrically connects the IN switch
+diverge exit to the OUT switch merge entry, so branch closure holds by
+construction.
 """
 
 from dataclasses import dataclass
@@ -107,8 +104,8 @@ _RIGHT_C_DX, _RIGHT_C_DY, _RIGHT_C_DTHETA_DEG = 32.75, -13.0, -22.5
 # switch's port C in main frame is at +y (same side as siding) because of the
 # reversal; the merge_fk is computed from RIGHT switch's natural port C
 # (-13 dy in switch frame, flipped by the reversal).
-# LEFT_SIDING (siding above main) historically used R40_RIGHT curves, which
-# now correspond to R40_CURVE with flip=1 (negated dy/dtheta).
+# LEFT_SIDING (siding above main) uses R40_CURVE with flip=1
+# (negated dy/dtheta = RIGHT turn).
 LEFT_SIDING = PassingSidingTemplate(
     name="left_passing_siding",
     handedness="LEFT",
@@ -123,7 +120,7 @@ LEFT_SIDING = PassingSidingTemplate(
     ),
 )
 
-# RIGHT_SIDING (siding below main) historically used R40_LEFT curves → flip=0.
+# RIGHT_SIDING (siding below main) uses R40_CURVE with flip=0 (LEFT turn).
 RIGHT_SIDING = PassingSidingTemplate(
     name="right_passing_siding",
     handedness="RIGHT",
@@ -159,11 +156,10 @@ TEMPLATES = {
 }
 
 
-# NOTE: The 4-switch cross-junction template (4 switches around a central
-# CROSS_90) was removed. A CROSS_90 is now modelled as a bare self-crossing — one
-# physical piece traversed twice — placed by the cross-junction descriptor
-# (`_inject_cross_junctions`) or the emergent repair (`_apply_crossing_repair`).
-# The 4-switch routing junction is not deliberately simulated.
+# A CROSS_90 is modelled as a bare self-crossing — one physical piece traversed
+# twice — placed by the cross-junction descriptor (`_inject_cross_junctions`)
+# or the emergent repair (`_apply_crossing_repair`). No dedicated 4-switch
+# routing junction is simulated.
 
 
 # =============================================================================
@@ -179,7 +175,7 @@ TEMPLATES = {
 #
 # Train-frame FK per route (heading preserved through every route):
 
-DC_PIECE_IDX = 6  # DOUBLE_CROSSOVER catalog index (post R40 collapse)
+DC_PIECE_IDX = 6  # DOUBLE_CROSSOVER catalog index
 DC_LENGTH_STUDS = 48.0
 DC_LATERAL_STUDS = 16.0
 

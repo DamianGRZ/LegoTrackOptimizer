@@ -61,7 +61,6 @@ def _proper_crossing_pairs(
     x = states[:, 0]
     y = states[:, 1]
 
-    # Per-segment bounding boxes.
     x_lo = np.minimum(x[:-1], x[1:])
     x_hi = np.maximum(x[:-1], x[1:])
     y_lo = np.minimum(y[:-1], y[1:])

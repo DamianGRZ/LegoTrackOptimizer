@@ -338,7 +338,6 @@ class JunctionValidityRepair(Repair):
         if self.dims.max_junctions == 0:
             return
 
-        # Count active main loop pieces for position clamping
         active_main = get_active_main_pieces(x, self.dims)
         n_active = len(active_main)
 
@@ -352,7 +351,6 @@ class JunctionValidityRepair(Repair):
 
         max_pos = n_active - 1
 
-        # Track total straights claimed by active junctions
         total_straights_claimed = 0
         active_junction_count = 0
 
@@ -575,8 +573,6 @@ class BoundaryAwareRepair(Repair):
             return  # already in bounds
 
         # A genuinely-too-big axis must shrink; a fitting loop only needs centering.
-        # (Diversity guard via seeded sampling can be reintroduced here if the
-        # feasibility/diversity collapse worsens empirically — see Task 6.)
         shrank = self._shrink(x, w, h, box_w_eff, box_h_eff) if (x_too_big or y_too_big) else False
 
         # Translate: zero the fine-tuning offset so _auto_center fully centers.

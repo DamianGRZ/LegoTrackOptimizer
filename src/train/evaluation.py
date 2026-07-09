@@ -122,7 +122,6 @@ def _compute_dynamics(
     F_coup_lat = m_trailing * a_long * sin(phi)
     """
     n = len(speeds)
-    # a_lat = v^2 / R, with 0 for non-finite or non-positive R (straights)
     safe_R = np.where(np.isfinite(radii_m) & (radii_m > 0), radii_m, np.inf)
     a_lat = speeds ** 2 / safe_R
     a_lat = np.where(np.isfinite(a_lat), a_lat, 0.0)
@@ -141,7 +140,6 @@ def _compute_dynamics(
                       (v_next ** 2 - speeds ** 2) / (2.0 * safe_arc),
                       0.0)
 
-    # Friction ellipse: grip_util = sqrt((a_lat/mu*g)^2 + (a_long/cap)^2)
     a_lat_max = train_config.mu_design * train_config.g
     cap = np.where(a_long >= 0, train_config.max_accel, train_config.brake_decel)
     safe_cap = np.where(cap > 0, cap, 1.0)
@@ -150,7 +148,6 @@ def _compute_dynamics(
     )
     grip_util = np.clip(grip_util, 0.0, 1.0 + 1e-9)
 
-    # Lateral coupler reaction
     F_coupler_lat = train_config.mass_trailing * a_long * np.sin(coupler_phi)
 
     return a_lat, a_long, grip_util, F_coupler_lat
@@ -342,9 +339,5 @@ def _empty_evaluation(train_config: TrainConfig, safety_margin: float) -> Physic
 
 
 def _catalog_signature(catalog: TrackCatalog) -> str:
-    """Short signature for the catalog. Stable across runs of the same YAML.
-
-    Using piece count + n_pieces is sufficient identification for now;
-    upgrade to a SHA hash later if cross-catalog comparison is needed.
-    """
+    """Short, stable identifier for the catalog (n_pieces)."""
     return f"npieces={catalog.n_pieces}"
