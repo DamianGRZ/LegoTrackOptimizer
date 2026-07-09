@@ -33,15 +33,9 @@ _CANONICAL_PIECE_INDEX: Dict[str, int] = {
 }
 
 # Default-route radius_mm / speed_limit per piece. The runtime tables store one
-# physics row per piece — its *default* route, whose exit port is the FK row.
-# The port-centric YAML doesn't carry per-route physics, so these constants fill
-# fk_table / radius_table / speed_table.
-#
-# Default route for each piece (see _default_route_name):
-#   switches:  "through"  -> straight-through -> speed 1.57, radius=inf
-#   CROSS_90:  "horizontal" -> speed 1.57, radius=inf
-#   DBL_CROSS: "track1_through" -> speed 1.57, radius=inf
-# Curves keep their 0.97 / 320mm.
+# physics row per piece — its *default* route (see _default_route_name), whose
+# exit port is the FK row. The port-centric YAML doesn't carry per-route
+# physics, so these constants fill fk_table / radius_table / speed_table.
 _DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
     # piece_id -> (radius_mm, speed_limit_ms) on the default route
     "R40_CURVE": (320.0, 0.97),
@@ -76,7 +70,7 @@ class TrackCatalog:
         "bumper": PieceClass.BUMPER_1PORT,
     }
 
-    DEFAULT_SPEED = 1.57  # Motor top speed
+    DEFAULT_SPEED = 1.57
 
     def __init__(self) -> None:
         self._pieces: Dict[str, TrackPiece] = {}

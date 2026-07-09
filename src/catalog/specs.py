@@ -157,7 +157,7 @@ class SchemaVersionError(RuntimeError):
 
 
 def check_schema_version(file_version_str: str, path: str = "<catalog>") -> None:
-    """Accept same-or-older PATCH silently, warn on MINOR newer, reject MAJOR mismatch."""
+    """Reject MAJOR mismatch, warn when file MINOR is newer, otherwise accept silently."""
     file_ver = Version(file_version_str)
     code_ver = SUPPORTED_SCHEMA_VERSION
 

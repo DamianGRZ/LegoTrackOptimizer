@@ -318,7 +318,7 @@ def _gen_figure_eight(
 
     Each variant is a 34-piece chromosome (10 STR + 12 R40_L + 12 R40_R).
     The two STR slots that physically pass through the cross center (8, 0)
-    cross at 90 deg; the self-intersection repair (decoder Step 4)
+    cross at 90 deg; the decoder's self-intersection repair
     converts one slot to CROSS_90 -> net inventory 9 STR + 12 R40_L +
     12 R40_R + 1 CROSS_90.
 
@@ -411,11 +411,10 @@ def _gen_figure_eight_dbl_crossover(
     # Each k increment widens the bounding box by 32 stud (16 stud per side);
     # base width at k=0 is 128 stud, base height ~176 stud.
     k_fit_w = max(0, int((w - 128) // 32))
-    # Scale purely from inventory + boundary (project invariant: no hardcoded size
-    # caps). The old hardcoded `6` capped the figure-8 at ~88 pieces (42% util);
-    # uncapped it reaches the boundary-limited k (~11 -> 128 pieces, ~61%), giving
-    # the GA a DC-bearing seed that competes with the racetrack instead of being
-    # bred out as too small. Each variant is still oracle-feasible by construction.
+    # Scale purely from inventory + boundary (project invariant: no hardcoded
+    # size caps): k grows to the boundary-limited maximum so the DC-bearing
+    # seed competes with the racetrack instead of being bred out as too small.
+    # Each variant is still oracle-feasible by construction.
     k_max = max(0, min(k_inv, k_fit_w))
 
     variants: List[Pattern] = []
@@ -744,7 +743,7 @@ class IntegerSampling(Sampling):
         The decoder's ``_auto_center`` already anchors each layout at the boundary
         center; the start_pos genes are a perturbation ON TOP of that. Sampling
         the full boundary range here puts large seeded layouts outside the
-        boundary box (the root cause of the post-rewrite feasibility collapse).
+        boundary box.
         5 % of the boundary extent keeps large oval/racetrack seeds inside the
         boundary while still giving ``eliminate_duplicates`` enough room to keep
         cycled seeds as distinct individuals.

@@ -19,7 +19,6 @@ class FKDeltas:
     dtheta: float
 
     def to_array(self) -> NDArray[np.float64]:
-        """Return [dx, dy, dtheta] as numpy array."""
         return np.array([self.dx, self.dy, self.dtheta], dtype=np.float64)
 
 
@@ -54,12 +53,10 @@ class TrackPiece:
 
     @property
     def is_straight(self) -> bool:
-        """Check if piece is a straight."""
         return self.piece_type == "straight"
 
     @property
     def is_curve(self) -> bool:
-        """Check if piece is a curve."""
         return self.piece_type == "curve"
 
     @property

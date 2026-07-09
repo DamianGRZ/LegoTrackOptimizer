@@ -158,16 +158,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # F[0]: -utilization (special pieces weighted so topology is not overhead)
         utilization = self._weighted_utilization(layout)
 
-        # F[1] = -(average speed of the SLOWEST traversal route), at
-        # SPEED_SAFETY_MARGIN. Every route (the 2^J take/skip-siding
-        # combinations) is scored independently; F[1] takes the slowest one —
-        # the most curve-bound route, covered at the lowest overall speed.
-        # Scoring all routes (not just the through-line) makes branch geometry
-        # register: a curve-heavy branch becomes the slowest route and lowers
-        # F[1], creating a real speed-vs-utilization trade-off. Derailment
-        # safety is already enforced inside the profile (per-segment caps), so
-        # this objective shapes throughput, not safety. A switchless layout has
-        # one route, so F[1] reduces to that loop's pace.
+        # F[1] = -(slowest of the 2^J take/skip-siding routes) at
+        # SPEED_SAFETY_MARGIN; scoring every route lets curve-heavy branches
+        # lower F[1]. See _slowest_route_speed.
         slowest_route_speed = _slowest_route_speed(
             layout, self.catalog, self._train_config,
         )

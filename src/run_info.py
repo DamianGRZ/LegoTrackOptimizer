@@ -31,10 +31,6 @@ _LOG = logging.getLogger(__name__)
 RUN_INFO_FILENAME = "run_info.md"
 
 
-# =============================================================================
-# Git introspection
-# =============================================================================
-
 def _git(*args: str) -> str | None:
     """Run a git command in the repo root; return stripped stdout or None."""
     try:
@@ -94,10 +90,6 @@ def _git_state_section() -> str:
     return "\n".join(lines)
 
 
-# =============================================================================
-# Config rendering
-# =============================================================================
-
 def _config_section(config_path: str | Path, config: OptimizationConfig,
                     quick_test: bool) -> str:
     """Render the **Configuration** section with the raw YAML file embedded.
@@ -136,10 +128,6 @@ def _config_section(config_path: str | Path, config: OptimizationConfig,
     return "\n".join(lines)
 
 
-# =============================================================================
-# Header writer
-# =============================================================================
-
 def write_run_info_header(
     output_dir: Path,
     config_path: str | Path,
@@ -165,10 +153,6 @@ def write_run_info_header(
     path.write_text(body, encoding="utf-8")
     return path
 
-
-# =============================================================================
-# Run summary
-# =============================================================================
 
 def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
     """Mirror ``runner.log_piece_usage`` as markdown bullet lines."""

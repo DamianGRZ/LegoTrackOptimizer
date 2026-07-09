@@ -34,8 +34,6 @@ def compute_speed_profile(
 ) -> SpeedProfile:
     """Compute time-optimal speed profile using 3-pass algorithm.
 
-    Derailing prevention is built into Pass 1 via the TrainConfig speed cap.
-
     Algorithm:
     1. Pass 1: Curvature limits via TrainConfig.v_eff(R) at mu_design
     2. Pass 2: Forward acceleration - respect train_config.max_accel
@@ -69,9 +67,8 @@ def compute_speed_profile(
     radii_m = catalog.get_radii(layout.indices) / 1000.0  # meters
     speed_limits = catalog.get_speed_limits(layout.indices)  # m/s
 
-    # Pass 1: Curvature speed limits (vectorized) - THIS PREVENTS DERAILING.
-    # safety_margin (default 1.0) scales every cap so the operating speed
-    # stays strictly below the derailment cap.
+    # Pass 1: per-segment curvature/derailment caps; safety_margin (default
+    # 1.0) scales every cap so operating speed stays strictly below them.
     v_curve = v_eff_array(train_config, radii_m)
     v_limit = np.minimum(v_curve, speed_limits) * safety_margin
 

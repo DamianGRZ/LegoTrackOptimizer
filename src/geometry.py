@@ -83,9 +83,8 @@ class Layout:
         total = abs(self.final_state[2])
         if total == 0:
             return 360.0
-        # Get remainder after full circles
+        # Distance to the nearest multiple of 360
         remainder = total % 360
-        # Error is distance to nearest multiple of 360
         return min(remainder, 360 - remainder)
 
     @property
