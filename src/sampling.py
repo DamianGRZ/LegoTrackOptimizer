@@ -366,9 +366,9 @@ def _figure_eight_main_loop(k: int) -> Tuple[List[int], List[int]]:
     lobes' R40_CURVE arcs use opposite handedness so the figure-8 closes:
     first lobe uses flip=0 (LEFT), second uses flip=1 (RIGHT).
     """
-    s_p = lambda n: [int(STRAIGHT_16)] * n
-    s_f = lambda n: [0] * n
-    arc_p = lambda n: [int(R40_CURVE)] * n
+    def s_p(n): return [int(STRAIGHT_16)] * n
+    def s_f(n): return [0] * n
+    def arc_p(n): return [int(R40_CURVE)] * n
     pieces = (
         [int(STRAIGHT_16)]
         + s_p(k) + arc_p(8) + s_p(2 * k + 3) + arc_p(8) + s_p(k)
