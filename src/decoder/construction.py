@@ -503,7 +503,9 @@ def _inject_double_crossovers(
             drop_log.append(f"DC[{slot}] (pos {p1},{p2}): {reason}")
 
     for slot, _active, p1, r1, p2, r2 in descriptors:
-        p1, p2 = (p1, p2) if p1 < p2 else (p2, p1)
+        # Order by position, keeping each route bound to its own position.
+        if p1 > p2:
+            (p1, r1), (p2, r2) = (p2, r2), (p1, r1)
         if p1 == p2 or p1 >= n_main or p2 >= n_main:
             _log_drop(slot, p1, p2, "invalid positions")
             continue
@@ -652,7 +654,7 @@ def _find_out_position(
         if cumulative_x > required_dist + 32.0:
             break
 
-    if best_pos is not None and best_error <= max(required_dist * 0.2, 0.0) + 2.0:
+    if best_pos is not None and best_error <= required_dist * 0.2 + 2.0:
         return best_pos
 
     return None
