@@ -10,7 +10,8 @@
 - **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
-- **Known baseline (2026-06-21): 0 failed, 360 passed, 0 skipped** (clean).
+- **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
+- **Known baseline (2026-07-09): 0 failed, 401 passed, 0 skipped** (clean).
   - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
 
 ---
@@ -230,8 +231,9 @@ results -> visualization + run_info.md + category_report.md -> outputs/
 
 ### After Any Code Change
 1. `/test` — verify nothing broke
-2. `/review` — quick check for interface/convention issues
-3. `/quality src/<file>.py` — deep quality gate for new or refactored code (rewrites to project standards)
+2. `python -m pycodestyle src tests main.py run_v1_all_configs.py` — style gate, must exit 0
+3. `/review` — quick check for interface/convention issues
+4. `/quality src/<file>.py` — deep quality gate for new or refactored code (rewrites to project standards)
 
 ### After Optimization Run
 1. `/diag` — parse outputs and get diagnostic report
