@@ -21,7 +21,6 @@ from src.encoding import (
     DC_ROUTE_TRACK2_THROUGH,
     DOUBLE_CROSSOVER,
     R40_CURVE,
-    R40_CURVE,
     STRAIGHT_16,
     PartitionedDimensions,
     create_chromosome_from_pieces,
@@ -230,7 +229,6 @@ class TestDanglingConstraint:
 
         dangling = count_dangling_double_crossover_ports(
             layout.main_loop_pieces,
-            layout.main_loop_routes,
             layout.dbl_crossovers,
         )
         assert dangling == 0
@@ -238,7 +236,7 @@ class TestDanglingConstraint:
     def test_solo_slot_two_dangling(self):
         """DBL_CROSSOVER chromosome slot without a record → 2 dangling ports."""
         pieces = [int(STRAIGHT_16)] * 5 + [int(DOUBLE_CROSSOVER)] + [int(STRAIGHT_16)] * 10
-        assert count_dangling_double_crossover_ports(pieces, {5: 0}, []) == 2
+        assert count_dangling_double_crossover_ports(pieces, []) == 2
 
     def test_invalid_record_pair_one_dangling(self):
         """Record covering {A,B,D} (port C unused) → 1 dangling port."""
@@ -248,4 +246,4 @@ class TestDanglingConstraint:
             origin=(0.0, 0.0, 0.0),
         )
         pieces = [int(DOUBLE_CROSSOVER)] + [0] * 19 + [int(DOUBLE_CROSSOVER)] + [0] * 19
-        assert count_dangling_double_crossover_ports(pieces, {0: 0, 20: 2}, [record]) == 1
+        assert count_dangling_double_crossover_ports(pieces, [record]) == 1

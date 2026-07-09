@@ -9,7 +9,6 @@ from src.templates import (
     TEMPLATES,
     STRAIGHT_16,
     R40_CURVE,
-    R40_CURVE,
     R40_SWITCH_LEFT,
     R40_SWITCH_RIGHT,
     PassingSidingTemplate,

@@ -1,13 +1,10 @@
 """Tests for the CGP-inspired integer decoder."""
 
-import numpy as np
 import pytest
 
 from src.catalog import TrackCatalog
-from src.config import OptimizationConfig
 from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import (
-    PartitionedDimensions,
     compute_dimensions,
     create_chromosome_from_pieces,
     create_empty_chromosome,
@@ -16,12 +13,7 @@ from src.encoding import (
 from src.types import MultiPathLayout
 
 
-# Piece indices
-STRAIGHT_16 = PieceIndex.STRAIGHT_16
 R40_CURVE = PieceIndex.R40_CURVE
-R40_CURVE = PieceIndex.R40_CURVE
-R40_SWITCH_LEFT = PieceIndex.SWITCH_LEFT
-R40_SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
 
 
 class TestMainLoopDecoding:

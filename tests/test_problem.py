@@ -5,10 +5,8 @@ import pytest
 
 from src.problem import TrackOptimizationProblem
 from src.encoding import (
-    compute_dimensions,
     create_chromosome_from_pieces,
     create_empty_chromosome,
-    PartitionedDimensions,
     PieceIndex,
 )
 

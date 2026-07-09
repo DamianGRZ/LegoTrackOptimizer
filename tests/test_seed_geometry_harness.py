@@ -16,7 +16,7 @@ from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.decoder import decode_chromosome
 from src.encoding import (
-    CROSS_90, DOUBLE_CROSSOVER, PartitionedDimensions,
+    PartitionedDimensions,
     compute_dimensions, create_chromosome_from_pieces,
 )
 from src.problem import TrackOptimizationProblem

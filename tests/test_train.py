@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from src.train import DEFAULT_TRAIN_CONFIG, TrainConfig, v_eff_array
+from src.train import DEFAULT_TRAIN_CONFIG, TrainConfig, available_accel, v_eff_array
 
 
 class TestTrainConfigFields:
@@ -92,13 +92,11 @@ class TestFrictionCircle:
 
     def test_straight_full_accel(self):
         """On a straight (R=inf), full max_accel is available."""
-        from src.train import available_accel
         tc = TrainConfig()
         assert available_accel(tc, v=0.5, radius_m=math.inf) == pytest.approx(tc.max_accel)
 
     def test_straight_full_brake(self):
         """On a straight (R=inf), full brake_decel is available."""
-        from src.train import available_accel
         tc = TrainConfig()
         assert available_accel(tc, v=0.5, radius_m=math.inf, is_braking=True) == pytest.approx(
             tc.brake_decel
@@ -106,14 +104,12 @@ class TestFrictionCircle:
 
     def test_r40_at_vslide_zero_accel(self):
         """At v_slide on R40, lateral demand saturates friction — zero accel."""
-        from src.train import available_accel
         tc = TrainConfig()
         v_slide = tc.v_slide(0.320)
         assert available_accel(tc, v=v_slide, radius_m=0.320) == pytest.approx(0.0, abs=0.01)
 
     def test_r40_at_half_speed_partial_accel(self):
         """At half v_slide on R40, some accel budget remains."""
-        from src.train import available_accel
         tc = TrainConfig()
         v_half = tc.v_slide(0.320) / 2.0
         accel = available_accel(tc, v=v_half, radius_m=0.320)
@@ -121,7 +117,6 @@ class TestFrictionCircle:
 
     def test_r40_at_half_speed_partial_brake(self):
         """At half v_slide on R40, some brake budget remains."""
-        from src.train import available_accel
         tc = TrainConfig()
         v_half = tc.v_slide(0.320) / 2.0
         brake = available_accel(tc, v=v_half, radius_m=0.320, is_braking=True)
@@ -129,7 +124,6 @@ class TestFrictionCircle:
 
     def test_coupler_reduces_accel_on_curve(self):
         """Trailing mass reduces available accel on curves via coupler force."""
-        from src.train import available_accel
         tc_bare = TrainConfig(mass_trailing=0.0)
         tc_consist = TrainConfig(mass_trailing=0.600)
         v = 0.5  # well below v_slide so there IS accel budget to reduce
@@ -139,13 +133,11 @@ class TestFrictionCircle:
 
     def test_coupler_no_effect_on_straight(self):
         """Coupler has no effect on straights (coupler angle is zero)."""
-        from src.train import available_accel
         tc = TrainConfig(mass_trailing=0.600)
         assert available_accel(tc, v=0.5, radius_m=math.inf) == pytest.approx(tc.max_accel)
 
     def test_coupler_not_applied_during_braking(self):
         """Coupler correction skipped during braking (conservative)."""
-        from src.train import available_accel
         tc_bare = TrainConfig(mass_trailing=0.0)
         tc_consist = TrainConfig(mass_trailing=0.600)
         b_bare = available_accel(tc_bare, v=0.5, radius_m=0.320, is_braking=True)
@@ -154,6 +146,5 @@ class TestFrictionCircle:
 
     def test_zero_speed_full_accel_on_curve(self):
         """At v=0 on any curve, no lateral demand — full max_accel available."""
-        from src.train import available_accel
         tc = TrainConfig()
         assert available_accel(tc, v=0.0, radius_m=0.320) == pytest.approx(tc.max_accel)

@@ -21,11 +21,8 @@ from src.templates import PassingSidingTemplate
 class DecoderConfig:
     """Configuration for the partitioned decoder."""
 
-    position_tolerance: float = 8.0    # studs — closure tolerance
-    angle_tolerance: float = 15.0      # degrees — closure tolerance
     siding_position_tolerance: float = 8.0  # studs — siding alignment
     siding_angle_tolerance: float = 10.0    # degrees — siding alignment
-    crossing_angle_tolerance: float = 15.0  # degrees — ~90° crossing detection
     boundary_min_x: float = -100.0
     boundary_max_x: float = 100.0
     boundary_min_y: float = -100.0
@@ -36,18 +33,14 @@ class DecoderConfig:
         """Decoder geometry mirroring what evaluation uses.
 
         Every decode outside the evaluation pipeline (renderers, reports,
-        run summaries) must build its config here: the dataclass defaults
-        above (boundary ±100, tolerances 8.0/15.0) are NOT the configured
-        values, so a default-constructed config auto-centers and classifies
-        paths differently than the constraints judged them.
+        run summaries) must build its config here: the default boundary
+        (±100) is NOT the configured one, so a default-constructed config
+        auto-centers layouts differently than the constraints judged them.
 
         ``config`` is an ``OptimizationConfig`` (duck-typed to avoid a
-        circular import): needs ``closure_tolerance``, ``angle_tolerance``
-        and a ``boundary`` with min/max x/y.
+        circular import): needs a ``boundary`` with min/max x/y.
         """
         return cls(
-            position_tolerance=config.closure_tolerance,
-            angle_tolerance=config.angle_tolerance,
             boundary_min_x=config.boundary.min_x,
             boundary_max_x=config.boundary.max_x,
             boundary_min_y=config.boundary.min_y,

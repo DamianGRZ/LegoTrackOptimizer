@@ -6,7 +6,6 @@ pos_2) and the block is dimensioned directly from CROSS_90 inventory — NOT fro
 switch counts (the retired 4-switch cross-junction model).
 """
 
-import numpy as np
 import pytest
 
 from src.catalog import TrackCatalog
