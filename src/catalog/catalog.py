@@ -466,12 +466,9 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
         entry_port_spec = ps.ports[entry_name]
         exit_port_spec = ps.ports[exit_name]
 
-        # Route FK = exit pose in piece-local frame with entry port as origin.
-        # All routes start from port A (origin), so exit pose equals the exit
-        # port's pose; when entry is non-A (e.g. CROSS_90 vertical) the FK is
-        # still defined in the train's own frame as a straight-through
-        # (dx=length, dy=0, dtheta=0). We preserve that by measuring exit
-        # relative to entry in the train's local frame along the route.
+        # Route FK = exit pose in the entering train's frame, so e.g. the
+        # CROSS_90 vertical route is a straight-through (length, 0, 0) even
+        # though its entry port is authored as an outward normal.
         dx, dy, dtheta_rad = _route_fk_in_train_frame(
             entry_port_spec, exit_port_spec
         )
@@ -495,18 +492,21 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
     return out
 
 
-def _route_fk_in_train_frame(entry, exit) -> Tuple[float, float, float]:
-    """Compute (dx, dy, dtheta_rad) of `exit` relative to `entry` pose.
+def _route_fk_in_train_frame(entry, exit_port) -> Tuple[float, float, float]:
+    """Compute (dx, dy, dtheta_rad) of the route in the entering train's frame.
 
-    Both arguments are PortDef instances giving SE(2) pose in the piece-local
-    frame. The result is the rigid transform from entry frame to exit frame,
-    which is what the fk_table stores for each route.
+    Port dtheta may be authored as travel direction (A/B-style entries) or as
+    the outward normal (CROSS_90 C/D); an entry heading opposing the route
+    chord is flipped by pi so the frame always follows the train.
     """
-    c = math.cos(-entry.dtheta)
-    s = math.sin(-entry.dtheta)
-    dx_world = exit.dx - entry.dx
-    dy_world = exit.dy - entry.dy
+    dx_world = exit_port.dx - entry.dx
+    dy_world = exit_port.dy - entry.dy
+    entry_heading = entry.dtheta
+    if math.cos(math.atan2(dy_world, dx_world) - entry_heading) < 0:
+        entry_heading += math.pi
+    c = math.cos(-entry_heading)
+    s = math.sin(-entry_heading)
     dx = dx_world * c - dy_world * s
     dy = dx_world * s + dy_world * c
-    dtheta = exit.dtheta - entry.dtheta
+    dtheta = exit_port.dtheta - entry_heading
     return (dx, dy, dtheta)
