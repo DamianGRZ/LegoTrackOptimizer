@@ -220,8 +220,6 @@ def evaluate_layout(
     coupler_phi_per_segment = _compute_geometry(radii_m, train_config.coupler_offset)
     coupler_phi_per_switch: dict[int, float] = {}
     max_phi = float(np.max(coupler_phi_per_segment))
-    if coupler_phi_per_switch:
-        max_phi = max(max_phi, max(coupler_phi_per_switch.values()))
 
     # ---- Stability ----
     (v_slide_per_segment,

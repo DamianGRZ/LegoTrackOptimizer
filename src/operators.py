@@ -101,21 +101,13 @@ class PartitionedCrossover(Crossover):
             c1 = p1.copy()
             c2 = p2.copy()
 
-            # --- Main loop + DC descriptors: tied together ---
-            # The DC descriptor refers to specific main-loop positions; swapping
-            # the descriptor alone from a different parent's main loop produces
-            # a "ghost" descriptor that can't decode. So when either parent has
-            # an active DC, we preserve the full main-loop AND DC-descriptor
-            # block together — children get one parent's main loop with that
-            # same parent's DC descriptors, no mixing. When neither parent has
-            # DC, do classic one-point on the main loop and uniform swap on DC
-            # slots (which are all-zero either way, so neutral).
+            # A DC descriptor names main-loop positions, so mixing one parent's
+            # descriptor with the other's main loop makes a ghost that cannot
+            # decode. With an active DC on either side, children keep each
+            # parent's main-loop + DC block intact (nothing to do here).
             p1_has_dc = bool(get_active_double_crossovers(p1, dims))
             p2_has_dc = bool(get_active_double_crossovers(p2, dims))
-            if p1_has_dc or p2_has_dc:
-                # Preserve parent-to-child main loop + DC descriptors.
-                pass
-            else:
+            if not (p1_has_dc or p2_has_dc):
                 if dims.n_main > 1:
                     cut = np.random.randint(1, dims.n_main)
                     c1[cut:dims.n_main] = p2[cut:dims.n_main]

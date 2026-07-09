@@ -301,11 +301,11 @@ def generate_bounds(dims: PartitionedDimensions) -> Tuple[NDArray, NDArray]:
         xl[base + DC_ACTIVE] = 0
         xu[base + DC_ACTIVE] = 1
         xl[base + DC_POSITION_1] = 0
-        xu[base + DC_POSITION_1] = max(0, dims.n_main - 1)
+        xu[base + DC_POSITION_1] = dims.n_main - 1
         xl[base + DC_ROUTE_1] = 0
         xu[base + DC_ROUTE_1] = DC_N_ROUTES - 1
         xl[base + DC_POSITION_2] = 0
-        xu[base + DC_POSITION_2] = max(0, dims.n_main - 1)
+        xu[base + DC_POSITION_2] = dims.n_main - 1
         xl[base + DC_ROUTE_2] = 0
         xu[base + DC_ROUTE_2] = DC_N_ROUTES - 1
 
