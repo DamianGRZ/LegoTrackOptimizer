@@ -284,9 +284,8 @@ class TrackOptimizationProblem(ElementwiseProblem):
             max(0, census[t] - max_occ[t]) / max(1, max_occ[t])
         where max_occ[t] comes from self.inventory_by_index (0 if absent).
 
-        CROSS_90 / DOUBLE_CROSSOVER are counted as physical pieces (one per decoder
-        record) rather than per traversal slot, so a piece traversed twice is not
-        double-charged against inventory.
+        CROSS_90 / DOUBLE_CROSSOVER are charged as physical pieces (see
+        n_cross_pieces), not per traversal slot.
         """
         n_types = self.catalog.n_pieces
         census = np.zeros(n_types, dtype=np.int64)
@@ -294,14 +293,14 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         for piece_idx in layout.main_loop_pieces:
             if piece_idx in paired:
-                continue  # counted once per physical-piece record below
+                continue  # charged as physical pieces below
             if 0 <= piece_idx < n_types:
                 census[piece_idx] += 1
         for switch_pair in layout.switch_pairs:
             for piece_idx in switch_pair.branch_pieces:
                 if 0 <= piece_idx < n_types:
                     census[piece_idx] += 1
-        census[CROSS_90_INDEX] += len(layout.cross_junctions)
+        census[CROSS_90_INDEX] += layout.n_cross_pieces
         census[DOUBLE_CROSSOVER_INDEX] += len(layout.dbl_crossovers)
 
         max_occ = np.array(
