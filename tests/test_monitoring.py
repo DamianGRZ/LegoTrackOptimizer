@@ -83,29 +83,40 @@ class TestConvergenceMonitorCallback:
         cb.notify(algo2)
         assert np.isfinite(cb.data["igd"][1])
 
-    def test_mean_closure_populates_when_g_has_three_entries(self):
-        """G's first three entries are the closure scalars (dx, dy, dθ); the
-        de-normalization block runs whenever G is available and has ≥ 3 entries.
-        The test just verifies the code path runs without crashing.
-        """
-        from src.algorithm.monitoring import ConvergenceMonitorCallback
-        cb = ConvergenceMonitorCallback()
+    @staticmethod
+    def _closure_algo():
+        # Closure columns of G: (+1) -> per-axis means (0.45, 0.65, 0.15).
         G = np.array([
             [-0.5, -0.3, -0.8, 0.0, 0.0, 0.0],
             [-0.6, -0.4, -0.9, 0.0, 0.0, 0.0],
         ])
-        algo = FakeAlgo(
+        return FakeAlgo(
             n_gen=3,
             F=np.array([[-0.5, -1.0], [-0.6, -0.9]]),
             CV=np.array([[0.0], [0.0]]),
             G=G,
         )
-        cb.notify(algo)
-        # Values are populated but pre-Phase-B they may not be meaningful closure;
-        # we just require finiteness when G has enough columns.
-        assert np.isfinite(cb.data["mean_closure_x"][0])
-        assert np.isfinite(cb.data["mean_closure_y"][0])
-        assert np.isfinite(cb.data["mean_closure_theta"][0])
+
+    def test_mean_closure_denormalizes_with_configured_tolerances(self):
+        """G[0..2] are |residual|/tolerance - 1; the monitor converts them
+        back to studs (x, y) and degrees (theta) via the config tolerances."""
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback(closure_tolerance=4.0, angle_tolerance=5.0)
+        cb.notify(self._closure_algo())
+        assert cb.data["mean_closure_x"][0] == pytest.approx(0.45 * 4.0)
+        assert cb.data["mean_closure_y"][0] == pytest.approx(0.65 * 4.0)
+        assert cb.data["mean_closure_theta"][0] == pytest.approx(0.15 * 5.0)
+
+    def test_mean_closure_nan_without_tolerances(self):
+        """The G scale is config-dependent: with no tolerances given there is
+        no correct de-normalization, so the columns must be NaN — never a
+        silently wrong-scale number."""
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+        cb.notify(self._closure_algo())
+        assert np.isnan(cb.data["mean_closure_x"][0])
+        assert np.isnan(cb.data["mean_closure_y"][0])
+        assert np.isnan(cb.data["mean_closure_theta"][0])
 
 
 class TestConvergenceCsv:

@@ -714,7 +714,9 @@ def run_optimization(
     # "worst", so category injection never clobbers it.
     category_archive = CategoryEliteArchive()
     monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55),
-                                         output_dir=output_dir)
+                                         output_dir=output_dir,
+                                         closure_tolerance=config.closure_tolerance,
+                                         angle_tolerance=config.angle_tolerance)
     monitor.epsilon_source = algorithm
     chain: list[Callback] = [elite_callback, category_archive, monitor]
     if output_dir is not None:
