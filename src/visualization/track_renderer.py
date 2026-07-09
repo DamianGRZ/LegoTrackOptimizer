@@ -197,7 +197,8 @@ def _draw_curve_piece(ax, x0, y0, theta0, radius, sweep_deg, color, draw_rails_f
     _draw_arc(ax, cx, cy, radius, start_ang, sweep_deg, color, draw_rails_flag)
 
 
-def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch, draw_rails_flag=True):
+def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch,
+                       draw_rails_flag=True):
     """Draw a switch piece with main straight path and diverging branch (S-curve).
 
     Args:
@@ -396,7 +397,8 @@ def _r40_flip_from_dtheta(piece_idx: int, dtheta_deg: float) -> int:
     return 1 if d < 0 else 0
 
 
-def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False, flip=0):
+def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False,
+                flip=0):
     """Draw a single piece with proper geometry based on piece type.
 
     Args:
@@ -585,8 +587,10 @@ def plot_layout(
             legend_elements.append(Patch(facecolor=color, edgecolor="black", label=name))
 
     legend_elements.extend([
-        plt.Line2D([0], [0], marker="s", color="w", markerfacecolor="g", markersize=10, label="Start"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="r", markersize=10, label="End"),
+        plt.Line2D([0], [0], marker="s", color="w", markerfacecolor="g", markersize=10,
+                   label="Start"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="r", markersize=10,
+                   label="End"),
     ])
 
     if boundary is not None:

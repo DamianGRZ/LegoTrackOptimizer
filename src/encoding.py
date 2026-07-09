@@ -114,7 +114,7 @@ class PartitionedDimensions:
     Segments:
         [0, n_main)                                    — main loop piece types
         [n_main, 2*n_main)                             — main loop flip bits (per slot)
-        [flip_end, junc_end)                           — passing-siding junction descriptors (J × 4)
+        [flip_end, junc_end)                           — passing-siding descriptors (J × 4)
         [junc_end, cross_junc_end)                     — cross-junction descriptors (K × 3)
         [cross_junc_end, dbl_crossover_end)            — double-crossover descriptors (D × 5)
         [dbl_crossover_end, dbl_crossover_end + 2)     — start position (x, y)

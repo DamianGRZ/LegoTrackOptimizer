@@ -78,7 +78,7 @@ class TestGrowDcFigureEight:
         assert lay.max_closure_error < 4.0
 
     def test_grow_increases_pieces_and_keeps_dc(self, cat, dc_dims):
-        """Growing regenerates the figure-8 one size up: still 2 DBLX, still closed, MORE pieces."""
+        """Grow regenerates the figure-8 one size up: still 2 DBLX, still closed, more pieces."""
         x = _base_figure_eight(dc_dims, k=0)
         before = _decode(x, cat, dc_dims)
         n0 = before.n_pieces
@@ -93,7 +93,8 @@ class TestGrowDcFigureEight:
 
     def test_grow_is_noop_without_dc(self, dc_dims):
         """No active DC -> the operator must not touch the chromosome."""
-        pieces = [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * 6 + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * 6
+        pieces = ([int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * 6
+                  + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * 6)
         x = create_chromosome_from_pieces(dc_dims, pieces)
         snapshot = x.copy()
         _grow_dc_figure_eight(x, dc_dims)

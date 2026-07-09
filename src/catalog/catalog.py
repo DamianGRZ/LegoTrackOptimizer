@@ -132,7 +132,8 @@ class TrackCatalog:
             fk = FKDeltas(
                 dx=exit_port.dx,
                 dy=exit_port.dy,
-                # The runtime _fk_table stores angles in DEGREES (geometry.py converts via np.radians).
+                # The runtime _fk_table stores angles in DEGREES
+                # (geometry.py converts via np.radians).
                 dtheta=math.degrees(exit_port.dtheta),
             )
 

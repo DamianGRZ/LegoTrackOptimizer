@@ -124,8 +124,10 @@ def test_existing_figure_eight_cross_validates(cfg_crossing, cat, dims_crossing,
     from src.sampling import _gen_figure_eight_cross
     variants = _gen_figure_eight_cross(_inv_by_index(cfg_crossing, cat), dims_crossing)
     assert variants, "expected the existing 1-cross seed to be emitted for with_crossing"
-    assert_valid_closed(decode_seed(variants[0], cfg_crossing, cat, dims_crossing), cfg_crossing, n_cross=1, n_dc=0)
-    assert_seed_feasible(variants[0], prob_crossing, cfg_crossing, cat, dims_crossing, n_cross=1, n_dc=0)
+    lay = decode_seed(variants[0], cfg_crossing, cat, dims_crossing)
+    assert_valid_closed(lay, cfg_crossing, n_cross=1, n_dc=0)
+    assert_seed_feasible(variants[0], prob_crossing, cfg_crossing, cat, dims_crossing,
+                         n_cross=1, n_dc=0)
 
 
 def test_existing_figure_eight_dc_validates(cfg, cat, dims, prob):
