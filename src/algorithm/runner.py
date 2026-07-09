@@ -892,15 +892,19 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                 f"score {util:.1%})",
                 output_dir / f"best_with_{category}.png",
             )
-            xs = np.concatenate([p.states[:, 0] for p in layout.paths if len(p.states) > 1])
-            ys = np.concatenate([p.states[:, 1] for p in layout.paths if len(p.states) > 1])
+            spans = [p.states for p in layout.paths if len(p.states) > 1]
             lines += [
                 f"- utilization score: {util:.1%} ({gap})",
                 f"- pieces: {n_phys}/{total_inv} ({n_phys / total_inv:.1%} of inventory), "
                 f"speed: {-float(ind.F[1]):.2f} m/s, {category} count: {n_element}",
-                f"- bbox: {xs.max() - xs.min():.0f} x {ys.max() - ys.min():.0f} studs "
-                f"in {boundary.width:.0f} x {boundary.height:.0f} box",
             ]
+            if spans:  # all-degenerate paths must not abort the whole report
+                xs = np.concatenate([s[:, 0] for s in spans])
+                ys = np.concatenate([s[:, 1] for s in spans])
+                lines.append(
+                    f"- bbox: {xs.max() - xs.min():.0f} x {ys.max() - ys.min():.0f} studs "
+                    f"in {boundary.width:.0f} x {boundary.height:.0f} box"
+                )
         else:
             lines.append("- no feasible solution containing this element was seen")
             infeas = archive.infeasible.get(category)
