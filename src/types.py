@@ -182,16 +182,16 @@ class TraversalPath:
     @property
     def is_closed(self) -> bool:
         """Check if path forms a closed loop (within typical tolerances)."""
-        return self.closure_error < 1.0 and self.angle_error < 5.0
+        return self.closure_error <= 1.0 and self.angle_error <= 5.0
 
     def describe_route(self) -> str:
         """Human-readable description of route choices."""
         if not self.route_choices:
             return "main"
-        parts = []
-        for i, choice in enumerate(self.route_choices):
-            parts.append(f"SW{i}:{'branch' if choice else 'main'}")
-        return ", ".join(parts)
+        return ", ".join(
+            f"SW{i}:{'branch' if choice else 'main'}"
+            for i, choice in enumerate(self.route_choices)
+        )
 
 
 @dataclass
@@ -349,7 +349,7 @@ class MultiPathLayout:
         return self.max_angle_error
 
     def is_closed(self, pos_tol: float = 0.5, angle_tol: float = 5.0) -> bool:
-        return self.max_closure_error < pos_tol and self.max_angle_error < angle_tol
+        return self.max_closure_error <= pos_tol and self.max_angle_error <= angle_tol
 
     @property
     def bounding_box(self) -> Tuple[float, float, float, float]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import NoReturn
 
 from pydantic import ValidationError
 from ruamel.yaml import YAML
@@ -65,7 +66,7 @@ def _strip_comments(obj):
 
 
 def _raise_with_location(exc: ValidationError, path: Path,
-                         piece_lines: dict[int, int]) -> None:
+                         piece_lines: dict[int, int]) -> NoReturn:
     messages = []
     for err in exc.errors():
         loc = err["loc"]

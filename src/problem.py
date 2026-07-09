@@ -94,12 +94,18 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self,
         catalog: TrackCatalog,
         config: OptimizationConfig,
-        closure_tolerance: float = None,
-        angle_tolerance: float = None,
+        closure_tolerance: float | None = None,
+        angle_tolerance: float | None = None,
         **kwargs,
     ):
-        self.closure_tolerance = closure_tolerance or config.closure_tolerance
-        self.angle_tolerance = angle_tolerance or config.angle_tolerance
+        self.closure_tolerance = (
+            closure_tolerance if closure_tolerance is not None
+            else config.closure_tolerance
+        )
+        self.angle_tolerance = (
+            angle_tolerance if angle_tolerance is not None
+            else config.angle_tolerance
+        )
         self.boundary_tolerance = config.boundary_tolerance
 
         # Partitioned dimensions from inventory

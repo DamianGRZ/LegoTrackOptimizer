@@ -154,24 +154,25 @@ def write_run_info_header(
     return path
 
 
-def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
-    """Mirror ``runner.log_piece_usage`` as markdown bullet lines."""
+def count_pieces(layout) -> dict[int, int]:
+    """Per-piece-index census: main loop (or legacy indices) + siding branches."""
     counts: dict[int, int] = {}
     main = getattr(layout, "main_loop_pieces", None)
-    if main is not None:
-        for p in main:
-            if p >= 0:
-                counts[p] = counts.get(p, 0) + 1
-    else:
-        for p in getattr(layout, "indices", []):
-            if p >= 0:
-                counts[p] = counts.get(p, 0) + 1
-
+    if main is None:
+        main = getattr(layout, "indices", [])
+    for p in main:
+        if p >= 0:
+            counts[p] = counts.get(p, 0) + 1
     for pair in getattr(layout, "switch_pairs", []) or []:
         for p in pair.branch_pieces:
             if p >= 0:
                 counts[p] = counts.get(p, 0) + 1
+    return counts
 
+
+def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
+    """Mirror ``runner.log_piece_usage`` as markdown bullet lines."""
+    counts = count_pieces(layout)
     rows: list[str] = []
     for piece_id, capacity in sorted(inventory.items()):
         idx = catalog.id_to_index.get(piece_id)

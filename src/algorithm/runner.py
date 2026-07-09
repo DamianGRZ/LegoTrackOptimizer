@@ -34,6 +34,7 @@ from src.encoding import (
 from src.operators import PartitionedCrossover, PartitionedMutation
 from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
+from src.run_info import count_pieces
 from src.sampling import IntegerSampling
 from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
 
@@ -46,23 +47,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
                     logger: logging.Logger) -> None:
-    piece_counts: dict = {}
-
-    if hasattr(layout, 'main_loop_pieces'):
-        for p in layout.main_loop_pieces:
-            if p >= 0:
-                piece_counts[p] = piece_counts.get(p, 0) + 1
-    elif hasattr(layout, 'indices'):
-        for p in layout.indices:
-            if p >= 0:
-                piece_counts[p] = piece_counts.get(p, 0) + 1
-
-    if hasattr(layout, 'switch_pairs'):
-        for pair in layout.switch_pairs:
-            for p in pair.branch_pieces:
-                if p >= 0:
-                    piece_counts[p] = piece_counts.get(p, 0) + 1
-
+    piece_counts = count_pieces(layout)
     logger.info("Piece usage:")
     for piece_id, count in sorted(inventory.items()):
         idx = catalog.id_to_index.get(piece_id)
@@ -997,7 +982,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         best_overall_cv = (
             float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
         )
-        is_feasible = feasible_mask[best_overall_idx] if G is not None else True
+        is_feasible = bool(feasible_mask[best_overall_idx])
 
         logger.info(
             f"Best overall: {best_overall_layout.n_physical_pieces}/"

@@ -62,9 +62,6 @@ class TrackPiece:
     @property
     def arc_length(self) -> float:
         """Arc length in studs."""
-        if self.is_straight:
-            return self.length
-        elif self.is_curve and self.radius and self.angle:
+        if self.is_curve and self.radius and self.angle:
             return self.radius * math.radians(abs(self.angle))
-        else:
-            return self.length
+        return self.length

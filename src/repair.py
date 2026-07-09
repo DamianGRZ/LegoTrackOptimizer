@@ -198,15 +198,13 @@ class MainLoopClosureRepair(Repair):
 
     def _compute_total_angle(self, active_types: NDArray, active_flips: NDArray) -> float:
         """Sum signed dtheta across active pieces, honoring R40_CURVE flips."""
-        total = 0.0
-        for pt, flip in zip(active_types, active_flips):
-            pt_int = int(pt)
-            if 0 <= pt_int < len(self.fk_table):
-                dtheta = float(self.fk_table[pt_int, 2])
-                if pt_int == R40_CURVE and int(flip):
-                    dtheta = -dtheta
-                total += dtheta
-        return total
+        types = np.asarray(active_types, dtype=np.int32)
+        flips = np.asarray(active_flips, dtype=np.int32)
+        valid = (types >= 0) & (types < len(self.fk_table))
+        if not np.any(valid):
+            return 0.0
+        fk = fk_rows_with_flips(self.fk_table, types[valid], flips[valid])
+        return float(fk[:, 2].sum())
 
     def _add_curves(
         self,
@@ -573,7 +571,7 @@ class BoundaryAwareRepair(Repair):
             return  # already in bounds
 
         # A genuinely-too-big axis must shrink; a fitting loop only needs centering.
-        shrank = self._shrink(x, w, h, box_w_eff, box_h_eff) if (x_too_big or y_too_big) else False
+        shrank = (x_too_big or y_too_big) and self._shrink(x, w, h, box_w_eff, box_h_eff)
 
         # Translate: zero the fine-tuning offset so _auto_center fully centers.
         x[self.dims.start_pos_start] = 0

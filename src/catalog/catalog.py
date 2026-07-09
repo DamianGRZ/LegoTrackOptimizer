@@ -151,10 +151,7 @@ class TrackCatalog:
                 fk=fk,
                 ports=ports,
                 index=index,
-                length=(ps.length_studs
-                        if ps.length_studs is not None
-                        else (ps.body_length_studs if ps.body_length_studs is not None
-                              else 16.0)),
+                length=_first_not_none(ps.length_studs, ps.body_length_studs, 16.0),
                 radius=(ps.radius_studs
                         if ps.radius_studs is not None
                         else ps.diverging_radius_studs),
@@ -484,6 +481,11 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
             },
         })
     return out
+
+
+def _first_not_none(*values):
+    """First non-None value; unlike ``or``, a legitimate 0.0 wins."""
+    return next(v for v in values if v is not None)
 
 
 def _route_fk_in_train_frame(entry, exit_port) -> Tuple[float, float, float]:

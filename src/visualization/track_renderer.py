@@ -536,16 +536,14 @@ def plot_layout(
     _draw_piece_sequence(ax, indices, layout.states)
 
     for i in switch_positions:
-        piece_idx = int(layout.indices[i])
-        color = get_piece_color(piece_idx)
+        color = get_piece_color(indices[i])
         mid_x = (x[i] + x[i + 1]) / 2
         mid_y = (y[i] + y[i + 1]) / 2
         ax.plot(mid_x, mid_y, "D", color=color, markersize=8, markeredgecolor="black",
                 markeredgewidth=1, zorder=6)
 
     for i in crossing_positions:
-        piece_idx = int(layout.indices[i])
-        color = get_piece_color(piece_idx)
+        color = get_piece_color(indices[i])
         mid_x = (x[i] + x[i + 1]) / 2
         mid_y = (y[i] + y[i + 1]) / 2
         ax.plot(mid_x, mid_y, "s", color=color, markersize=8, markeredgecolor="black",
@@ -593,8 +591,8 @@ def plot_layout(
     # Add metrics text. "Crossings" counts CROSS_90 pieces (the square-marked
     # ones); DOUBLE_CROSSOVERs are reported separately, deduped to physical
     # pieces (one DC is threaded twice but is one body).
-    n_switches = len([i for i in layout.indices if int(i) in SWITCH_INDICES])
-    n_crossings = len([i for i in layout.indices if int(i) == PIECE_IDX_CROSS_90])
+    n_switches = sum(1 for i in layout.indices if int(i) in SWITCH_INDICES)
+    n_crossings = sum(1 for i in layout.indices if int(i) == PIECE_IDX_CROSS_90)
     n_crossovers = len(_dc_body_poses(indices, layout.states))
     metrics_lines = [
         f"Pieces: {layout.n_pieces}",
@@ -653,10 +651,7 @@ def plot_multi_path_layout(
     n_rows = (n_paths + 1 + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
 
-    if n_paths == 1:
-        axes = np.array([axes]).flatten()
-    else:
-        axes = np.array(axes).flatten()
+    axes = np.asarray(axes).flatten()
 
     # Hide unused subplots
     for i in range(n_paths + 1, len(axes)):
