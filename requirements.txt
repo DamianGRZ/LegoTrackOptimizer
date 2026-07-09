@@ -19,3 +19,6 @@ pytest-cov>=4.1.0
 
 # Architecture enforcement (dev)
 import-linter>=2.0
+
+# Style enforcement (dev) — gate: python -m pycodestyle src tests main.py run_v1_all_configs.py
+pycodestyle>=2.13
