@@ -29,6 +29,7 @@ from .encoding import (
     fk_rows_with_flips,
     get_active_cross_junctions,
     get_active_double_crossovers,
+    get_active_junctions,
     get_active_main_pieces,
     get_junction,
     get_main_loop_flips,
@@ -38,6 +39,7 @@ from .encoding import (
     set_main_loop_type,
 )
 from .geometry import compute_fk_chain
+from .intersection import cross_pair_perpendicular, find_crossing_pairs
 
 R40_CURVE = int(PieceIndex.R40_CURVE)
 STRAIGHT_16 = int(PieceIndex.STRAIGHT_16)
@@ -45,15 +47,22 @@ STRAIGHT_24 = int(PieceIndex.STRAIGHT_24)
 
 # Angles per R40 curve piece
 R40_ANGLE = 22.5
-TARGET_ANGLE = 360.0
 CLOSURE_TOLERANCE = 1.0  # degrees
 
-# Legal turning sums for a genome that carries an active crossing-capable
-# descriptor (CROSS_90 / DOUBLE_CROSSOVER): a closed self-crossing loop has
-# turning 0 (figure-8) or 720 (double wrap), never necessarily 360.
-ANGLE_TARGETS_CROSSING = (0.0, 360.0, 720.0)
+# The feasible closed topologies this R40-only kit can build are a single loop
+# (+/-360, one winding) or a self-crossing figure-8 (turning sum 0). Repair
+# drives the heading sum toward whichever is nearest ON THE SAME SIDE as the
+# current sum, so a right-handed loop (-360) is never dragged toward +360. A
+# double-wrap (+/-720) needs two nested laps, which one radius can't build (its
+# seed family is a stub, proven infeasible), so it is deliberately not a target.
+ANGLE_STEP = 360.0
 
 SIDING_MARGIN = 16.0  # conservative per-side reach of an active passing siding (studs)
+
+
+def _curve_flip(angle: float) -> int:
+    """Flip of the R40 curve turning toward ``angle``'s sign (0=left, 1=right)."""
+    return 0 if angle >= 0.0 else 1
 
 
 def _main_loop_states(x: NDArray, dims: PartitionedDimensions,
@@ -120,9 +129,9 @@ def _find_antiparallel_pairs(
 class MainLoopClosureRepair(Repair):
     """Close the main loop in two stages: angular, then translational.
 
-    Stage 1 (angle): sum the signed dtheta of active main-loop pieces. On an
-    angle deficit, append R40_CURVE curves into empty slots; on an excess,
-    remove R40 curves from the end — driving the heading sum toward 360 degrees.
+    Stage 1 (angle): sum the signed dtheta of active main-loop pieces, then add
+    or remove R40 curves to drive that sum onto the nearest feasible closed
+    target on the same side (+/-360 for a loop, 0 for a figure-8).
 
     Stage 2 (position): once the loop is angularly closed, drop straights to
     shrink the residual dx/dy gap between the loop's tail and its start. A
@@ -150,17 +159,55 @@ class MainLoopClosureRepair(Repair):
         return X
 
     def _target_angle(self, x: NDArray, total_angle: float) -> float:
-        """Angular target for this genome.
+        """Nearest feasible closed-turning target for this genome.
 
-        Plain loops are driven toward 360 degrees. A genome with an active
-        cross/DC descriptor is a self-crossing candidate, whose legal turning
-        sums are {0, 360, 720} — forcing 360 on a figure-8 (turning 0) would
-        mutilate it; the nearest legal target is used instead.
+        A single loop closes at the full winding on the same side as the current
+        turning (+360 for a left loop, -360 for a right one), so an already-closed
+        loop of either handedness is left untouched. The figure-8 target 0
+        competes only when the turning is closer to 0 than to a full winding AND
+        the loop actually crosses itself, so a near-flat plain genome is still
+        closed to +/-360 rather than frozen open.
+        """
+        full = ANGLE_STEP if total_angle >= 0.0 else -ANGLE_STEP
+        if abs(total_angle) < abs(full - total_angle) and self._has_crossing(x):
+            return 0.0
+        return full
+
+    def _has_crossing(self, x: NDArray) -> bool:
+        """True when the decoded loop will contain a crossing.
+
+        A descriptor crossing (cross-junction / double-crossover gene) is a cheap
+        gene read; an emergent one — a perpendicular STRAIGHT_16-on-STRAIGHT_16
+        overlap the decoder converts to CROSS_90 — needs the decoder's own
+        self-intersection scan. The caller only reaches the emergent scan for
+        near-zero-turning genomes, so plain loops never pay for it.
         """
         if (get_active_cross_junctions(x, self.dims)
                 or get_active_double_crossovers(x, self.dims)):
-            return min(ANGLE_TARGETS_CROSSING, key=lambda t: abs(t - total_angle))
-        return TARGET_ANGLE
+            return True
+        types = get_main_loop_types(x, self.dims)
+        flips = get_main_loop_flips(x, self.dims)
+        mask = types != INACTIVE
+        if int(mask.sum()) < 4:
+            return False
+        active = [int(t) for t in types[mask]]
+        states = compute_fk_chain(fk_rows_with_flips(self.fk_table, types[mask], flips[mask]))
+        return any(
+            active[pi] == STRAIGHT_16 and active[pj] == STRAIGHT_16
+            and cross_pair_perpendicular(states, pi, pj)
+            for pi, pj, _ in find_crossing_pairs(states, active)
+        )
+
+    def _reroutes_main_loop(self, x: NDArray) -> bool:
+        """True when a descriptor re-lengthens main-loop slots at decode time.
+
+        A double-crossover reroutes two slots; a passing siding replaces two
+        straights with 32-stud switch bodies. Either way the raw main-loop dx/dy
+        gap is a decode artifact, so Stage-2 translational closure must not act
+        on it (dropping straights would break an otherwise valid loop).
+        """
+        return bool(get_active_double_crossovers(x, self.dims)
+                    or get_active_junctions(x, self.dims))
 
     def _repair_chromosome(self, x: NDArray) -> None:
         types = get_main_loop_types(x, self.dims)
@@ -174,26 +221,26 @@ class MainLoopClosureRepair(Repair):
         target = self._target_angle(x, total_angle)
         deficit = target - total_angle
 
-        # Stage 1: angular closure — add/remove R40 curves toward the target.
-        # Deficits are R40 multiples up to float dust (catalog angles round-trip
-        # through radians), so gate with tolerance and round to whole curves.
-        if abs(deficit) >= CLOSURE_TOLERANCE:
-            usage = Counter(int(t) for t in types[active_mask])
-            if deficit >= R40_ANGLE - CLOSURE_TOLERANCE:
-                self._add_curves(x, types, flips, usage, deficit)
-            elif deficit <= -(R40_ANGLE - CLOSURE_TOLERANCE):
-                self._remove_curves(x, types, flips, deficit)
+        # Stage 1: angular closure. Add or remove whole R40 curves by turning
+        # magnitude (|target| vs |total|), handedness from the sign, so loops of
+        # either chirality close instead of only left-handed ones.
+        if abs(deficit) >= R40_ANGLE - CLOSURE_TOLERANCE:
+            n_curves = round(abs(deficit) / R40_ANGLE)
+            if abs(target) >= abs(total_angle):
+                usage = Counter(int(t) for t in types[active_mask])
+                self._add_curves(x, types, flips, usage, n_curves, _curve_flip(target))
+            else:
+                self._remove_curves(x, types, flips, n_curves, _curve_flip(total_angle))
             active_mask = types != INACTIVE
             total_angle = self._compute_total_angle(types[active_mask], flips[active_mask])
 
-        # Stage 2: translational closure — only meaningful on an angularly closed
-        # loop. Straights carry dtheta=0, so dropping one shifts the tail by exactly
-        # its world displacement without disturbing the angular sum.
-        # Skipped when an active DC descriptor exists: the descriptor reroutes
-        # two slots at decode time, so the raw main-loop chain's dx/dy gap is an
-        # artifact — decline gracefully rather than break a valid loop.
+        # Stage 2: translational closure — only on an angularly closed loop whose
+        # raw main-loop gap is real. Straights carry dtheta=0, so dropping one
+        # shifts the tail without disturbing the angular sum. Skipped when a
+        # descriptor re-lengthens slots at decode (DC or passing siding), where
+        # the raw gap is an artifact (see _reroutes_main_loop).
         if (abs(target - total_angle) < CLOSURE_TOLERANCE
-                and not get_active_double_crossovers(x, self.dims)):
+                and not self._reroutes_main_loop(x)):
             self._close_translation(x)
 
     def _compute_total_angle(self, active_types: NDArray, active_flips: NDArray) -> float:
@@ -212,31 +259,22 @@ class MainLoopClosureRepair(Repair):
         types: NDArray,
         flips: NDArray,
         usage: Counter,
-        deficit: float,
+        n_curves: int,
+        flip: int,
     ) -> None:
-        """Add R40_CURVE curves whose flip cancels the angular deficit."""
-        curve_idx = R40_CURVE
-        # flip=0 → +22.5°, flip=1 → -22.5°. To shrink a positive deficit we need
-        # left turns (flip=0); negative deficit → right turns (flip=1).
-        needed_flip = 0 if deficit > 0 else 1
-        available = (
-            self.inventory_by_index.get(curve_idx, 0) - usage.get(curve_idx, 0)
-        )
-        if available <= 0:
-            return
-
-        n_needed = round(abs(deficit) / R40_ANGLE)
-        n_add = min(n_needed, available, self.max_corrections)
+        """Fill up to ``n_curves`` empty slots with R40 curves of ``flip``."""
+        available = self.inventory_by_index.get(R40_CURVE, 0) - usage.get(R40_CURVE, 0)
+        n_add = min(n_curves, available, self.max_corrections)
 
         added = 0
         for pos in range(self.dims.n_main):
             if added >= n_add:
                 break
             if types[pos] == INACTIVE:
-                set_main_loop_type(x, self.dims, pos, curve_idx)
-                set_flip(x, self.dims, pos, needed_flip)
-                types[pos] = curve_idx
-                flips[pos] = needed_flip
+                set_main_loop_type(x, self.dims, pos, R40_CURVE)
+                set_flip(x, self.dims, pos, flip)
+                types[pos] = R40_CURVE
+                flips[pos] = flip
                 added += 1
 
     def _remove_curves(
@@ -244,21 +282,17 @@ class MainLoopClosureRepair(Repair):
         x: NDArray,
         types: NDArray,
         flips: NDArray,
-        deficit: float,
+        n_curves: int,
+        flip: int,
     ) -> None:
-        """Remove R40 curves contributing to the excess direction."""
-        curve_idx = R40_CURVE
-        # Excess in the LEFT direction (deficit < 0 → total > 360) is cured by
-        # dropping flip=0 curves; symmetric for RIGHT excess.
-        target_flip = 0 if deficit < 0 else 1
-        n_needed = round(abs(deficit) / R40_ANGLE)
-        n_remove = min(n_needed, self.max_corrections)
+        """Drop up to ``n_curves`` R40 curves of ``flip`` from the loop tail."""
+        n_remove = min(n_curves, self.max_corrections)
 
         removed = 0
         for pos in range(self.dims.n_main - 1, -1, -1):
             if removed >= n_remove:
                 break
-            if int(types[pos]) == curve_idx and int(flips[pos]) == target_flip:
+            if int(types[pos]) == R40_CURVE and int(flips[pos]) == flip:
                 set_main_loop_type(x, self.dims, pos, INACTIVE)
                 set_flip(x, self.dims, pos, 0)
                 types[pos] = INACTIVE

@@ -6,7 +6,7 @@ import pytest
 
 from src.encoding import (
     PartitionedDimensions, INACTIVE, PieceIndex,
-    create_empty_chromosome, set_main_loop_type,
+    create_empty_chromosome, set_junction, set_main_loop_type,
 )
 
 # Catalog FK rows (index = piece index): [dx, dy, dtheta_deg]
@@ -112,3 +112,27 @@ def test_skew_gap_closed_on_two_headings():
 
     assert _gap(x, dims) == pytest.approx(0.0, abs=0.5)
     assert int(np.sum(x[:dims.n_main] == S16)) == 4  # 6 placed, 2 dropped
+
+
+def test_active_siding_skips_translational_closure():
+    """A genome with an active passing-siding junction keeps all its straights.
+
+    The switch pair re-lengthens the loop at decode (32-stud bodies vs 16-stud
+    straights), so the raw main-loop dx/dy gap is an artifact — Stage-2 must be
+    skipped, mirroring the double-crossover exemption.
+    """
+    from src.repair import MainLoopClosureRepair
+    dims = make_dims(n_main=24, max_junctions=1)
+    x = create_empty_chromosome(dims)
+    _angularly_closed_lens(x, dims)
+    set_main_loop_type(x, dims, 18, S16)  # extra forward straight -> +16 raw gap
+    set_junction(x, dims, 0, active=1, position=2, handedness=0, n_straights=0)
+
+    assert _gap(x, dims) == pytest.approx(16.0, abs=0.5)  # precondition: raw gap
+    before = int(np.sum(x[:dims.n_main] == S16))
+
+    MainLoopClosureRepair(dims, FK, {S16: 24, R40: 24})._repair_chromosome(x)
+
+    # Stage-2 skipped: no straight dropped, raw gap left for the decoder to absorb.
+    assert int(np.sum(x[:dims.n_main] == S16)) == before
+    assert _gap(x, dims) == pytest.approx(16.0, abs=0.5)
