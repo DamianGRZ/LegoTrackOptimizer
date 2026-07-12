@@ -222,22 +222,41 @@ python main.py --config configs/with_switches.yaml --verbose
 
 # Fast smoke test (20 generations, pop 20)
 python main.py --config configs/default.yaml --quick-test
+
+# Reproducible run (override the config seed)
+python main.py --config configs/default.yaml --seed 42
 ```
 
 | Flag | Description | Default |
 |---|---|---|
 | `--config` | Path to a YAML configuration file | `configs/default.yaml` |
-| `--output` | Output directory for results | `outputs` |
+| `--output` | Output directory for results | auto-named `outputs/verify_<config>_<N>` (never overwrites) |
 | `--verbose` | Verbose logging (per-generation progress) | off |
 | `--quick-test` | Override to 20 generations / pop 20 for a quick check | off |
+| `--seed` | Override `algorithm.seed` for a reproducible run | config value |
 
 Each `main.py` invocation runs **one** optimization and writes its artifacts into the
-output directory.
+output directory. If a run crashes mid-flight it is **salvaged**, not lost: the live
+population is decoded into a partial result, the traceback is saved to `error.md`, and
+the process exits non-zero.
 
 ### Batch all configs
 
 ```bash
 python run_v1_all_configs.py    # every config → outputs/<config_name>/
+```
+
+Per-config failures are isolated, so one crashing config no longer aborts the batch.
+
+### Seeded replications
+
+For decision-grade comparisons, run one config across many seeds and get a
+median ± IQR summary (one subprocess per seed, so artifacts and crash handling match a
+normal single run):
+
+```bash
+python run_replications.py --config default --seeds 1..10   # → outputs/<config>_s<seed>/
+python run_replications.py --config with_switches --seeds 1,2,5 --force
 ```
 
 ---
@@ -294,9 +313,17 @@ Results are written under a single `outputs/` tree (gitignored). Depending on th
 - `best_layout.png` — the rendered champion layout.
 - `pareto_front.png` — the run-level Pareto front (utilization vs. speed).
 - `chromosomes.csv` / `constraints.csv` — final-population genomes and constraint values.
-- `run_info.md` — provenance (git state, verbatim config, run summary).
+- `convergence.csv` — per-generation telemetry appended live (HV, IGD, feasibility,
+  best objectives, unique-`F` counts, epsilon, and generation wall-time).
+- `run_info.md` — provenance (git state, verbatim config, run summary — including
+  executed-vs-planned generations and the termination reason).
 - `category_report.md` — per-category (switch / crossing / double-crossover) elites.
 - `snapshots/` — progression renders captured during the run.
+- `error.md` / `error.log` — written only when a run crashes; the traceback that
+  accompanies the salvaged partial result.
+
+Each `save_results` block is isolated, so a single failing render can no longer cost
+the rest of the artifacts.
 
 ---
 
@@ -305,6 +332,7 @@ Results are written under a single `outputs/` tree (gitignored). Depending on th
 ```
 main.py                     CLI entry point (load config + catalog, run, save)
 run_v1_all_configs.py        Batch runner over every config
+run_replications.py          Seeded-replication harness (one config × many seeds)
 configs/                     Optimization configs (inventory, boundary, algorithm)
 data/track_pieces_v2.yaml    Track-piece catalog (FK, speed limits, routes)
 src/
@@ -323,7 +351,7 @@ src/
   train/                     Locomotive physics + speed profiler
   algorithm/                 run_optimization(), callbacks, monitoring
   visualization/             Layout & Pareto-front renderers
-tests/                       pytest suite (~370 tests)
+tests/                       pytest suite (~400 tests)
 ```
 
 ---
@@ -331,13 +359,19 @@ tests/                       pytest suite (~370 tests)
 ## Testing
 
 ```bash
-pytest -q                    # full suite
+pytest -q                    # full suite (~400 tests)
 pytest -q tests/test_decoder.py
 pytest -q --tb=line          # compact failure output
 ```
 
 The suite covers the catalog, geometry, decoder, operators, repair, sampling,
 problem objectives/constraints, the train physics model, and the visualization paths.
+
+A style gate enforces PEP 8 (99-char line limit, configured in `setup.cfg`):
+
+```bash
+python -m pycodestyle src tests main.py run_v1_all_configs.py    # must exit 0
+```
 
 ---
 
