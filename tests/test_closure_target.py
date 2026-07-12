@@ -1,9 +1,9 @@
 """Genotype-dependent angular target in MainLoopClosureRepair.
 
-A closed self-crossing loop (figure-8) has a turning sum of 0 deg, not 360.
-Genomes carrying an active cross/DC descriptor must be repaired toward the
-nearest of {0, 360, 720} so the repair stops mutilating crossing seeds;
-plain genomes keep the 360-deg target unchanged.
+A closed loop's turning sum lands on a feasible closed target on its own side:
++/-360 for a single loop (either chirality) or 0 for a self-crossing figure-8.
+Repair must reach that target without mutilating an already-closed loop, so a
+right-handed loop (-360) is left intact rather than dragged toward +360.
 """
 
 import numpy as np
@@ -12,7 +12,12 @@ import pytest
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.decoder import decode_chromosome
-from src.encoding import INACTIVE, compute_dimensions, create_chromosome_from_pieces
+from src.encoding import (
+    INACTIVE,
+    R40_CURVE,
+    compute_dimensions,
+    create_chromosome_from_pieces,
+)
 from src.repair import TrackRepairPipeline
 
 
@@ -97,3 +102,78 @@ class TestPlainGenomesKeep360Target:
         after = _n_active(X[0], dims)
 
         assert after == before + 1, "plain loop must still be repaired toward 360"
+
+
+class TestClosedLoopIsLeftIntact:
+    """Repair must be a fixed point on already-closed loops of ANY chirality."""
+
+    def _active_curve_flips(self, x, dims):
+        types = np.asarray(x[:dims.n_main])
+        flips = np.asarray(x[dims.main_flips_start:dims.main_flips_end])
+        return set(flips[types == int(R40_CURVE)].tolist())
+
+    @pytest.mark.parametrize("gen_name", ["_gen_simple_loop", "_gen_oval", "_gen_racetrack"])
+    def test_closed_loop_seeds_survive_repair(self, gen_name, cfg, cat, dims, inv):
+        # Generic sweep: every size/chirality variant of each pure-loop family
+        # must pass through repair unchanged and still closed. The families emit
+        # both handedness variants, so this covers left AND right without listing
+        # cases; the final assert stops the test going vacuous (left-only).
+        import src.sampling as sampling
+        variants = getattr(sampling, gen_name)(inv, dims)
+        assert variants, f"{gen_name} produced no seeds under all_pieces"
+
+        seen_chirality = set()
+        for pieces, flips, *_ in variants:
+            x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
+            before = _n_active(x, dims)
+
+            X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+
+            assert _n_active(X[0], dims) == before, f"{gen_name} seed mutilated by repair"
+            layout = decode_chromosome(X[0], cat, cfg.inventory, dims=dims)
+            assert layout.max_closure_error < cfg.closure_tolerance
+            seen_chirality |= {f for p, f in zip(pieces, flips) if p == int(R40_CURVE)}
+
+        assert seen_chirality == {0, 1}, \
+            f"{gen_name} must exercise both chiralities, saw {seen_chirality}"
+
+    def test_right_handed_loop_is_idempotent(self, cat, dims, inv):
+        # Minimal explicit anchor for the core bug: a right-handed circle (-360).
+        x = create_chromosome_from_pieces(
+            dims, [int(R40_CURVE)] * 16, main_loop_flips=[1] * 16,
+        )
+        before = _n_active(x, dims)
+
+        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+
+        assert _n_active(X[0], dims) == before
+        assert self._active_curve_flips(X[0], dims) == {1}
+
+    def test_partial_right_loop_closes_toward_minus_360(self, cat, dims, inv):
+        # 15 right curves = -337.5; repair adds ONE right curve, not a left one.
+        x = create_chromosome_from_pieces(
+            dims, [int(R40_CURVE)] * 15, main_loop_flips=[1] * 15,
+        )
+
+        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+
+        assert _n_active(X[0], dims) == 16
+        assert self._active_curve_flips(X[0], dims) == {1}, \
+            "curves must all stay right-handed (target -360)"
+
+    def test_bare_figure_eight_survives_pipeline(self, cfg, cat, dims, inv):
+        # Emergent-crossing figure-8 (no descriptor, turning 0): repair must
+        # recognize the crossing and hold it at 0, not snap it to +/-360.
+        from src.sampling import _gen_figure_eight
+        variants = _gen_figure_eight(inv, dims)
+        assert variants, "all_pieces config should enable the figure-8 seed"
+        pieces, flips, *_ = variants[0]
+        x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
+        before = _n_active(x, dims)
+
+        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+
+        assert _n_active(X[0], dims) == before
+        layout = decode_chromosome(X[0], cat, cfg.inventory, dims=dims)
+        assert layout.paths[0].closure_error < cfg.closure_tolerance
+        assert layout.n_cross_pieces == 1
