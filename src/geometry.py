@@ -4,7 +4,7 @@ and the single-loop ``Layout`` view consumed by the train physics and renderer."
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -59,6 +59,9 @@ class Layout:
 
     indices: NDArray[np.int32]
     states: NDArray[np.float64]
+    # Catalog route index per piece (parallel to indices); when present the speed
+    # profiler scores each segment on its traversed route instead of the default.
+    route_indices: Optional[NDArray[np.int32]] = None
 
     @property
     def n_pieces(self) -> int:

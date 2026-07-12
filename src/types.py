@@ -1,10 +1,8 @@
 """Shared domain types for the LEGO Track Optimizer.
 
-Pure data containers with no logic beyond property accessors.
-These form the shared vocabulary across module tiers:
-  - Tier 1 (domain core): catalog, geometry, train
-  - Tier 2 (EA layer): decoder, operators, problem
-  - Tier 3 (infra): visualization, config, main
+Pure data containers (dataclasses / enums) with no logic beyond property
+accessors — the common vocabulary depended on by the catalog, geometry,
+train, decoder, operator, problem, and visualization modules.
 """
 
 from __future__ import annotations
@@ -174,6 +172,11 @@ class TraversalPath:
     # through OUT switch, inclusive on both ends). Populated only for pair indices
     # where route_choices[i] == 1.
     divergent_ranges: Dict[int, Tuple[int, int]] = field(default_factory=dict)
+    # Catalog route index per piece in piece_sequence (parallel list). 0 = through /
+    # default route; switch diverging = 1; DOUBLE_CROSSOVER diagonals = 2, 3. The
+    # speed profiler uses it so branch and diagonal segments are curve-speed-limited
+    # instead of scored at through-route physics.
+    route_indices: List[int] = field(default_factory=list)
 
     @property
     def n_pieces(self) -> int:
@@ -360,8 +363,8 @@ class MultiPathLayout:
                 all_x.extend(path.states[:, 0])
                 all_y.extend(path.states[:, 1])
         if not all_x:
-            return (0.0, 0.0, 0.0, 0.0)
-        return (min(all_x), min(all_y), max(all_x), max(all_y))
+            return 0.0, 0.0, 0.0, 0.0
+        return min(all_x), min(all_y), max(all_x), max(all_y)
 
     @property
     def area(self) -> float:

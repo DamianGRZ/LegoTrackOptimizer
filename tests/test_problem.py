@@ -356,7 +356,8 @@ class TestF1MultiPathSlowestRoute:
             "test needs a genuine multipath layout to distinguish all-routes scoring"
         )
 
-        # Independently recompute each route's overall pace at the problem's margin.
+        # Independently recompute each route's overall pace at the problem's margin,
+        # route-aware like _slowest_route_speed (branch segments are curve-limited).
         route_paces = []
         for p in layout.paths:
             if len(p.piece_sequence) == 0:
@@ -364,6 +365,7 @@ class TestF1MultiPathSlowestRoute:
             view = Layout(
                 indices=np.asarray(p.piece_sequence, dtype=np.int32),
                 states=p.states,
+                route_indices=np.asarray(p.route_indices, dtype=np.int32),
             )
             prof = compute_speed_profile(
                 view, catalog, train_config=problem._train_config,

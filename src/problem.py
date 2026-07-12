@@ -64,6 +64,7 @@ def _slowest_route_speed(
             Layout(
                 indices=np.asarray(path.piece_sequence, dtype=np.int32),
                 states=path.states,
+                route_indices=np.asarray(path.route_indices, dtype=np.int32),
             ),
             catalog, train_config, safety_margin=safety_margin,
         ).avg_speed

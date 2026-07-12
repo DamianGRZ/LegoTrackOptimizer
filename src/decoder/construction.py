@@ -855,7 +855,10 @@ def _compute_single_path(
             flip_sequence.extend(branch_flips[:len(pair.branch_pieces)])
             piece_sequence.append(exit_switch)
             exit_seq_idx = len(piece_sequence) - 1
-            route_indices.append(THROUGH)
+            # Scored on the diverging (curved) route: the reversed merge is an R40
+            # arc, not a straight. FK is unaffected -- fk_overrides wins for this
+            # slot in _compute_path_fk, so merge_fk still sets the geometry.
+            route_indices.append(DIVERGING)
             flip_sequence.append(0)
             fk_overrides[exit_seq_idx] = pair.merge_fk
             divergent_ranges[i] = (in_seq_idx, exit_seq_idx)
@@ -876,6 +879,7 @@ def _compute_single_path(
         closure_error=closure_error,
         angle_error=angle_error,
         divergent_ranges=divergent_ranges,
+        route_indices=route_indices,
     )
 
 
