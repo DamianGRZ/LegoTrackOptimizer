@@ -64,8 +64,16 @@ def compute_speed_profile(
     # Get piece properties and convert units
     stud_to_m = catalog.stud_mm / 1000.0
     arc_lengths = catalog.get_arc_lengths(layout.indices) * stud_to_m  # meters
-    radii_m = catalog.get_radii(layout.indices) / 1000.0  # meters
-    speed_limits = catalog.get_speed_limits(layout.indices)  # m/s
+    # Route-aware physics when the layout carries a traversed-route index per
+    # piece (branch/diagonal segments are curve-limited); else default-route.
+    # A whole MultiPathLayout has no single route, so it falls back to per-piece.
+    route_indices = getattr(layout, "route_indices", None)
+    if route_indices is not None:
+        radii_m = catalog.get_route_radii(layout.indices, route_indices) / 1000.0
+        speed_limits = catalog.get_route_speeds(layout.indices, route_indices)
+    else:
+        radii_m = catalog.get_radii(layout.indices) / 1000.0
+        speed_limits = catalog.get_speed_limits(layout.indices)
 
     # Pass 1: per-segment curvature/derailment caps; safety_margin (default
     # 1.0) scales every cap so operating speed stays strictly below them.

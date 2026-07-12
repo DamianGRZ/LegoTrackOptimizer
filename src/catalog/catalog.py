@@ -317,6 +317,52 @@ class TrackCatalog:
             result[i] = self.get_fk_route(int(piece_indices[i]), int(route_indices[i]))
         return result
 
+    def get_radius_route(self, piece_idx: int, route_idx: int = 0) -> float:
+        """Radius (mm) of a specific route; inf when that route runs straight."""
+        topo = self._topologies.get(piece_idx)
+        if topo is not None and 0 <= route_idx < len(topo.routes):
+            return topo.routes[route_idx].radius_mm or np.inf
+        if 0 <= piece_idx < len(self._radius_table):
+            return float(self._radius_table[piece_idx])
+        return np.inf
+
+    def get_speed_route(self, piece_idx: int, route_idx: int = 0) -> float:
+        """Speed limit (m/s) of a specific route."""
+        topo = self._topologies.get(piece_idx)
+        if topo is not None and 0 <= route_idx < len(topo.routes):
+            return float(topo.routes[route_idx].speed_limit)
+        if 0 <= piece_idx < len(self._speed_table):
+            return float(self._speed_table[piece_idx])
+        return self.DEFAULT_SPEED
+
+    def get_route_radii(
+        self, piece_indices: NDArray, route_indices: NDArray
+    ) -> NDArray[np.float64]:
+        """Per-piece radii along the traversed route. Overrides the default-route
+        radius only where a non-through route (switch diverging, DC diagonal) is
+        taken, so branch/diagonal segments are curve-limited in speed scoring."""
+        piece_indices = np.asarray(piece_indices, dtype=np.int32)
+        route_indices = np.asarray(route_indices, dtype=np.int32)
+        radii = self.get_radii(piece_indices)
+        for pos in np.flatnonzero(route_indices):
+            radii[pos] = self.get_radius_route(
+                int(piece_indices[pos]), int(route_indices[pos])
+            )
+        return radii
+
+    def get_route_speeds(
+        self, piece_indices: NDArray, route_indices: NDArray
+    ) -> NDArray[np.float64]:
+        """Per-piece speed limits along the traversed route (see get_route_radii)."""
+        piece_indices = np.asarray(piece_indices, dtype=np.int32)
+        route_indices = np.asarray(route_indices, dtype=np.int32)
+        speeds = self.get_speed_limits(piece_indices)
+        for pos in np.flatnonzero(route_indices):
+            speeds[pos] = self.get_speed_route(
+                int(piece_indices[pos]), int(route_indices[pos])
+            )
+        return speeds
+
     def classify_pieces(self) -> Dict[PieceClass, List[int]]:
         """Group pieces by class."""
         result: Dict[PieceClass, List[int]] = {pc: [] for pc in PieceClass}
