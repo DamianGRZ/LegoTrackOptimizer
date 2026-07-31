@@ -5,7 +5,7 @@
 # the figure-8 and two-layer-loop heuristic seeds; the GA then refines
 # around them.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 80

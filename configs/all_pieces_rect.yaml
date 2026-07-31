@@ -4,7 +4,7 @@
 # crossings and a double-crossover can all contribute, so the Pareto front spans
 # several topologies rather than one.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_24: 10

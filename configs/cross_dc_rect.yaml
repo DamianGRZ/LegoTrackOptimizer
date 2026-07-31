@@ -3,7 +3,7 @@
 # multi-path topology comes from a CROSS_90 self-crossing and/or a DC figure-8
 # rather than passing sidings. A 360 x 280 box fits either or both.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 110

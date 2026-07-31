@@ -3,7 +3,7 @@
 # via compensated straight pairs, filling more of the box than the tight DC
 # variants. Still DC-only, so the showcased topology stays the figure-8.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_24: 8

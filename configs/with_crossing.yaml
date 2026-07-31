@@ -2,7 +2,7 @@
 # Adds CROSS_90 for figure-8 / self-intersecting layouts. No switches/DC here —
 # use with_switches_and_crossing for switches+crossing, all_pieces for the full kit.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   # Straights

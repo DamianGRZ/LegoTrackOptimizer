@@ -1,7 +1,7 @@
 # LEGO Track Optimizer - Default Configuration
 # Rich inventory with plenty of all piece types
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   # Straights

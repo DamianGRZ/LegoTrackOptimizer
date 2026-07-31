@@ -4,7 +4,7 @@
 # horizontal straight runs enough length (~10 straights) to host a siding's
 # IN -> walk -> OUT span. Keeps the topology siding-only vs the crossing/DC configs.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 80

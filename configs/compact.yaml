@@ -1,7 +1,7 @@
 # LEGO Track Optimizer - Compact Configuration
 # Tight boundaries for space-constrained layouts
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   # Shorter straights preferred
