@@ -22,29 +22,33 @@ class TrainConfig:
     pessimistic value that every speed cap formula actually reads. This
     keeps the friction-uncertainty band explicit in the data model while
     making the optimiser design for the worst plausible friction.
+
+    No default below is a measurement; each is tagged assumed or standard.
+    Real values come from the file a config names in train_config_path, which
+    for every shipped config is configs/trains/measured_consist.yaml.
     """
 
     # --- Friction (nominal = reference, design = the value used by formulas) ---
-    mu_nominal: float = 0.30         # central wheel-rail friction estimate (diagnostics only)
-    mu_design: float = 0.25          # pessimistic friction used by v_slide / v_nadal / v_eff_array
+    mu_nominal: float = 0.30         # assumed; central estimate, no formula reads it
+    mu_design: float = 0.25          # assumed; pessimistic value every cap formula reads
     # --- Environment ---
-    g: float = 9.81                  # gravitational acceleration (m/s^2)
+    g: float = 9.81                  # standard; gravitational acceleration (m/s^2)
     # --- Motor ---
-    v_motor_max: float = 1.10        # Powered Up drive-train top speed (m/s)
+    v_motor_max: float = 1.10        # assumed; drive-train top speed (m/s)
     # --- Bogie / wheel geometry ---
-    gauge_b: float = 0.0375          # inner rail-to-rail gauge (m)
-    cog_height_h: float = 0.030      # CoG above rail head (m)
-    flange_angle_deg: float = 50.0   # effective flange contact angle (deg)
+    gauge_b: float = 0.0375          # standard; LEGO L-gauge inner rail-to-rail (m)
+    cog_height_h: float = 0.030      # assumed; CoG above rail head (m), tilt test pending
+    flange_angle_deg: float = 50.0   # assumed; effective flange contact angle (deg)
     # --- Speed-profile dynamics ---
-    max_accel: float = 3.92          # maximum acceleration (m/s^2)
-    brake_decel: float = 2.45        # braking deceleration (m/s^2)
+    max_accel: float = 3.92          # assumed; maximum acceleration (m/s^2)
+    brake_decel: float = 2.45        # assumed; braking deceleration (m/s^2)
     # --- Rolling resistance ---
-    mu_roll: float = 0.05            # rolling-friction coefficient (literature default; tunable)
+    mu_roll: float = 0.05            # assumed; rolling-friction coefficient (literature)
 
     # --- Consist mass and coupler geometry ---
-    mass_loco: float = 0.370         # locomotive mass (kg)
-    mass_trailing: float = 0.0       # total trailing vehicle mass (kg), 0.0 = bare loco
-    coupler_offset: float = 0.100    # vehicle length for coupler angle calc (m)
+    mass_loco: float = 0.370         # assumed; locomotive mass (kg)
+    mass_trailing: float = 0.0       # assumed; trailing vehicle mass (kg), 0.0 = bare loco
+    coupler_offset: float = 0.100    # assumed; vehicle length for coupler angle (m)
 
     @property
     def mass_total(self) -> float:
@@ -97,13 +101,32 @@ def derailment_caps(
     Single source of truth for the three derailment formulas; v_eff_array and
     the evaluation stability domain both build on it. Uses config.mu_design
     (pessimistic friction). Inf radius -> inf cap (np.sqrt(inf) == inf).
+
+    Formulas and the LEGO-scale parameters come from
+    docs/Lateral stability model for LEGO train layout optimization.md.
     """
     r = np.asarray(radii_m, dtype=np.float64)
+
+    # Poślizg boczny: koła zjeżdżają w bok, gdy siła odśrodkowa przekroczy
+    # tarcie o szynę.
+    #   v = sqrt(mu * g * R)
     v_slide = np.sqrt(config.mu_design * config.g * r)
+
+    # Wywrotka: pociąg przewraca się na zewnątrz łuku, gdy siła odśrodkowa
+    # działająca na wysokości środka ciężkości (h) przeważy nad ciężarem
+    # opartym o zewnętrzną szynę, czyli o połowę rozstawu (b/2) od środka.
+    #   v = sqrt(g * R * (b/2) / h)
     v_tip = np.sqrt(config.g * r * (config.gauge_b / 2.0) / config.cog_height_h)
+
+    # Wspinanie obrzeża na główkę szyny — kryterium Nadala (1908). Obrzeże
+    # zaczyna się wspinać, gdy stosunek siły bocznej do pionowej przekroczy
+    # próg zależny od kąta obrzeża (d) i tarcia:
+    #   L/V = (tan(d) - mu) / (1 + mu * tan(d)),  potem v = sqrt(L/V * g * R)
+    # Próg <= 0 oznacza, że przy tym kącie i tarciu obrzeże nie wjedzie nigdy.
     tan_d = math.tan(math.radians(config.flange_angle_deg))
     lv_crit = (tan_d - config.mu_design) / (1.0 + config.mu_design * tan_d)
     v_nadal = np.sqrt(config.g * r * lv_crit) if lv_crit > 0 else np.full_like(r, np.inf)
+
     return v_slide, v_tip, v_nadal
 
 
