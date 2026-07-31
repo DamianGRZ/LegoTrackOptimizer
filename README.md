@@ -311,7 +311,8 @@ Bundled configs in `configs/` include `default`, `compact`, `with_switches`,
 Results are written under a single `outputs/` tree (gitignored). Depending on the run:
 
 - `best_layout.png` — the rendered champion layout.
-- `pareto_front.png` — the run-level Pareto front (utilization vs. speed).
+- `pareto_front.png` — the run-level Pareto front (utilization vs. speed), both axes
+  normalized to the range the run actually spanned, with 1 = best.
 - `chromosomes.csv` / `constraints.csv` — final-population genomes and constraint values.
 - `convergence.csv` — per-generation telemetry appended live (HV, IGD, feasibility,
   best objectives, unique-`F` counts, epsilon, and generation wall-time).

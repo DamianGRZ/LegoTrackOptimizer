@@ -14,6 +14,26 @@ from numpy.typing import NDArray  # noqa: E402
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting  # noqa: E402
 from pymoo.visualization.scatter import Scatter  # noqa: E402
 
+from src.normalization import ideal_nadir, normalize  # noqa: E402
+
+
+def _plot_scale(F: NDArray, archive_F: Optional[NDArray]) -> tuple[NDArray, NDArray]:
+    """Ideal/nadir spanning everything drawn, so no point falls off the axes.
+
+    Degenerate individuals carry the +inf objective sentinel; they are left
+    out of the scale (and land outside the view) instead of collapsing it.
+    """
+    pool = [F[np.isfinite(F).all(axis=1)]]
+    if archive_F is not None and len(archive_F) > 0:
+        pool.append(np.asarray(archive_F, dtype=float))
+    stacked = np.vstack(pool)
+    return ideal_nadir(stacked if len(stacked) else np.zeros((1, F.shape[1])))
+
+
+def _goodness(F: NDArray, ideal: NDArray, nadir: NDArray) -> NDArray:
+    """Normalized objectives flipped so that 1 is best on every axis."""
+    return 1.0 - normalize(F, ideal, nadir)
+
 
 def _add_with_multiplicity(plot, pts: NDArray, **style) -> list:
     """Add distinct points to a pymoo plot; return [(xy, count)] for labels.
@@ -36,6 +56,11 @@ def plot_pareto_front(
 ) -> Figure:
     """Objective-space scatter built on pymoo's ``Scatter`` (maximized view).
 
+    Both axes are normalized to the range actually spanned by the plotted
+    points and flipped so 1 is best, which keeps objectives on different
+    scales comparable at a glance. Raw units are reported by the run log,
+    not by these axes.
+
     Follows pymoo's front-vs-solutions convention: all distinct points are
     drawn with their multiplicity, and the Pareto front is ringed. With
     ``archive_F`` (the run-cumulative feasible front from the monitor) the
@@ -45,13 +70,12 @@ def plot_pareto_front(
     subset.
 
     Args:
-        F: Objective array of shape (n, 2); both objectives are negated
-            maximization targets, plotted sign-flipped.
+        F: Raw objective array of shape (n, 2), minimized sign.
         G: Optional constraint array for feasibility coloring.
         title: Plot title.
         save_path: Optional path to save the plot as PNG.
-        archive_F: Optional (m, 2) run-cumulative feasible front (raw
-            minimized sign, like ``F``).
+        archive_F: Optional (m, 2) run-cumulative feasible front, same sign
+            as ``F``.
 
     Returns:
         Matplotlib figure with the 2D scatter plot.
@@ -59,11 +83,13 @@ def plot_pareto_front(
     F = np.asarray(F, dtype=float)
     feasible = (np.all(G <= 0, axis=1) if G is not None
                 else np.ones(len(F), dtype=bool))
-    view = np.column_stack([-F[:, 0], -F[:, 1]])
+    ideal, nadir = _plot_scale(F, archive_F)
+    view = _goodness(F, ideal, nadir)
 
     plot = Scatter(
         title=title, legend=True, figsize=(10, 8), tight_layout=True,
-        labels=["Utilization score (weighted)", "Avg Speed (m/s)"],
+        labels=["Utilization (normalized, 1 = best)",
+                "Speed (normalized, 1 = best)"],
     )
     annotations: list = []
     if feasible.any():
@@ -78,7 +104,7 @@ def plot_pareto_front(
         )
 
     if archive_F is not None and len(archive_F) > 0:
-        front_view = np.column_stack([-archive_F[:, 0], -archive_F[:, 1]])
+        front_view = _goodness(np.asarray(archive_F, dtype=float), ideal, nadir)
         front_view = front_view[np.argsort(front_view[:, 0])]
         plot.add(front_view, plot_type="line", color="black", alpha=0.4)
         plot.add(front_view, s=140, facecolors="none", edgecolors="black",

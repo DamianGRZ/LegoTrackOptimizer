@@ -44,11 +44,11 @@ class TestConvergenceMonitorCallback:
     def test_hv_filters_infeasibles_before_computing(self):
         """The +inf sentinel must never reach HV.__call__ — filter to feasible-only first."""
         from src.algorithm.monitoring import ConvergenceMonitorCallback
-        cb = ConvergenceMonitorCallback(ref_point=(0.10, -0.55))
+        cb = ConvergenceMonitorCallback()
 
         algo = FakeAlgo(
             n_gen=5,
-            F=np.array([[-0.8, -1.05], [np.inf, np.inf], [-0.6, -0.9]]),
+            F=np.array([[-0.8, -0.9], [np.inf, np.inf], [-0.6, -1.05]]),
             CV=np.array([[0.0], [5e6], [0.0]]),
         )
         cb.notify(algo)
@@ -57,6 +57,31 @@ class TestConvergenceMonitorCallback:
         assert cb.data["hv"][0] > 0, f"HV should be positive, got {cb.data['hv'][0]}"
         assert cb.data["n_feas"][0] == 2
         assert cb.data["feas_rate"][0] == pytest.approx(2 / 3, rel=1e-6)
+
+    def test_hv_nan_until_archive_spans_both_objectives(self):
+        """A one-point archive gives no box to normalize against; NaN says so
+        instead of reporting a full unit box as if it were coverage."""
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+
+        cb.notify(FakeAlgo(1, np.array([[-0.5, -1.0]]), np.array([[0.0]])))
+        assert np.isnan(cb.data["hv"][0])
+
+        cb.notify(FakeAlgo(2, np.array([[-0.7, -0.8]]), np.array([[0.0]])))
+        assert np.isfinite(cb.data["hv"][1])
+
+    def test_hv_measures_coverage_of_the_archive_not_front_shape(self):
+        """HV is normalized by the cumulative archive, so a population that
+        collapses onto one end of the known front scores lower — normalizing
+        each generation by its own spread would report the same number."""
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+
+        both_ends = np.array([[-0.8, -0.9], [-0.6, -1.05]])
+        cb.notify(FakeAlgo(1, both_ends, np.array([[0.0], [0.0]])))
+        cb.notify(FakeAlgo(2, both_ends[:1], np.array([[0.0]])))
+
+        assert cb.data["hv"][1] < cb.data["hv"][0]
 
     def test_hv_zero_when_all_infeasible(self):
         from src.algorithm.monitoring import ConvergenceMonitorCallback
