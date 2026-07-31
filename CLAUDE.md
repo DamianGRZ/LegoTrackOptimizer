@@ -20,7 +20,7 @@
 
 | Server | When to use |
 |--------|-------------|
-| `context7` | **Before guessing any pymoo API.** Use proactively for library/API shapes, callback signatures, operator conventions, version-specific syntax. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs`. Do not guess pymoo internals from memory. |
+| `context7` | **ALWAYS verify with context7 when unsure about pymoo OR Python — never answer from memory.** Mandatory before asserting any pymoo API (class/operator/callback signatures, survival/crowding/constraint-handling behavior, version-specific syntax) and any non-trivial Python/stdlib/numpy/scipy semantics. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs` (verified ids: pymoo `/anyoptimization/pymoo`; Python/stdlib `/python/cpython`; numpy `/numpy/numpy`; scipy `/websites/scipy_doc_scipy`). If a claim about library behavior gates a code change or a design decision, cite the doc — do not guess. |
 
 ---
 
