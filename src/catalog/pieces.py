@@ -47,7 +47,6 @@ class TrackPiece:
     angle: Optional[float] = None
     direction: Optional[str] = None  # 'left' or 'right'
     radius_mm: Optional[float] = None
-    speed_limit_ms: float = 1.57  # Motor top speed default
     is_terminator: bool = False
     routes_data: Optional[List[Dict[str, Any]]] = None
 

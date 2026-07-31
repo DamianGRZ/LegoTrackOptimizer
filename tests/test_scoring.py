@@ -20,16 +20,19 @@ class TestSpeedProfile:
         assert profile.max_speed == pytest.approx(1.10, abs=0.01)
         assert np.all(profile.speeds <= train_config.v_motor_max)
 
-    def test_r40_circle_speed_limit(self, catalog, train_config):
-        """16 R40 curves limited to ~0.97 m/s (catalog limit)."""
+    def test_r40_circle_capped_by_lateral_slide(self, catalog, train_config):
+        """16 R40 curves cap at the sliding-derailment speed, the binding mode.
+
+        sqrt(mu_design * g * R) = sqrt(0.25 * 9.81 * 0.320) = 0.8859 m/s, well
+        under tip-over (1.4007) and Nadal wheel-climb (1.5092).
+        """
         chromosome = np.full(16, 2, dtype=np.int32)  # 16x R40_CURVE
         layout = build_layout(chromosome, catalog)
 
         profile = compute_speed_profile(layout, catalog, train_config=train_config)
 
-        # R40 curves cap at sqrt(mu_design * g * R) = sqrt(0.25 * 9.81 * 0.320) ~ 0.886 m/s
-        assert profile.avg_speed < 1.0
-        assert profile.max_speed <= 0.89
+        assert profile.max_speed == pytest.approx(0.8859, abs=1e-3)
+        assert profile.max_speed < train_config.v_motor_max
 
     def test_double_unroll_closure(self, catalog, train_config):
         """Closed loop speeds consistent at wrap point."""

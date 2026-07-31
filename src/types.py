@@ -45,7 +45,6 @@ class FKRoute:
     dtheta: float
     arc_length: float = 0.0
     radius_mm: Optional[float] = None
-    speed_limit: float = 1.57
 
     def to_array(self) -> NDArray[np.float64]:
         return np.array([self.dx, self.dy, self.dtheta], dtype=np.float64)
