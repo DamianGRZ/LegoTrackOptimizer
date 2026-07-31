@@ -3,7 +3,7 @@
 # but excludes wider racetrack/oval topologies, so the figure-8 around a
 # DOUBLE_CROSSOVER is competitive on utilisation.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 40

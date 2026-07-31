@@ -1,7 +1,7 @@
 # Smaller-population version of with_double_crossover.yaml for quick verification.
 # Identical inventory + boundary; pop_size and n_gen reduced for fast end-to-end.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 80

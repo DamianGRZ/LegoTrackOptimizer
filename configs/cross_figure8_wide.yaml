@@ -3,7 +3,7 @@
 # a self-crossing figure-8 (the two lobes cross perpendicularly through a
 # CROSS_90). The 360 x 220 box is wide enough for two side-by-side lobes.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 110

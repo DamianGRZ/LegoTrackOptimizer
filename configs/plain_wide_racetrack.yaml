@@ -4,7 +4,7 @@
 # R40 semicircle ends. Exercises the simple-loop / oval seed family and the
 # boundary-as-binding-constraint behaviour on a non-square box.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_24: 12

@@ -3,7 +3,7 @@
 # lobes stack vertically instead of side by side. Pairs with the wide variant to
 # show the figure-8 reorienting with the boundary aspect ratio.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 100

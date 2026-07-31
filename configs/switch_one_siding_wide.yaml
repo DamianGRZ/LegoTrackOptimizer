@@ -5,7 +5,7 @@
 # enough for the parallel branch to fit inside the boundary — a too-short box makes
 # every siding layout bust the boundary and stay infeasible.
 
-train_config_path: trains/default.yaml
+train_config_path: trains/measured_consist.yaml
 
 inventory:
   STRAIGHT_16: 90
