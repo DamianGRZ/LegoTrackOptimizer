@@ -31,6 +31,7 @@ from src.encoding import (
     get_active_double_crossovers,
     get_active_junctions,
 )
+from src.normalization import compromise_index, has_extent, ideal_nadir, normalize
 from src.operators import PartitionedCrossover, PartitionedMutation
 from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
@@ -54,6 +55,32 @@ def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
         if idx is not None:
             used = piece_counts.get(idx, 0)
             logger.info(f"  {piece_id}: {used}/{count}")
+
+
+def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
+                                   logger: logging.Logger) -> None:
+    """Log the raw span of both objectives and the balanced ASF pick.
+
+    The objectives sit on different scales, so the balanced solution is
+    chosen in normalized space (pymoo's compromise programming). The raw
+    spans are logged alongside it because the normalized axes of the Pareto
+    plot carry no units of their own.
+    """
+    if len(feasible_indices) == 0:
+        return
+
+    F_feas = F[feasible_indices]
+    ideal, nadir = ideal_nadir(F_feas)
+    logger.info(f"Objective scale (raw, minimized): f0 [{ideal[0]:.4g}, {nadir[0]:.4g}], "
+                f"f1 [{ideal[1]:.4g}, {nadir[1]:.4g}]")
+
+    if not has_extent(ideal, nadir):
+        logger.info("Feasible front is a single point - no compromise to pick")
+        return
+
+    idx = int(feasible_indices[compromise_index(normalize(F_feas, ideal, nadir))])
+    logger.info(f"Compromise (equal-weight ASF): individual {idx}, "
+                f"score={-F[idx, 0]:.1%}, speed={-F[idx, 1]:.2f} m/s")
 
 
 # =============================================================================
@@ -699,8 +726,7 @@ def run_optimization(
     # After FeasibleEliteCallback: the global elite's slot is no longer
     # "worst", so category injection never clobbers it.
     category_archive = CategoryEliteArchive()
-    monitor = ConvergenceMonitorCallback(ref_point=(0.10, -0.55),
-                                         output_dir=output_dir,
+    monitor = ConvergenceMonitorCallback(output_dir=output_dir,
                                          closure_tolerance=config.closure_tolerance,
                                          angle_tolerance=config.angle_tolerance)
     monitor.epsilon_source = algorithm
@@ -1014,6 +1040,8 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             logger.warning("No feasible solutions found")
     except Exception as e:
         logger.warning(f"Could not render best_layout.png: {e}")
+
+    log_front_scale_and_compromise(F, feasible_indices, logger)
 
     try:
         infeasible_indices = (

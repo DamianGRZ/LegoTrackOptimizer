@@ -10,6 +10,8 @@ from pymoo.indicators.hv import HV
 from pymoo.indicators.igd import IGD
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
+from src.normalization import HV_REF_POINT, has_extent, ideal_nadir
+
 
 # Column order of convergence.csv (and of the per-generation row values).
 _CSV_COLUMNS = (
@@ -36,6 +38,10 @@ class ConvergenceMonitorCallback(Callback):
     doubles as crash forensics (a dead run still leaves its full trajectory).
 
     Caveats for consumers:
+    - ``hv`` measures how much of the cumulative archive's box the live
+      population still covers, NOT progress: it drops when the population
+      loses an extreme point, so the series is not monotonic. NaN until the
+      archive spans a non-zero range on both objectives (see ``_hv``).
     - ``igd`` without an external ``pareto_ref`` is measured against the
       rolling best-known front, so values are NOT comparable across
       generations (the reference itself moves).
@@ -49,14 +55,12 @@ class ConvergenceMonitorCallback(Callback):
 
     def __init__(
         self,
-        ref_point: tuple[float, float] = (0.10, -0.55),
         pareto_ref: np.ndarray | None = None,
         output_dir: Path | None = None,
         closure_tolerance: float | None = None,
         angle_tolerance: float | None = None,
     ) -> None:
         super().__init__()
-        self.hv = HV(ref_point=np.asarray(ref_point, dtype=float))
         self.igd = IGD(pareto_ref) if pareto_ref is not None else None
         self.closure_tolerance = closure_tolerance
         self.angle_tolerance = angle_tolerance
@@ -95,7 +99,7 @@ class ConvergenceMonitorCallback(Callback):
         row: dict[str, int | float] = {
             "n_gen": int(algorithm.n_gen),
             "n_eval": int(algorithm.evaluator.n_eval),
-            "hv": float(self.hv.do(F_feas)) if n_feas else 0.0,
+            "hv": self._hv(F_feas) if n_feas else 0.0,
             "igd": self._igd(F_feas) if n_feas else _NAN,
             "n_feas": n_feas,
             "feas_rate": n_feas / max(1, len(pop)),
@@ -113,6 +117,32 @@ class ConvergenceMonitorCallback(Callback):
 
     # ------------------------------------------------------------------
     # Per-metric helpers
+
+    def _hv(self, F_feas: np.ndarray) -> float:
+        """Hypervolume of the feasible population in normalized objective space.
+
+        The ideal/nadir come from the run-cumulative archive, never from the
+        current generation: a front normalized by its own spread fills the
+        unit box by construction, and the indicator would then report the
+        front's shape rather than anything about the search.
+
+        Read this as COVERAGE, not progress: it is how much of the box the
+        archive has staked out that the live population still holds. It falls
+        whenever the population drops an extreme point, even though the
+        archive never shrinks, so the series is not monotonic.
+
+        NaN while the archive is a single point or flat on one objective —
+        there is no volume to measure against yet.
+        """
+        if self._best_F is None or len(self._best_F) == 0:
+            return _NAN
+        ideal, nadir = ideal_nadir(self._best_F)
+        if not has_extent(ideal, nadir):
+            return _NAN
+        indicator = HV(ref_point=np.asarray(HV_REF_POINT, dtype=float),
+                       norm_ref_point=False, zero_to_one=True,
+                       ideal=ideal, nadir=nadir)
+        return float(indicator.do(F_feas))
 
     def _igd(self, F_feas: np.ndarray) -> float:
         """IGD vs the external reference if given, else vs the rolling front."""
