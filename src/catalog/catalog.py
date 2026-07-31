@@ -32,29 +32,34 @@ _CANONICAL_PIECE_INDEX: Dict[str, int] = {
     "DOUBLE_CROSSOVER": 6,
 }
 
-# Default-route radius_mm / speed_limit per piece. The runtime tables store one
-# physics row per piece — its *default* route (see _default_route_name), whose
-# exit port is the FK row. The port-centric YAML doesn't carry per-route
-# physics, so these constants fill fk_table / radius_table / speed_table.
-_DEFAULT_PHYSICS: Dict[str, Tuple[Optional[float], float]] = {
-    # piece_id -> (radius_mm, speed_limit_ms) on the default route
-    "R40_CURVE": (320.0, 0.97),
+# Default-route radius in mm; None (like any unlisted piece) means that route
+# runs straight. The runtime tables store one geometry row per piece — its
+# *default* route (see _default_route_name), whose exit port is the FK row. The
+# port-centric YAML carries no per-route radius, so these constants fill
+# radius_table.
+#
+# Speed deliberately does NOT live here. Every cap is derived per segment in
+# src/train/physics.py from radius and train parameters, so exactly one place
+# decides how fast the train may go.
+_DEFAULT_RADIUS_MM: Dict[str, Optional[float]] = {
+    "R40_CURVE": 320.0,
 }
 
-# Per-route physics for multi-route pieces, used to build each piece's
-# routes_data list (radius/speed keyed by route name).
-_ROUTE_PHYSICS: Dict[str, Dict[str, Tuple[Optional[float], float]]] = {
-    "R40_SWITCH_LEFT":  {"through": (None, 1.57), "diverging": (320.0, 0.97)},
-    "R40_SWITCH_RIGHT": {"through": (None, 1.57), "diverging": (320.0, 0.97)},
+# Per-route radius for multi-route pieces, used to build each piece's
+# routes_data list. Diverging switch legs and double-crossover diagonals hold
+# the R40 radius; through routes run straight.
+_ROUTE_RADIUS_MM: Dict[str, Dict[str, Optional[float]]] = {
+    "R40_SWITCH_LEFT":  {"through": None, "diverging": 320.0},
+    "R40_SWITCH_RIGHT": {"through": None, "diverging": 320.0},
     "CROSS_90": {
-        "horizontal": (None, 1.57),
-        "vertical":   (None, 1.57),
+        "horizontal": None,
+        "vertical":   None,
     },
     "DOUBLE_CROSSOVER": {
-        "track1_through": (None, 1.57),
-        "track2_through": (None, 1.57),
-        "cross_1_to_2":   (320.0, 0.97),
-        "cross_2_to_1":   (320.0, 0.97),
+        "track1_through": None,
+        "track2_through": None,
+        "cross_1_to_2":   320.0,
+        "cross_2_to_1":   320.0,
     },
 }
 
@@ -70,14 +75,11 @@ class TrackCatalog:
         "bumper": PieceClass.BUMPER_1PORT,
     }
 
-    DEFAULT_SPEED = 1.57
-
     def __init__(self) -> None:
         self._pieces: Dict[str, TrackPiece] = {}
         self._index_to_piece: Dict[int, TrackPiece] = {}
         self._id_to_index: Dict[str, int] = {}
         self._fk_table: NDArray[np.float64] = np.zeros((0, 3))
-        self._speed_table: NDArray[np.float64] = np.zeros(0)
         self._radius_table: NDArray[np.float64] = np.zeros(0)
         self._arc_length_table: NDArray[np.float64] = np.zeros(0)
         self._topologies: Dict[int, PieceTopology] = {}
@@ -142,7 +144,7 @@ class TrackCatalog:
             )
 
             piece_type = ps.kind
-            radius_mm, speed_limit = _default_physics_for(ps)
+            radius_mm = _default_radius_for(ps)
 
             piece = TrackPiece(
                 id=ps.piece_id,
@@ -159,7 +161,6 @@ class TrackCatalog:
                        if ps.sector_angle_rad is not None else None),
                 direction=ps.hand,
                 radius_mm=radius_mm,
-                speed_limit_ms=speed_limit,
                 is_terminator=False,
                 routes_data=_build_routes_data(ps),
             )
@@ -210,7 +211,6 @@ class TrackCatalog:
                     dtheta=piece.fk.dtheta,
                     arc_length=piece.arc_length,
                     radius_mm=piece.radius_mm,
-                    speed_limit=piece.speed_limit_ms,
                 ),
             )
 
@@ -228,7 +228,6 @@ class TrackCatalog:
                     dtheta=fk_data.get("dtheta", 0.0),
                     arc_length=piece.arc_length,
                     radius_mm=physics.get("radius_mm"),
-                    speed_limit=physics.get("speed_limit_ms", self.DEFAULT_SPEED),
                 )
             )
 
@@ -239,14 +238,12 @@ class TrackCatalog:
         n = self._max_index + 1
 
         self._fk_table = np.zeros((n, 3), dtype=np.float64)
-        self._speed_table = np.full(n, self.DEFAULT_SPEED, dtype=np.float64)
         self._radius_table = np.full(n, np.inf, dtype=np.float64)
         self._arc_length_table = np.zeros(n, dtype=np.float64)
 
         for idx, piece in self._index_to_piece.items():
             if 0 <= idx < n:
                 self._fk_table[idx] = piece.fk.to_array()
-                self._speed_table[idx] = piece.speed_limit_ms
                 if piece.radius_mm:
                     self._radius_table[idx] = piece.radius_mm
                 self._arc_length_table[idx] = piece.arc_length
@@ -286,11 +283,6 @@ class TrackCatalog:
         indices = np.asarray(indices, dtype=np.int32)
         return self._vectorized_lookup(indices, self._arc_length_table, 0.0)
 
-    def get_speed_limits(self, indices: NDArray) -> NDArray[np.float64]:
-        """Get speed limits in m/s for piece indices."""
-        indices = np.asarray(indices, dtype=np.int32)
-        return self._vectorized_lookup(indices, self._speed_table, self.DEFAULT_SPEED)
-
     def get_topology(self, piece_idx: int) -> Optional[PieceTopology]:
         """Get topology metadata for piece index."""
         return self._topologies.get(piece_idx)
@@ -326,15 +318,6 @@ class TrackCatalog:
             return float(self._radius_table[piece_idx])
         return np.inf
 
-    def get_speed_route(self, piece_idx: int, route_idx: int = 0) -> float:
-        """Speed limit (m/s) of a specific route."""
-        topo = self._topologies.get(piece_idx)
-        if topo is not None and 0 <= route_idx < len(topo.routes):
-            return float(topo.routes[route_idx].speed_limit)
-        if 0 <= piece_idx < len(self._speed_table):
-            return float(self._speed_table[piece_idx])
-        return self.DEFAULT_SPEED
-
     def get_route_radii(
         self, piece_indices: NDArray, route_indices: NDArray
     ) -> NDArray[np.float64]:
@@ -349,19 +332,6 @@ class TrackCatalog:
                 int(piece_indices[pos]), int(route_indices[pos])
             )
         return radii
-
-    def get_route_speeds(
-        self, piece_indices: NDArray, route_indices: NDArray
-    ) -> NDArray[np.float64]:
-        """Per-piece speed limits along the traversed route (see get_route_radii)."""
-        piece_indices = np.asarray(piece_indices, dtype=np.int32)
-        route_indices = np.asarray(route_indices, dtype=np.int32)
-        speeds = self.get_speed_limits(piece_indices)
-        for pos in np.flatnonzero(route_indices):
-            speeds[pos] = self.get_speed_route(
-                int(piece_indices[pos]), int(route_indices[pos])
-            )
-        return speeds
 
     def classify_pieces(self) -> Dict[PieceClass, List[int]]:
         """Group pieces by class."""
@@ -395,10 +365,6 @@ class TrackCatalog:
     @property
     def radius_table(self) -> NDArray[np.float64]:
         return self._radius_table
-
-    @property
-    def speed_table(self) -> NDArray[np.float64]:
-        return self._speed_table
 
     @property
     def arc_length_table(self) -> NDArray[np.float64]:
@@ -466,20 +432,17 @@ def _default_route_name(ps: TrackPieceSpec) -> str:
     return next(iter(ps.routes))
 
 
-def _default_physics_for(ps: TrackPieceSpec) -> Tuple[Optional[float], float]:
-    """Return (radius_mm, speed_limit_ms) for ps's default route.
+def _default_radius_for(ps: TrackPieceSpec) -> Optional[float]:
+    """Radius in mm of ps's default route; None when that route runs straight.
 
-    The port-centric YAML doesn't encode per-route physics; we map known
-    piece_ids to their physics values, falling back to (None, DEFAULT_SPEED).
+    The port-centric YAML doesn't encode per-route radii, so known piece_ids
+    map to their value here.
     """
-    default_speed = TrackCatalog.DEFAULT_SPEED
     default_route = _default_route_name(ps)
-    per_route = _ROUTE_PHYSICS.get(ps.piece_id)
+    per_route = _ROUTE_RADIUS_MM.get(ps.piece_id)
     if per_route and default_route in per_route:
         return per_route[default_route]
-    if ps.piece_id in _DEFAULT_PHYSICS:
-        return _DEFAULT_PHYSICS[ps.piece_id]
-    return (None, default_speed)
+    return _DEFAULT_RADIUS_MM.get(ps.piece_id)
 
 
 def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
@@ -494,7 +457,7 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
         return None
 
     port_names = list(ps.ports)
-    per_route_physics = _ROUTE_PHYSICS.get(ps.piece_id, {})
+    per_route_radius = _ROUTE_RADIUS_MM.get(ps.piece_id, {})
 
     out: List[Dict[str, Any]] = []
     for name, port_seq in ps.routes.items():
@@ -510,8 +473,6 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
             entry_port_spec, exit_port_spec
         )
 
-        radius_mm, speed_limit = per_route_physics.get(name, (None, TrackCatalog.DEFAULT_SPEED))
-
         out.append({
             "name": name,
             "entry_port": port_names.index(entry_name),
@@ -522,8 +483,7 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
                 "dtheta": math.degrees(dtheta_rad),
             },
             "physics": {
-                "radius_mm": radius_mm,
-                "speed_limit_ms": speed_limit,
+                "radius_mm": per_route_radius.get(name),
             },
         })
     return out

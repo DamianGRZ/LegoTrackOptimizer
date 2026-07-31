@@ -89,13 +89,15 @@ class TestVectorizedLookup:
         assert radii[0] == np.inf  # Straight has infinite radius
         assert radii[1] == pytest.approx(320.0)  # R40 = 320mm
 
-    def test_get_speed_limits(self, catalog: TrackCatalog):
-        """Speed limit lookup works."""
-        indices = np.array([0, 2])  # STRAIGHT_16, R40_CURVE
-        speeds = catalog.get_speed_limits(indices)
+    def test_catalog_carries_no_speed(self, catalog: TrackCatalog):
+        """The catalog holds geometry only; speed is derived in train/physics.py.
 
-        assert speeds[0] == pytest.approx(1.57)  # Straight = motor top speed
-        assert speeds[1] == pytest.approx(0.97)  # R40 curve limit
+        A stored speed is a second source of truth for a quantity the profiler
+        already computes from radius and train parameters, and the two drift.
+        """
+        for removed in ("get_speed_limits", "get_route_speeds", "get_speed_route",
+                        "speed_table", "DEFAULT_SPEED"):
+            assert not hasattr(catalog, removed), f"{removed} is back on the catalog"
 
     def test_get_arc_lengths(self, catalog: TrackCatalog):
         """Arc length lookup works."""
