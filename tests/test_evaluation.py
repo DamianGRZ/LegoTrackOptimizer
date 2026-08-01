@@ -197,19 +197,21 @@ class TestEnergyDomain:
 
 
 class TestProblemIntegration:
-    """Integration: F[1] in TrackOptimizationProblem._evaluate is -avg_speed, minimized."""
+    """Integration: F[1] in TrackOptimizationProblem._evaluate is traversal time."""
 
-    def test_F1_is_neg_avg_speed(self, switches_config, catalog):
-        """F[1] from _evaluate should equal -phys.speed_profile.avg_speed.
-        avg_speed (length-independent) is preferred over lap_time so longer
-        layouts are not penalized just for being longer."""
+    def test_F1_is_lap_time_for_single_route(self, switches_config, catalog):
+        """F[1] from _evaluate should equal phys.speed_profile.lap_time.
+
+        The whole-graph traversal time of a switch-free layout is exactly its
+        one route's lap time, so the physical evaluation stack must agree with
+        the objective."""
         from src.problem import TrackOptimizationProblem
         from src.sampling import IntegerSampling
         problem = TrackOptimizationProblem(catalog=catalog, config=switches_config)
         # seed=0 makes sampling deterministic AND yields a switch-free (single-route)
-        # layout, so F[1] (= -slowest-route speed) reduces to -avg_speed of that one
-        # route. Without a seed this was flaky: a random switched layout makes F[1]
-        # the slowest route, which differs from the main-path avg_speed asserted below.
+        # layout, so F[1] (whole-graph time) reduces to that route's lap_time.
+        # Without a seed this was flaky: a random switched layout charges branch
+        # and bypassed pieces too, which exceeds the main path's lap_time.
         sampler = IntegerSampling(catalog=catalog, config=switches_config, seed=0)
         pop = sampler.do(problem, 1)
         x = pop[0].X
@@ -227,4 +229,4 @@ class TestProblemIntegration:
             assert np.isinf(F[1])
         else:
             phys = evaluate_layout(layout, catalog, problem._train_config, safety_margin=0.95)
-            assert F[1] == pytest.approx(-phys.speed_profile.avg_speed, abs=1e-6)
+            assert F[1] == pytest.approx(phys.speed_profile.lap_time, abs=1e-6)

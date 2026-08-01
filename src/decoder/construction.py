@@ -809,6 +809,7 @@ def _compute_single_path(
     piece_sequence: List[int] = []
     route_indices: List[int] = []
     flip_sequence: List[int] = []
+    piece_uids: List[Tuple[str, int, int]] = []
     divergent_ranges: Dict[int, Tuple[int, int]] = {}
     fk_overrides: Dict[int, Tuple[float, float, float]] = {}
     current_pos = 0
@@ -818,6 +819,7 @@ def _compute_single_path(
         piece_sequence.append(main_pieces[pos])
         route_indices.append(routes.get(pos, THROUGH))
         flip_sequence.append(main_flips[pos] if pos < len(main_flips) else 0)
+        piece_uids.append(("main", pos, 0))
 
     for i, pair in enumerate(switch_pairs):
         choice = route_choices[i] if i < len(route_choices) else 0
@@ -833,17 +835,23 @@ def _compute_single_path(
             piece_sequence.append(entry_switch)
             route_indices.append(THROUGH)
             flip_sequence.append(0)
+            piece_uids.append(("main", pair.in_position, 0))
             for pos in range(pair.in_position + 1, pair.out_position):
                 append_main(pos)
             piece_sequence.append(exit_switch)
             route_indices.append(THROUGH)
             flip_sequence.append(0)
+            piece_uids.append(("main", pair.out_position, 0))
         else:
             piece_sequence.append(entry_switch)
             route_indices.append(DIVERGING)
             flip_sequence.append(0)
+            piece_uids.append(("main", pair.in_position, 0))
             piece_sequence.extend(pair.branch_pieces)
             route_indices.extend([THROUGH] * len(pair.branch_pieces))
+            piece_uids.extend(
+                ("branch", i, k) for k in range(len(pair.branch_pieces))
+            )
             # Branch flips come from the template (per-curve flip already encoded
             # in SwitchPair.branch_flips by _inject_switches).
             branch_flips = (
@@ -860,6 +868,7 @@ def _compute_single_path(
             # slot in _compute_path_fk, so merge_fk still sets the geometry.
             route_indices.append(DIVERGING)
             flip_sequence.append(0)
+            piece_uids.append(("main", pair.out_position, 0))
             fk_overrides[exit_seq_idx] = pair.merge_fk
             divergent_ranges[i] = (in_seq_idx, exit_seq_idx)
 
@@ -880,6 +889,7 @@ def _compute_single_path(
         angle_error=angle_error,
         divergent_ranges=divergent_ranges,
         route_indices=route_indices,
+        piece_uids=piece_uids,
     )
 
 

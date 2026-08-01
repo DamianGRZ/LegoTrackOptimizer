@@ -2,9 +2,10 @@
 
 A multi-objective genetic algorithm that designs **closed LEGO/4DBrix railway layouts**
 from a fixed box of track pieces. Given an inventory and a rectangular boundary, it
-searches for layouts that maximize **piece utilization** and **train speed** while
-staying geometrically valid — the loop must close, fit inside the boundary, respect
-the inventory, and avoid illegal self-intersections.
+searches for layouts that maximize **piece utilization** and minimize the **expected
+time to traverse the whole network** while staying geometrically valid — the loop
+must close, fit inside the boundary, respect the inventory, and avoid illegal
+self-intersections.
 
 Built on [pymoo](https://pymoo.org/) (NSGA-II) with a custom domain-specific
 encoding, decoder, genetic operators, repair pipeline, and a locomotive physics
@@ -38,14 +39,16 @@ one in both **position** and **heading**. Add passing sidings, crossings, and a
 finite box of parts, and the search space explodes. This project treats layout
 design as a **constrained multi-objective optimization problem** and lets an
 evolutionary algorithm explore it — rewarding layouts that use more of the kit and
-let a train run faster, while enforcing buildability by construction and repair.
+cover their whole network in less time, while enforcing buildability by construction
+and repair.
 
 ---
 
 ## Key features
 
-- **Bi-objective optimization** — simultaneously maximizes piece utilization and the
-  speed of the *slowest* traversal route (so branch geometry actually matters).
+- **Bi-objective optimization** — maximizes piece utilization while minimizing the
+  expected traversal time of the *whole* network (every physical piece counts, so
+  branch geometry actually matters — and the two goals genuinely conflict).
 - **Inventory-driven, variable-size search** — the chromosome length is derived from
   the inventory at runtime; it is never hardcoded. Unused capacity is encoded with an
   `INACTIVE` sentinel, so topologies of different sizes compete in one population.
@@ -73,7 +76,7 @@ be built, and an **evolutionary loop** breeds the survivors. The stages below fo
 that journey.
 
 ```
-data/track_pieces_v2.yaml ─► TrackCatalog (FK tables, speed limits, routes)
+data/track_pieces_v2.yaml ─► TrackCatalog (FK tables, radii, routes; no speed data)
 configs/*.yaml            ─► OptimizationConfig (inventory, boundary, algorithm)
                                       │
 main.py ─► NSGA-II + IntegerSampling ─► Problem._evaluate()
@@ -125,9 +128,11 @@ Two goals pull on every layout, and they genuinely conflict:
 - **Use more of the kit** — `F[0]` rewards weighted piece utilization, counting each
   siding, crossing, and double-crossover as more than one piece; otherwise the GA
   would strip multi-path topology away as dead weight.
-- **Run faster** — `F[1]` rewards the average speed of the *slowest* of all `2^J`
-  routes (at a 0.95 safety margin), so a fast through-line can't hide a crawling,
-  curve-choked branch.
+- **Cover the network fast** — `F[1]` is the expected time to traverse every
+  physical piece once: each of the `2^J` routes is speed-profiled (at a 0.95 safety
+  margin), each piece is charged the mean of its traversal times across the routes
+  that pass it, and the objective sums over distinct pieces. Every siding branch and
+  bypassed straight costs real seconds, so density trades directly against time.
 
 Buildability is enforced separately, as **inequality constraints** (there are no
 equality constraints): the loop must close in `x`, `y`, and heading; everything must
@@ -172,18 +177,20 @@ The kit is **R40-only** (no R56/R104). `R40_CURVE` is one physical SKU; left vs.
 turn is chosen per placement via a flip bit. Switches keep separate LEFT/RIGHT entries
 because their port geometry is not a simple mirror.
 
-| Index | Piece | Geometry | Speed limit |
-|---|---|---|---|
-| 0 | `STRAIGHT_16` | 16-stud straight | 1.57 m/s |
-| 1 | `STRAIGHT_24` | 24-stud straight | 1.57 m/s |
-| 2 | `R40_CURVE` | 22.5° curve (16 per circle); direction = flip bit | 0.97 m/s |
-| 3 | `CROSS_90` | 90° crossing (FK identical to `STRAIGHT_16`) | 1.57 m/s |
-| 4 | `R40_SWITCH_LEFT` | left switch, 32-stud body | through 1.57 / diverge 0.97 m/s |
-| 5 | `R40_SWITCH_RIGHT` | right switch, 32-stud body | through 1.57 / diverge 0.97 m/s |
-| 6 | `DOUBLE_CROSSOVER` | 48×16, 4 routes (2 through + 2 diagonal) | through 1.57 / cross 0.97 m/s |
+| Index | Piece | Geometry |
+|---|---|---|
+| 0 | `STRAIGHT_16` | 16-stud straight |
+| 1 | `STRAIGHT_24` | 24-stud straight |
+| 2 | `R40_CURVE` | 22.5° curve (16 per circle); direction = flip bit |
+| 3 | `CROSS_90` | 90° crossing (FK identical to `STRAIGHT_16`) |
+| 4 | `R40_SWITCH_LEFT` | left switch, 32-stud body; through straight / diverge R40 arc |
+| 5 | `R40_SWITCH_RIGHT` | right switch, 32-stud body; through straight / diverge R40 arc |
+| 6 | `DOUBLE_CROSSOVER` | 48×16, 4 routes (2 through + 2 diagonal) |
 
-Geometry and speed limits live in `data/track_pieces_v2.yaml` (a port-centric schema
-derived from 4DBrix part dimensions).
+Geometry lives in `data/track_pieces_v2.yaml` (a port-centric schema derived from
+4DBrix part dimensions). Speed caps are not catalog data: they are derived at runtime
+from train physics (`src/train/physics.py`) — straights bind at the measured motor cap,
+R40-radius segments at the lateral-slide cap.
 
 ---
 
@@ -311,8 +318,8 @@ Bundled configs in `configs/` include `default`, `compact`, `with_switches`,
 Results are written under a single `outputs/` tree (gitignored). Depending on the run:
 
 - `best_layout.png` — the rendered champion layout.
-- `pareto_front.png` — the run-level Pareto front (utilization vs. speed), both axes
-  normalized to the range the run actually spanned, with 1 = best.
+- `pareto_front.png` — the run-level Pareto front (utilization vs. traversal time),
+  both axes normalized to the range the run actually spanned, with 1 = best.
 - `chromosomes.csv` / `constraints.csv` — final-population genomes and constraint values.
 - `convergence.csv` — per-generation telemetry appended live (HV, IGD, feasibility,
   best objectives, unique-`F` counts, epsilon, and generation wall-time).
@@ -335,7 +342,7 @@ main.py                     CLI entry point (load config + catalog, run, save)
 run_v1_all_configs.py        Batch runner over every config
 run_replications.py          Seeded-replication harness (one config × many seeds)
 configs/                     Optimization configs (inventory, boundary, algorithm)
-data/track_pieces_v2.yaml    Track-piece catalog (FK, speed limits, routes)
+data/track_pieces_v2.yaml    Track-piece catalog (FK, radii, routes)
 src/
   problem.py                 TrackOptimizationProblem (objectives + constraints)
   encoding.py                Partitioned chromosome dimensions, bounds, gene access
@@ -348,7 +355,7 @@ src/
   repair.py                  4-stage repair pipeline
   types.py                   Layout / path / descriptor dataclasses
   config.py                  Pydantic config models
-  catalog/                   Catalog loading + FK/speed/topology tables
+  catalog/                   Catalog loading + FK/radius/topology tables
   train/                     Locomotive physics + speed profiler
   algorithm/                 run_optimization(), callbacks, monitoring
   visualization/             Layout & Pareto-front renderers

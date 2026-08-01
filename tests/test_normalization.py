@@ -2,13 +2,22 @@
 
 import numpy as np
 import pytest
+from pymoo.decomposition.asf import ASF
+from pymoo.indicators.hv import HV
 
 from src.normalization import (
+    HV_REF_POINT,
     compromise_index,
     has_extent,
     ideal_nadir,
     normalize,
 )
+
+
+def _sample_front(n: int = 200) -> np.ndarray:
+    """Deterministic F in the real objective scale: -utilization and seconds."""
+    rng = np.random.default_rng(0)
+    return np.column_stack([-rng.uniform(0.05, 0.62, n), rng.uniform(2.3, 15.8, n)])
 
 
 class TestIdealNadir:
@@ -64,3 +73,47 @@ class TestCompromiseIndex:
         nF = np.array([[0.05, 0.9], [0.9, 0.05]])
         assert compromise_index(nF, np.array([0.9, 0.1])) == 0
         assert compromise_index(nF, np.array([0.1, 0.9])) == 1
+
+
+class TestPymooReferenceEquivalence:
+    """Pin the implementation to pymoo's Getting-Started Part 3 reference.
+
+    Each test recomputes the documented formula inline and demands a match,
+    so a change in pymoo's normalization or decomposition internals surfaces
+    here instead of silently shifting every reported front.
+    """
+
+    def test_normalize_matches_the_documented_formula(self):
+        """Part 3: ``nF = (F - approx_ideal) / (approx_nadir - approx_ideal)``."""
+        F = _sample_front()
+        approx_ideal, approx_nadir = F.min(axis=0), F.max(axis=0)
+        expected = (F - approx_ideal) / (approx_nadir - approx_ideal)
+
+        assert normalize(F, *ideal_nadir(F)) == pytest.approx(expected, abs=1e-12)
+
+    def test_compromise_matches_the_documented_asf_call(self):
+        """Part 3: ``i = ASF().do(nF, 1/weights).argmin()`` — weights inverted."""
+        F = _sample_front()
+        nF = normalize(F, *ideal_nadir(F))
+
+        for weights in (np.array([0.5, 0.5]), np.array([0.2, 0.8])):
+            assert compromise_index(nF, weights) == ASF().do(nF, 1 / weights).argmin()
+
+    def test_hypervolume_is_scale_free(self):
+        """The zero_to_one path equals manual normalization, and rescaling an
+        objective must not move the indicator — otherwise HV would be
+        incomparable between runs whose objectives span different ranges."""
+        F = _sample_front(40)
+        ref_point = np.asarray(HV_REF_POINT, dtype=float)
+
+        def hv_normalized(objectives):
+            ideal, nadir = ideal_nadir(objectives)
+            return HV(ref_point=ref_point, norm_ref_point=False, zero_to_one=True,
+                      ideal=ideal, nadir=nadir).do(objectives)
+
+        hv = hv_normalized(F)
+        manual = HV(ref_point=ref_point).do(normalize(F, *ideal_nadir(F)))
+
+        assert hv == pytest.approx(manual)
+        assert hv > 0.0, "ref point 1.1 must be dominated by the normalized front"
+        assert hv == pytest.approx(hv_normalized(F * np.array([1.0, 1000.0])))

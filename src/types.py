@@ -176,6 +176,14 @@ class TraversalPath:
     # speed profiler uses it so branch and diagonal segments are curve-speed-limited
     # instead of scored at through-route physics.
     route_indices: List[int] = field(default_factory=list)
+    # Physical-piece identity per piece in piece_sequence (parallel list):
+    # ("main", slot, 0) for a main-loop slot, ("branch", pair_idx, k) for the
+    # k-th branch piece of switch pair pair_idx. Paths sharing a physical piece
+    # carry the same uid, so per-piece quantities can be aggregated across the
+    # 2^J routes without double-counting. Note a descriptor CROSS_90 /
+    # DOUBLE_CROSSOVER is ONE physical piece on TWO main slots (two uids);
+    # consumers unify them via the layout's junction records.
+    piece_uids: List[Tuple[str, int, int]] = field(default_factory=list)
 
     @property
     def n_pieces(self) -> int:

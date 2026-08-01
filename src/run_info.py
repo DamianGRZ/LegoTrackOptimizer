@@ -24,6 +24,7 @@ from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import compute_dimensions
+from src.intersection import CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOG = logging.getLogger(__name__)
@@ -155,18 +156,35 @@ def write_run_info_header(
 
 
 def count_pieces(layout) -> dict[int, int]:
-    """Per-piece-index census: main loop (or legacy indices) + siding branches."""
+    """Per-piece-index census of PHYSICAL pieces: main loop + siding branches.
+
+    A descriptor CROSS_90 / DOUBLE_CROSSOVER spans TWO main-loop slots but is
+    one physical piece, so both types are charged from the layout's junction
+    records instead of per slot (mirroring the evaluation-pipeline census in
+    ``problem._compute_per_type_inventory_violation``). Legacy single-loop
+    layouts (bare ``indices``) count per slot.
+    """
     counts: dict[int, int] = {}
     main = getattr(layout, "main_loop_pieces", None)
     if main is None:
-        main = getattr(layout, "indices", [])
+        for p in getattr(layout, "indices", []):
+            if p >= 0:
+                counts[p] = counts.get(p, 0) + 1
+        return counts
+
+    paired = (CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX)
     for p in main:
-        if p >= 0:
+        if p >= 0 and p not in paired:
             counts[p] = counts.get(p, 0) + 1
     for pair in getattr(layout, "switch_pairs", []) or []:
         for p in pair.branch_pieces:
             if p >= 0:
                 counts[p] = counts.get(p, 0) + 1
+    if layout.n_cross_pieces:
+        counts[CROSS_90_INDEX] = layout.n_cross_pieces
+    n_dc = len(getattr(layout, "dbl_crossovers", []))
+    if n_dc:
+        counts[DOUBLE_CROSSOVER_INDEX] = n_dc
     return counts
 
 
@@ -183,10 +201,10 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
     return rows
 
 
-def _format_individual(label: str, layout, util: float, speed: float,
+def _format_individual(label: str, layout, util: float, time_s: float,
                        cv: float | None) -> list[str]:
     line = (f"- **{label}**: {layout.n_pieces} pieces, util={util:.1%}, "
-            f"speed={speed:.2f} m/s, switch_pairs={layout.n_switch_pairs}")
+            f"time={time_s:.2f} s, switch_pairs={layout.n_switch_pairs}")
     if cv is not None:
         line += f", CV={cv:.2f}"
     return [line]
@@ -274,7 +292,7 @@ def append_run_summary(
         )
         lines += _format_individual(
             "Best feasible", best_feas_layout,
-            float(-F[best_feas, 0]), float(-F[best_feas, 1]), cv=None,
+            float(-F[best_feas, 0]), float(F[best_feas, 1]), cv=None,
         )
 
     best_overall = int(np.argmin(F[:, 0]))
@@ -288,7 +306,7 @@ def append_run_summary(
                      else "Best overall (infeasible)")
     lines += _format_individual(
         overall_label, overall_layout,
-        float(-F[best_overall, 0]), float(-F[best_overall, 1]), cv=overall_cv,
+        float(-F[best_overall, 0]), float(F[best_overall, 1]), cv=overall_cv,
     )
 
     usage_layout = best_feas_layout or overall_layout

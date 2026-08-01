@@ -97,8 +97,9 @@ class TestTrackOptimizationProblem:
 
         # F[0] = -utilization (negative to maximize)
         assert out["F"][0] < 0
-        # F[1] = -(slowest route's avg speed): negative for any closed loop.
-        assert out["F"][1] < 0
+        # F[1] = expected traversal time in seconds: positive, minimized directly.
+        assert out["F"][1] > 0
+        assert np.isfinite(out["F"][1])
 
     def test_feasible_circle_constraints(self, catalog, default_config):
         """Closed circle should satisfy closure, boundary, collision, and inventory constraints.
@@ -135,13 +136,12 @@ class TestTrackOptimizationProblem:
         assert loose.closure_tolerance == 10.0
         assert tight.closure_tolerance == 0.1
 
-    def test_oval_route_pace_exceeds_circle(self, catalog, default_config):
-        """Adding straights raises the route PACE under the slowest-route objective.
+    def test_oval_takes_longer_than_circle(self, catalog, default_config):
+        """Adding straights lengthens the network, so traversal time grows.
 
-        F[1] = -(slowest route's avg speed). The oval accelerates along its
-        straights, so its overall pace exceeds the all-curve circle's. (Under
-        the old per-segment-bottleneck objective the two were equal; under pace
-        semantics they differ.)
+        F[1] = expected traversal time. The oval is the circle plus 8 straights
+        — more track to cover — so its F[1] must exceed the circle's. This is
+        the conflict with utilization the objective exists to create.
         """
         problem = TrackOptimizationProblem(catalog, default_config)
         dims = problem.dims
@@ -161,9 +161,8 @@ class TestTrackOptimizationProblem:
 
         # If oval didn't close (Stage B: G[0]=closure_x, G[1]=closure_y), comparison doesn't apply.
         if out_oval["G"][0] <= 0 and out_oval["G"][1] <= 0:
-            # -F[1] is speed; a faster route is a more-negative F[1].
-            assert out_oval["F"][1] < out_circle["F"][1] - 1e-6, (
-                f"oval pace must exceed circle pace: circle F[1]={out_circle['F'][1]}, "
+            assert out_oval["F"][1] > out_circle["F"][1] + 1e-6, (
+                f"more track must take longer: circle F[1]={out_circle['F'][1]}, "
                 f"oval F[1]={out_oval['F'][1]}"
             )
 
@@ -217,22 +216,22 @@ class TestInfeasibilitySentinel:
         )
 
 
-class TestF1SlowestRoutePace:
-    """F[1] = -(avg speed of the slowest traversal route).
+class TestF1SingleRouteTime:
+    """F[1] = expected traversal time; for one route it is that loop's lap time.
 
-    Per-segment derailment safety is enforced inside the speed profile, so the
-    objective shapes throughput: each route's overall pace (avg_speed), worst
-    route wins. For a single-route layout F[1] is just that loop's pace.
+    Per-segment derailment safety is enforced inside the speed profile: the
+    3-pass profiler brakes for curves and accelerates on straights, and F[1]
+    integrates the resulting per-segment times over the network.
     """
 
-    def test_f1_reflects_route_pace_not_bottleneck(self, catalog, default_config):
-        """F[1] for a single-route closed layout equals -avg_speed at the margin.
+    def test_f1_is_profile_time_not_bottleneck_time(self, catalog, default_config):
+        """F[1] for a single-route closed layout equals the profile's lap_time.
 
         Uses an oval (curves + straights) so avg_speed and min_speed diverge —
-        the forward-backward pass lets the train accelerate on the straights,
-        pulling the route PACE (avg) above the per-segment bottleneck (min).
-        F[1] must track the pace (avg), proving it is the route speed and not
-        the worst-segment speed.
+        covering the distance at the bottleneck (min) speed would take strictly
+        longer than the accel/brake-aware profile time. F[1] must equal the
+        profile's lap_time, proving it integrates the 3-pass dynamics rather
+        than dividing distance by the worst-segment speed.
         """
         import numpy as np
         from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
@@ -263,21 +262,23 @@ class TestF1SlowestRoutePace:
             layout, catalog, train_config=problem._train_config,
             safety_margin=SPEED_SAFETY_MARGIN,
         )
-        # Precondition: avg and min differ so the test distinguishes pace from bottleneck.
+        # Precondition: avg and min differ so profile time and bottleneck time differ.
         assert profile.avg_speed > profile.min_speed + 1e-6, (
             f"Test precondition broken: avg={profile.avg_speed}, min={profile.min_speed} "
-            f"are too close to distinguish pace vs bottleneck."
+            f"are too close to distinguish profile time from bottleneck time."
         )
-        expected = -profile.avg_speed
-        assert abs(out["F"][1] - expected) < 1e-9, (
-            f"F[1]={out['F'][1]}, expected -avg_speed={expected} "
-            f"(per-segment min was {-profile.min_speed})."
+        assert abs(out["F"][1] - profile.lap_time) < 1e-9, (
+            f"F[1]={out['F'][1]}, expected lap_time={profile.lap_time}."
+        )
+        bottleneck_time = profile.total_distance / profile.min_speed
+        assert out["F"][1] < bottleneck_time - 1e-6, (
+            f"F[1]={out['F'][1]} must beat distance/min_speed={bottleneck_time}: "
+            f"the profiler accelerates on straights."
         )
 
     def test_f1_for_closed_r40_circle_is_friction_bound(self, catalog, default_config):
-        """For an all-R40 circle avg==min (no straights to accelerate on), so
-        F[1] = -avg_speed lands in the curve-bound range, strictly below the
-        1.57 m/s straight speed cap.
+        """An all-R40 circle runs curve-bound, so its time exceeds the
+        straight-cap time for the same distance (no straights to accelerate on).
         """
         import numpy as np
         from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
@@ -300,26 +301,36 @@ class TestF1SlowestRoutePace:
             layout, catalog, train_config=problem._train_config,
             safety_margin=SPEED_SAFETY_MARGIN,
         )
-        assert abs(out["F"][1] - (-profile.avg_speed)) < 1e-9, (
-            f"F[1]={out['F'][1]} must equal -avg_speed={-profile.avg_speed}; "
+        assert abs(out["F"][1] - profile.lap_time) < 1e-9, (
+            f"F[1]={out['F'][1]} must equal lap_time={profile.lap_time}; "
             f"min_speed was {profile.min_speed}"
         )
-        # Friction-bound curves are strictly slower than the straight cap (1.57 m/s).
-        assert out["F"][1] > -1.5, (
-            f"F[1]={out['F'][1]}: a pure-curve circle cannot approach the straight cap."
+        # Curve-bound: strictly slower than covering the distance at the
+        # motor-capped straight speed.
+        straight_cap_time = profile.total_distance / (1.57 * SPEED_SAFETY_MARGIN)
+        assert out["F"][1] > straight_cap_time, (
+            f"F[1]={out['F'][1]}: a pure-curve circle cannot approach "
+            f"straight-cap pace ({straight_cap_time})."
         )
 
 
-class TestF1MultiPathSlowestRoute:
-    """F[1] is the average speed of the layout's SLOWEST traversal route.
+class TestF1WholeGraphTime:
+    """F[1] covers the WHOLE physical network, not just one route.
 
-    The speed objective must "see" branch geometry: every one of the 2^J routes
-    (take/skip each siding) is scored, and F[1] is the slowest route's overall
-    pace (avg_speed at the operating safety margin). A switchless layout has one
-    route, so F[1] reduces to that loop's pace.
+    Every one of the 2^J routes (take/skip each siding) is profiled; each
+    physical piece is charged the mean of its traversal times across all
+    passages (identity via piece_uids), and F[1] sums over distinct pieces.
+    A switchless layout has one route, so F[1] reduces to its lap time.
     """
 
-    def test_f1_equals_slowest_route_pace(self, switches_config, catalog):
+    def test_f1_equals_per_piece_mean_over_routes(self, switches_config, catalog):
+        """Definition check: F[1] == independent per-piece mean recomputation.
+
+        On an oval+siding both routes and both exclusive piece sets (branch,
+        bypassed straights) are charged, so F[1] strictly exceeds every single
+        route's lap time — the whole-graph property the slowest-route
+        objective lacked.
+        """
         import numpy as np
         from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
         from src.decoder import decode_chromosome
@@ -331,11 +342,7 @@ class TestF1MultiPathSlowestRoute:
         problem = TrackOptimizationProblem(catalog, switches_config)
         dims = problem.dims
 
-        inv = {
-            catalog._id_to_index[k]: v
-            for k, v in switches_config.inventory.items()
-            if k in catalog._id_to_index
-        }
+        inv = catalog.inventory_by_index(switches_config.inventory)
         variants = _gen_oval_with_siding(inv, dims)
         assert variants, "seeder produced no oval+siding variant for this inventory"
         pieces, flips, junctions, *_ = variants[0]
@@ -353,17 +360,20 @@ class TestF1MultiPathSlowestRoute:
             dims=dims, config=problem.decoder_config,
         )
         assert layout.n_switch_pairs >= 1 and layout.n_paths >= 2, (
-            "test needs a genuine multipath layout to distinguish all-routes scoring"
+            "test needs a genuine multipath layout to distinguish whole-graph scoring"
         )
 
-        # Independently recompute each route's overall pace at the problem's margin,
-        # route-aware like _slowest_route_speed (branch segments are curve-limited).
-        route_paces = []
+        # Independent recomputation: per-route profiles at the problem's margin,
+        # segment times pooled per physical piece, mean per piece, summed.
+        sums: dict = {}
+        passages: dict = {}
+        route_times = []
         for p in layout.paths:
             if len(p.piece_sequence) == 0:
                 continue
+            indices = np.asarray(p.piece_sequence, dtype=np.int32)
             view = Layout(
-                indices=np.asarray(p.piece_sequence, dtype=np.int32),
+                indices=indices,
                 states=p.states,
                 route_indices=np.asarray(p.route_indices, dtype=np.int32),
             )
@@ -371,16 +381,24 @@ class TestF1MultiPathSlowestRoute:
                 view, catalog, train_config=problem._train_config,
                 safety_margin=SPEED_SAFETY_MARGIN,
             )
-            route_paces.append(prof.avg_speed)
+            route_times.append(prof.lap_time)
+            arc_m = catalog.get_arc_lengths(indices) * catalog.stud_mm / 1000.0
+            seg_times = arc_m / np.where(prof.speeds > 0, prof.speeds, 0.001)
+            for uid, seg_time in zip(p.piece_uids, seg_times, strict=True):
+                sums[uid] = sums.get(uid, 0.0) + float(seg_time)
+                passages[uid] = passages.get(uid, 0) + 1
 
-        expected = -min(route_paces)
+        expected = sum(sums[uid] / passages[uid] for uid in sums)
         assert abs(out["F"][1] - expected) < 1e-9, (
-            f"F[1]={out['F'][1]} must equal -min(per-route avg pace)={expected}; "
-            f"route paces={route_paces}"
+            f"F[1]={out['F'][1]} must equal per-piece mean sum={expected}"
+        )
+        assert out["F"][1] > max(route_times) + 1e-6, (
+            f"whole-graph time {out['F'][1]} must exceed every single route's "
+            f"lap time {route_times}: bypassed straights and branch both count"
         )
 
-    def test_single_path_reduces_to_its_own_pace(self, switches_config, catalog):
-        """A switchless layout under the slowest-route objective == its own pace."""
+    def test_single_path_reduces_to_lap_time(self, switches_config, catalog):
+        """A switchless layout's F[1] is exactly its one route's lap time."""
         import numpy as np
         from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
         from src.decoder import decode_chromosome
@@ -403,7 +421,50 @@ class TestF1MultiPathSlowestRoute:
             layout, catalog, train_config=problem._train_config,
             safety_margin=SPEED_SAFETY_MARGIN,
         )
-        assert abs(out["F"][1] - (-profile.avg_speed)) < 1e-9
+        assert abs(out["F"][1] - profile.lap_time) < 1e-9
+
+
+class TestF1ShapeSensitivity:
+    """Layout SHAPE moves F[1] at a fixed piece count (equal utilization).
+
+    This is what makes the problem genuinely bi-objective: time is not a
+    monotone function of piece count, so the GA has a second dimension to
+    search at every utilization level.
+    """
+
+    def test_chicane_slows_equal_piece_loop(self, catalog, default_config):
+        """Two 32-piece loops, same F[0]; the curve-heavy one takes longer.
+
+        Both loops are centrally symmetric [arc, run, arc, run] x 2 shapes, so
+        they close exactly. The plain variant's runs are 4 straights; the
+        chicane variant replaces two opposite runs with zero-net-turn R+R+L+L
+        chicanes — same piece count, more braking.
+        """
+        problem = TrackOptimizationProblem(catalog, default_config)
+        arc_pieces, arc_flips = [PieceIndex.R40_CURVE] * 4, [0] * 4
+        straight_run = ([PieceIndex.STRAIGHT_16] * 4, [0] * 4)
+        chicane_run = ([PieceIndex.R40_CURVE] * 4, [1, 1, 0, 0])
+
+        def loop(run_a, run_b):
+            pieces_a, flips_a = run_a
+            pieces_b, flips_b = run_b
+            pieces = (arc_pieces + pieces_a + arc_pieces + pieces_b) * 2
+            flips = (arc_flips + flips_a + arc_flips + flips_b) * 2
+            return create_chromosome_from_pieces(problem.dims, pieces, main_loop_flips=flips)
+
+        out_plain, out_chicane = {}, {}
+        problem._evaluate(loop(straight_run, straight_run), out_plain)
+        problem._evaluate(loop(chicane_run, straight_run), out_chicane)
+
+        for out in (out_plain, out_chicane):
+            assert np.all(np.asarray(out["G"][:3]) <= 0), "loop must close exactly"
+        assert out_plain["F"][0] == pytest.approx(out_chicane["F"][0]), (
+            "equal piece count must give equal utilization"
+        )
+        assert out_chicane["F"][1] > out_plain["F"][1] + 1e-3, (
+            f"chicanes must cost time at equal utilization: "
+            f"plain={out_plain['F'][1]}, chicane={out_chicane['F'][1]}"
+        )
 
 
 class TestGShapeV2:

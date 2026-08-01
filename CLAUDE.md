@@ -11,7 +11,7 @@
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
 - **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
-- **Known baseline (2026-07-09): 0 failed, 401 passed, 0 skipped** (clean).
+- **Known baseline (2026-08-01): 0 failed, 431 passed, 0 skipped** (clean).
   - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
 
 ---
@@ -48,7 +48,7 @@ Recurring mistakes that must not repeat:
 
 **What**: Multi-objective genetic algorithm for optimizing closed LEGO railway layouts with fixed inventory.
 
-**Why**: Generate feasible track layouts satisfying geometric constraints (closure, boundaries) while maximizing piece utilization and train speed.
+**Why**: Generate feasible track layouts satisfying geometric constraints (closure, boundaries) while maximizing piece utilization and minimizing the expected time to traverse the whole network.
 
 **How**: pymoo NSGA-II with heuristic sampling, template-based passing sidings, construction-based decoder, and locomotive physics model.
 
@@ -150,7 +150,7 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 
 **3. Objectives & constraints.** `TrackOptimizationProblem(ElementwiseProblem)` (`src/problem.py`), `n_obj=2`, `n_ieq_constr = 5 + catalog.n_pieces`, **no equality constraints (H)**.
 - `F[0] = -weighted_utilization` — `(n_physical_pieces + (special_piece_weight−1)·n_special) / total_inventory`, where `n_special` = switch pairs + cross-junctions + double-crossovers and `special_piece_weight` defaults to 3.0, so multi-path topology raises the score instead of being stripped as overhead.
-- `F[1] = -(avg_speed of the slowest of the 2^J routes)` via `_slowest_route_speed(...)` at `SPEED_SAFETY_MARGIN=0.95`. Speed = 3-pass time-optimal profile `compute_speed_profile` (`src/train/scoring.py`); **Nadal's criterion** is one of the per-segment caps (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
+- `F[1] = expected_traversal_time` (minimized directly, no negation) via `_expected_traversal_time(...)` at `SPEED_SAFETY_MARGIN=0.95`: each of the `2^J` routes is profiled (3-pass `compute_speed_profile`, `src/train/scoring.py`), every **physical** piece is charged the MEAN of its traversal times across all passages (identity via `TraversalPath.piece_uids`; a descriptor CROSS_90/DC spans two slots but is one piece, unified through junction records), and the objective sums over distinct pieces. Switchless layout ⇒ exactly that loop's `lap_time`; no usable route ⇒ `+inf` (time 0 would rank best). **Nadal's criterion** is one of the per-segment caps (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
 - **Loop closure is an inequality (G), not H:** `G[0..2] = |dx|/tol−1, |dy|/tol−1, |dθ°|/tol−1`; `G[3]` = boundary; `G[4]` = collisions (`unresolved_crossings/5 + dangling_cross_ports + dangling_DC_ports`); `G[5..]` = per-type inventory excess (normalized by `max_occ[t]`).
 - Degenerate (0-piece) layouts get `F = +inf`, `G = 1e6` — never NaN (breaks dominance comparison).
 - Custom out-keys `n_sw_pairs` / `n_cross_comm` / `n_dc_comm` ride on the Population for the category-elite archive.
@@ -169,19 +169,21 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 
 ---
 
-## Track Pieces (Catalog Index, Geometry, Speed)
+## Track Pieces (Catalog Index, Geometry)
 
 R40 is ONE physical piece (4DBrix 2.04.069); handedness is selected per placement via the chromosome's parallel flip array (flip=0 → LEFT +22.5°, flip=1 → RIGHT −22.5°). Switches keep separate LEFT/RIGHT piece types because their port/route geometry isn't a simple mirror.
 
-| Index | Piece ID | Geometry | Speed limit |
-|-------|----------|----------|-------------|
-| 0 | STRAIGHT_16 | 16-stud straight | 1.57 m/s |
-| 1 | STRAIGHT_24 | 24-stud straight | 1.57 m/s |
-| 2 | R40_CURVE | 22.5° curve (16/circle); direction = flip bit | 0.97 m/s |
-| 3 | CROSS_90 | 90° crossing; FK == STRAIGHT_16 | 1.57 m/s |
-| 4 | R40_SWITCH_LEFT | left switch, 32-stud body | through 1.57, diverge 0.97 m/s |
-| 5 | R40_SWITCH_RIGHT | right switch, 32-stud body | through 1.57, diverge 0.97 m/s |
-| 6 | DOUBLE_CROSSOVER | 48×16 studs, 4 routes (2 through + 2 diagonal) | through 1.57, cross 0.97 m/s |
+**The catalog carries geometry only — no speed data.** Speed caps are derived at runtime from train physics (`v_eff_array`, `src/train/physics.py`): straights bind at the motor cap (`v_motor_max`, measured 1.26 m/s), R40-radius segments (curves, switch diverge, DC diagonals) at the lateral-slide cap `sqrt(mu·g·R)` ≈ 0.886 m/s at `mu_design=0.25`.
+
+| Index | Piece ID | Geometry |
+|-------|----------|----------|
+| 0 | STRAIGHT_16 | 16-stud straight |
+| 1 | STRAIGHT_24 | 24-stud straight |
+| 2 | R40_CURVE | 22.5° curve (16/circle); direction = flip bit |
+| 3 | CROSS_90 | 90° crossing; FK == STRAIGHT_16 |
+| 4 | R40_SWITCH_LEFT | left switch, 32-stud body; through straight / diverge R40 arc |
+| 5 | R40_SWITCH_RIGHT | right switch, 32-stud body; through straight / diverge R40 arc |
+| 6 | DOUBLE_CROSSOVER | 48×16 studs, 4 routes (2 through + 2 diagonal) |
 
 ---
 
@@ -205,7 +207,7 @@ The decoder reads active descriptors sorted by position, computes branch geometr
 ## Data Flow
 
 ```
-data/track_pieces_v2.yaml -> TrackCatalog (FK tables, speed limits, routes)
+data/track_pieces_v2.yaml -> TrackCatalog (FK tables, radii, routes; no speed data)
 configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
 main.py -> NSGA2 + IntegerSampling -> Problem._evaluate()
 chromosome -> decode_chromosome() -> MultiPathLayout
@@ -252,7 +254,7 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - `run_v1_all_configs.py` — batch runner: every config → `outputs/<config_name>/`.
 
 **`src/` core**
-- `problem.py` — `TrackOptimizationProblem`: weighted-utilization + slowest-route-speed objectives, 5+T inequality constraints.
+- `problem.py` — `TrackOptimizationProblem`: weighted-utilization + expected-traversal-time objectives, 5+T inequality constraints.
 - `encoding.py` — `PartitionedDimensions`, `compute_dimensions`, `generate_bounds`, gene accessors (`get_junction`, `get_cross_junction`, `get_double_crossover`, flips), chromosome construction + validation.
 - `decoder/construction.py` — `decode_chromosome()`: injection pipeline + 2^J path enumeration; `decoder/types.py` — `DecoderConfig`, `InventoryTracker`, `ValidatedJunction`.
 - `geometry.py` — `compute_fk_chain` (vectorized FK), `compute_closure_metrics`, plus the single-loop `Layout`/`build_layout()` still consumed by tests, train/, and viz.
@@ -261,12 +263,12 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - `sampling.py` — `IntegerSampling`: heuristic seed families (loops/ovals/racetracks/sidings/figure-8s) + random chromosomes; `_figure_eight_main_loop` is shared with operators.
 - `operators.py` — `PartitionedCrossover`, `PartitionedMutation` + sub-operator portfolio (incl. `_compensated_pair_grow`, `_grow_dc_figure_eight`).
 - `repair.py` — `JunctionValidityRepair`, `InventoryRepair`, `MainLoopClosureRepair` (angular + translational), `BoundaryAwareRepair`, chained by `TrackRepairPipeline`.
-- `types.py` — pure dataclasses: `SwitchPair`, `CrossJunction`, `DblCrossover`, `TraversalPath`, `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology`.
+- `types.py` — pure dataclasses: `SwitchPair`, `CrossJunction`, `DblCrossover`, `TraversalPath` (incl. `piece_uids` physical-piece identity), `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology`.
 - `config.py` — Pydantic models `OptimizationConfig` / `BoundaryConfig` / `AlgorithmConfig` / `TerminationConfig`.
 - `run_info.py` — per-run provenance writer (`run_info.md`: git state, verbatim config, run summary).
 - `lego_track_models.py` — R40 / rail geometry constants for the renderer.
 
-**`src/catalog/`** — `catalog.py` (`TrackCatalog.load()`, vectorized FK/speed/radius/topology tables, v1 fallback + v2 port-centric schema); `loader.py` (ruamel + Pydantic with file:line error UX); `pieces.py` (`FKDeltas`, `Port`, `TrackPiece`); `specs.py` (Pydantic v2 schema).
+**`src/catalog/`** — `catalog.py` (`TrackCatalog.load()`, vectorized FK/radius/topology tables — no speed data, v2 port-centric schema only, raises on non-v2); `loader.py` (ruamel + Pydantic with file:line error UX); `pieces.py` (`FKDeltas`, `Port`, `TrackPiece`); `specs.py` (Pydantic v2 schema).
 
 **`src/train/`** — `physics.py` (`TrainConfig`, derailment caps, friction ellipse `available_accel`); `scoring.py` (`compute_speed_profile`, 3-pass profiler); `evaluation.py` (`PhysicalEvaluation`, `evaluate_layout()` — full physical evaluation; scoring is the building block, evaluation the orchestrator).
 
@@ -280,9 +282,9 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - **`Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
 - **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
 
-### Test Suite Notes (2026-06-12)
+### Test Suite Notes (2026-08-01)
 
-- 34 `tests/test_*.py` files, 335 `def test_` functions, 360 collected tests. Baseline: **0 failed, 360 passed, 0 skipped** (clean).
+- 40 `tests/test_*.py` files, 404 `def test_` functions, 431 collected tests. Baseline: **0 failed, 431 passed, 0 skipped** (clean).
 - The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
 - All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
 

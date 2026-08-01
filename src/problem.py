@@ -2,8 +2,9 @@
 
 Bi-objective NSGA-II with Deb's constraint handling:
 - F[0] = -utilization (maximize piece usage)
-- F[1] = -(avg speed of the slowest traversal route) at safety_margin=0.95
-         (maximize the worst route's pace; see _slowest_route_speed)
+- F[1] = expected time to cover every physical piece once, averaged over the
+         2^J traversal routes at safety_margin=0.95 (minimize; see
+         _expected_traversal_time)
 - 5 + per-piece-type inequality constraints via Deb's CV rules
 """
 
@@ -38,49 +39,67 @@ SPEED_SAFETY_MARGIN = 0.95
 DEGENERATE_G = 1.0e6
 
 
-def _slowest_route_speed(
+def _expected_traversal_time(
     layout,
     catalog: TrackCatalog,
     train_config,
     safety_margin: float = SPEED_SAFETY_MARGIN,
 ) -> float:
-    """Average speed of the layout's slowest traversal route.
+    """Expected time to cover every physical piece of the layout once.
 
-    A layout with J switch pairs offers 2^J routes (take or skip each siding).
-    Each route is scored independently — a per-route ``Layout`` view fed to the
-    3-pass profiler at ``safety_margin``, which brakes for curves and
-    accelerates on straights, never exceeding the per-segment derailment cap —
-    yielding that route's overall lap pace (``avg_speed``). F[1] uses the
-    SLOWEST route: the most curve-bound one, which the train covers at the
-    lowest overall speed. Scoring every route (not just the through-line) makes
-    branch geometry register; a switchless layout has one route, so this is just
-    that loop's pace.
+    Each of the 2^J take/skip-siding routes is profiled independently (the
+    3-pass profiler at ``safety_margin``), timing every segment it passes.
+    A physical piece is charged the MEAN of its traversal times across all
+    passages — the expected per-piece cost when the train picks routes
+    uniformly at random — and the objective is the sum over distinct
+    physical pieces. Routes agree on piece identity via ``piece_uids``; a
+    descriptor CROSS_90 / DOUBLE_CROSSOVER spans two main slots but is one
+    physical piece, unified here through the layout's junction records. A
+    switchless layout has one route covering each piece once, so this
+    reduces to that loop's lap time.
 
-    Returns 0.0 only for a degenerate layout with no pieces on any route (the
-    caller short-circuits the empty-layout case before reaching here).
+    Returns +inf when no route carries any piece: zero time would rank an
+    unusable layout as the fastest possible one.
     """
-    route_speeds = [
-        compute_speed_profile(
+    alias = {}
+    for record in (*layout.cross_junctions, *getattr(layout, "dbl_crossovers", [])):
+        first_slot, second_slot = record.positions
+        alias[("main", second_slot, 0)] = ("main", first_slot, 0)
+
+    stud_to_m = catalog.stud_mm / 1000.0
+    per_piece: dict = {}
+    for path in layout.paths:
+        if len(path.piece_sequence) == 0:
+            continue
+        indices = np.asarray(path.piece_sequence, dtype=np.int32)
+        profile = compute_speed_profile(
             Layout(
-                indices=np.asarray(path.piece_sequence, dtype=np.int32),
+                indices=indices,
                 states=path.states,
                 route_indices=np.asarray(path.route_indices, dtype=np.int32),
             ),
             catalog, train_config, safety_margin=safety_margin,
-        ).avg_speed
-        for path in layout.paths
-        if len(path.piece_sequence) > 0
-    ]
-    return float(min(route_speeds)) if route_speeds else 0.0
+        )
+        arc_m = catalog.get_arc_lengths(indices) * stud_to_m
+        safe_speeds = np.where(profile.speeds > 0, profile.speeds, 0.001)
+        for uid, seg_time in zip(path.piece_uids, arc_m / safe_speeds, strict=True):
+            entry = per_piece.setdefault(alias.get(uid, uid), [0.0, 0])
+            entry[0] += float(seg_time)
+            entry[1] += 1
+
+    if not per_piece:
+        return float("inf")
+    return sum(total / passages for total, passages in per_piece.values())
 
 
 class TrackOptimizationProblem(ElementwiseProblem):
     """Bi-objective track layout optimization with NSGA-II.
 
     Objectives (both minimized for pymoo):
-        F[0] = -utilization         (maximize piece usage)
-        F[1] = -slowest_route_speed (maximize the slowest route's avg speed
-                                     at safety_margin=0.95)
+        F[0] = -utilization            (maximize piece usage)
+        F[1] = expected_traversal_time (minimize the expected time to cover
+                                        every physical piece once at
+                                        safety_margin=0.95)
 
     Constraints (g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
@@ -165,14 +184,15 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # F[0]: -utilization (special pieces weighted so topology is not overhead)
         utilization = self._weighted_utilization(layout)
 
-        # F[1] = -(slowest of the 2^J take/skip-siding routes) at
-        # SPEED_SAFETY_MARGIN; scoring every route lets curve-heavy branches
-        # lower F[1]. See _slowest_route_speed.
-        slowest_route_speed = _slowest_route_speed(
+        # F[1] = expected whole-network traversal time at SPEED_SAFETY_MARGIN:
+        # every physical piece charged the mean of its traversal times across
+        # the 2^J routes, so branch topology pays its real time cost. See
+        # _expected_traversal_time.
+        traversal_time = _expected_traversal_time(
             layout, self.catalog, self._train_config,
         )
 
-        out["F"] = [-utilization, -slowest_route_speed]
+        out["F"] = [-utilization, traversal_time]
 
         # Committed-element census as custom out-keys: the Evaluator copies
         # them onto the Population, so the category-elite archive reads them
