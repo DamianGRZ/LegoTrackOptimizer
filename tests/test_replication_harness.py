@@ -33,7 +33,7 @@ class TestResolveConfig:
 class TestBestFeasibleUtil:
     def _write_run(self, path, fitness_rows, constraint_rows):
         (path / "fitness.csv").write_text(
-            "neg_utilization,neg_slowest_route_speed\n" + fitness_rows,
+            "neg_utilization,expected_traversal_time_s\n" + fitness_rows,
             encoding="utf-8",
         )
         (path / "constraints.csv").write_text(

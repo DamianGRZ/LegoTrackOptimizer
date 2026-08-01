@@ -48,12 +48,13 @@ max_accel: 0.68                  # MEASURED: 1.35 m / 2.0 s starting from 0
                                  # this consist+voltage: friction-theoretical (mu=0.25)
                                  # would be 1.47 m/s^2, never reached.
                                  # This value is a "kinematic mean equivalent" - real DC
-                                 # motor dynamics are exponential, not linear. Adequate
-                                 # for Pass 1 (F[1]=min_speed) which doesn't use max_accel
-                                 # anyway (Golden Rule 22). Becomes binding only if a future
-                                 # lap-time / throughput objective is added.
-                                 # Rolling resistance ~0.03-0.10 m/s^2 not deducted (would
-                                 # raise raw motor a by 4-15% if such an objective needs it).
+                                 # motor dynamics are exponential, not linear.
+                                 # BINDING: F[1] = expected traversal time reads it in the
+                                 # speed profiler's forward pass through the friction
+                                 # ellipse. Layout RANKING is robust across the CI: rank
+                                 # correlation of lap times at 0.61 vs 0.68 vs 0.77 is
+                                 # 0.9997+ (216-layout sweep, 2026-08-01).
+                                 # Rolling resistance ~0.03-0.10 m/s^2 not deducted.
                                  # Pre-thesis: redo with Tracker software for tighter bounds.
 
 # --- Consist (measured) ---

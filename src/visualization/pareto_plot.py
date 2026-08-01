@@ -89,7 +89,7 @@ def plot_pareto_front(
     plot = Scatter(
         title=title, legend=True, figsize=(10, 8), tight_layout=True,
         labels=["Utilization (normalized, 1 = best)",
-                "Speed (normalized, 1 = best)"],
+                "Traversal time (normalized, 1 = best)"],
     )
     annotations: list = []
     if feasible.any():

@@ -80,7 +80,7 @@ def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
 
     idx = int(feasible_indices[compromise_index(normalize(F_feas, ideal, nadir))])
     logger.info(f"Compromise (equal-weight ASF): individual {idx}, "
-                f"score={-F[idx, 0]:.1%}, speed={-F[idx, 1]:.2f} m/s")
+                f"score={-F[idx, 0]:.1%}, time={F[idx, 1]:.2f} s")
 
 
 # =============================================================================
@@ -109,18 +109,18 @@ class ProgressCallback(Callback):
             return
 
         utils = -F[:, 0]
-        speeds = -F[:, 1]
+        times = F[:, 1]
         feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(F), dtype=bool)
         n_feasible = int(np.sum(feasible_mask))
 
         feas_util = float(np.max(utils[feasible_mask])) if n_feasible else 0.0
-        feas_speed = float(np.max(speeds[feasible_mask])) if n_feasible else 0.0
+        feas_time = float(np.min(times[feasible_mask])) if n_feasible else 0.0
         infeas_util = float(np.max(utils[~feasible_mask])) if n_feasible < len(F) else 0.0
 
         logger.info(
             f"Gen {gen:4d} | "
             f"best_feas={feas_util:.1%} ({int(feas_util * self.total_inventory)} pcs) "
-            f"{feas_speed:.2f} m/s | "
+            f"{feas_time:.2f} s | "
             f"best_infeas={infeas_util:.1%} ({int(infeas_util * self.total_inventory)} pcs) | "
             f"feasible={n_feasible}/{len(pop)}"
         )
@@ -393,10 +393,10 @@ class SnapshotCallback(Callback):
                 dims=self._dims, config=self._decoder_config,
             )
             util = float(-entry["F"][0])
-            speed = float(-entry["F"][1])
+            time_s = float(entry["F"][1])
             base = (f"Snapshot {snap_idx}/{total} | Gen {gen} | {category} | "
                     f"{layout.n_physical_pieces} pcs, score={util:.1%}, "
-                    f"speed={speed:.2f} m/s")
+                    f"time={time_s:.2f} s")
             title = base if category == "feasible" else f"{base}, CV={entry['cv']:.2f}"
             save_path = self._snap_dir / f"snapshot_{snap_idx:02d}_{category}.png"
             if hasattr(layout, "n_switch_pairs") and layout.n_switch_pairs > 0:
@@ -744,7 +744,7 @@ def run_optimization(
     callback = CallbackChain(*chain)
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info("Objectives: utilization + speed (bi-objective)")
+    logger.info("Objectives: utilization + traversal time (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(
@@ -808,7 +808,7 @@ def run_optimization(
                 logger.info(
                     f"Best feasible: {best_layout.n_physical_pieces}/"
                     f"{sum(config.inventory.values())} pieces, "
-                    f"score={-F[best_idx, 0]:.1%}, speed={-F[best_idx, 1]:.2f} m/s, "
+                    f"score={-F[best_idx, 0]:.1%}, time={F[best_idx, 1]:.2f} s, "
                     f"switch_pairs={best_layout.n_switch_pairs}"
                 )
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
@@ -903,7 +903,7 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
             lines += [
                 f"- utilization score: {util:.1%} ({gap})",
                 f"- pieces: {n_phys}/{total_inv} ({n_phys / total_inv:.1%} of inventory), "
-                f"speed: {-float(ind.F[1]):.2f} m/s, {category} count: {n_element}",
+                f"time: {float(ind.F[1]):.2f} s, {category} count: {n_element}",
             ]
             if spans:  # all-degenerate paths must not abort the whole report
                 xs = np.concatenate([s[:, 0] for s in spans])
@@ -957,7 +957,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d",
                header=chromosome_csv_header(dims), comments="")
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header="neg_utilization,neg_slowest_route_speed", comments="")
+               header="neg_utilization,expected_traversal_time_s", comments="")
     if G is not None:
         # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
@@ -977,10 +977,10 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     archive_F = getattr(monitor, "best_front", None) if monitor is not None else None
     if archive_F is not None and len(archive_F) > 0:
         np.savetxt(output_dir / "pareto_archive.csv", archive_F, delimiter=",",
-                   header="f0_neg_utilization,f1_neg_speed", comments="")
+                   header="f0_neg_utilization,f1_traversal_time_s", comments="")
 
     try:
-        fig = plot_pareto_front(F, G, title="Pareto Front: Utilization vs Speed",
+        fig = plot_pareto_front(F, G, title="Pareto Front: Utilization vs Traversal Time",
                                 save_path=output_dir / "pareto_front.png",
                                 archive_F=archive_F)
         plt.close(fig)
@@ -1004,7 +1004,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             dims=dims, config=decoder_cfg,
         )
         best_overall_util = -F[best_overall_idx, 0]
-        best_overall_speed = -F[best_overall_idx, 1]
+        best_overall_time = F[best_overall_idx, 1]
         best_overall_cv = (
             float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
         )
@@ -1013,7 +1013,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         logger.info(
             f"Best overall: {best_overall_layout.n_physical_pieces}/"
             f"{sum(config.inventory.values())} pieces, "
-            f"score={best_overall_util:.1%}, speed={best_overall_speed:.2f} m/s, "
+            f"score={best_overall_util:.1%}, time={best_overall_time:.2f} s, "
             f"switch_pairs={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
             f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
         )
@@ -1028,12 +1028,12 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
                 dims=dims, config=decoder_cfg,
             )
             best_feas_util = -F[best_feas_idx, 0]
-            best_feas_speed = -F[best_feas_idx, 1]
+            best_feas_time = F[best_feas_idx, 1]
             _plot_layout(
                 best_feas_layout,
                 f"Best Feasible ({best_feas_layout.n_physical_pieces}/"
                 f"{sum(config.inventory.values())} pcs, score {best_feas_util:.1%}, "
-                f"{best_feas_speed:.2f} m/s)",
+                f"{best_feas_time:.2f} s)",
                 output_dir / "best_layout.png",
             )
         else:
@@ -1054,13 +1054,13 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
                 dims=dims, config=decoder_cfg,
             )
             best_infeas_util = -F[best_infeas_idx, 0]
-            best_infeas_speed = -F[best_infeas_idx, 1]
+            best_infeas_time = F[best_infeas_idx, 1]
             best_infeas_cv = float(np.sum(np.maximum(0, G[best_infeas_idx])))
             _plot_layout(
                 best_infeas_layout,
                 f"Best Infeasible ({best_infeas_layout.n_physical_pieces}/"
                 f"{sum(config.inventory.values())} pcs, score {best_infeas_util:.1%}, "
-                f"{best_infeas_speed:.2f} m/s, CV={best_infeas_cv:.2f})",
+                f"{best_infeas_time:.2f} s, CV={best_infeas_cv:.2f})",
                 output_dir / "best_infeasible.png",
             )
     except Exception as e:
