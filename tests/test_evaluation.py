@@ -202,9 +202,9 @@ class TestProblemIntegration:
     def test_F1_is_lap_time_for_single_route(self, switches_config, catalog):
         """F[1] from _evaluate should equal phys.speed_profile.lap_time.
 
-        The whole-graph traversal time of a switch-free layout is exactly its
-        one route's lap time, so the physical evaluation stack must agree with
-        the objective."""
+        The whole-graph traversal time of a plain (non-self-crossing) loop is
+        exactly its one route's lap time, so the physical evaluation stack
+        must agree with the objective."""
         from src.problem import TrackOptimizationProblem
         from src.sampling import IntegerSampling
         problem = TrackOptimizationProblem(catalog=catalog, config=switches_config)

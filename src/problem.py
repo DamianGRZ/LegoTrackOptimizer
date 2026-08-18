@@ -38,6 +38,11 @@ SPEED_SAFETY_MARGIN = 0.95
 # CVs derived from this sentinel before computing population statistics.
 DEGENERATE_G = 1.0e6
 
+# Speed charged to a segment the profiler stalled at v = 0, which would otherwise
+# divide by zero. Crawling makes that segment cost ~100 s, so the layout ranks out
+# of contention on F[1] instead of vanishing from the sum.
+STALLED_SPEED_MS = 0.001
+
 
 def _expected_traversal_time(
     layout,
@@ -55,8 +60,9 @@ def _expected_traversal_time(
     physical pieces. Routes agree on piece identity via ``piece_uids``; a
     descriptor CROSS_90 / DOUBLE_CROSSOVER spans two main slots but is one
     physical piece, unified here through the layout's junction records. A
-    switchless layout has one route covering each piece once, so this
-    reduces to that loop's lap time.
+    plain loop therefore reduces to its lap time; a self-crossing one does
+    not — the crossing is one physical piece the lap passes twice, so it is
+    charged once, at the mean of those two passages.
 
     Returns +inf when no route carries any piece: zero time would rank an
     unusable layout as the fastest possible one.
@@ -81,7 +87,7 @@ def _expected_traversal_time(
             catalog, train_config, safety_margin=safety_margin,
         )
         arc_m = catalog.get_arc_lengths(indices) * stud_to_m
-        safe_speeds = np.where(profile.speeds > 0, profile.speeds, 0.001)
+        safe_speeds = np.where(profile.speeds > 0, profile.speeds, STALLED_SPEED_MS)
         for uid, seg_time in zip(path.piece_uids, arc_m / safe_speeds, strict=True):
             entry = per_piece.setdefault(alias.get(uid, uid), [0.0, 0])
             entry[0] += float(seg_time)
