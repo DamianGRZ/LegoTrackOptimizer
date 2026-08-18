@@ -69,6 +69,12 @@ class Layout:
         return len(self.indices)
 
     @property
+    def n_physical_pieces(self) -> int:
+        """Physical pieces. A single-loop view holds no descriptor records, so
+        it equals the slot count; defined so both renderer paths share a name."""
+        return len(self.indices)
+
+    @property
     def final_state(self) -> NDArray[np.float64]:
         """Final state [x, y, theta]."""
         return self.states[-1]

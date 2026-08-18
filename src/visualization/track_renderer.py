@@ -595,7 +595,7 @@ def plot_layout(
     n_crossings = sum(1 for i in layout.indices if int(i) == PIECE_IDX_CROSS_90)
     n_crossovers = len(_dc_body_poses(indices, layout.states))
     metrics_lines = [
-        f"Pieces: {layout.n_pieces}",
+        f"Pieces: {layout.n_physical_pieces}",
         f"Switches: {n_switches}",
         f"Crossings: {n_crossings}",
     ]
@@ -754,7 +754,7 @@ def _plot_combined_paths(ax, layout: MultiPathLayout, boundary, title):
     # Metrics
     n_switches = sum(1 for p in layout.main_loop_pieces if p in SWITCH_INDICES)
     metrics = (
-        f"Pieces: {layout.n_pieces}\n"
+        f"Pieces: {layout.n_physical_pieces}\n"
         f"Switches: {n_switches}\n"
         f"Switch Pairs: {layout.n_switch_pairs}\n"
         f"Max Closure: {layout.max_closure_error:.2f}\n"
