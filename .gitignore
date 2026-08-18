@@ -55,3 +55,6 @@ Thumbs.db
 
 # Scratch review diffs
 review_diff*.txt
+
+# Batch runner summary (run artifact, written at the repo root)
+results.json
