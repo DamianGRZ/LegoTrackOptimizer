@@ -4,10 +4,14 @@
 without re-deriving it. Read together with `CLAUDE.md` (auto-loaded) and the memory index.
 Date of session: 2026-07-30.
 
-**Status: SUPERSEDED IN PART — read §10 FIRST.** Sections 1-9 are the original design session
-(2026-07-30, first pass). A second pass on the same day executed Etap 1, rewired the train
-config, researched the physics layer, and stopped **mid-refactor with a broken working tree**.
-§10 has the current state, the new findings, and the exact next steps.
+The rewire shipped in commit `69e04b7`, and what shipped differs from the sketch in §10.6:
+**`F[1] = expected_traversal_time`** charges each PHYSICAL piece the MEAN of its traversal times
+across all `2^J` routes and sums over distinct pieces, rather than totalling time along one
+route. `CLAUDE.md` carries the live definition.
+
+Sections 1-9 are the original design session (2026-07-30, first pass). A second pass on the same
+day executed Etap 1, rewired the train config, researched the physics layer, and stopped
+mid-refactor; §10 recorded that state.
 
 ---
 
@@ -396,11 +400,36 @@ piece count**, i.e. it moves the same direction as utilization. The two objectiv
 conflict, so there is no trade-off for a front to form on. Time moves the opposite way
 (2.39 → 17.21 s), which is exactly the conflict the rewire is after.
 
+### 10.7.1 Outcome — measured after the rewire, over the whole run archive
+
+Runs split cleanly by the sign of `F[1]` (old `-min(route.avg_speed)` is negative, new
+traversal time is positive in seconds), so the archive scores itself:
+
+| | old `F[1]` = −slowest route's avg speed | new `F[1]` = expected traversal time |
+|---|---|---|
+| runs | 182 (2026-06-25 .. 08-01) | 1137 (2026-08-01 .. 08-16) |
+| feasible-front size — median | **2** | **39** |
+| — mean / max | 2.4 / 12 | 40.3 / 130 |
+| — runs whose front is a single point | 65 of 182 | — |
+
+Same config, `all_pieces`, before and after:
+
+```
+OLD  all_pieces_s1   front  6 pts   util 53.2..61.5%   slowest-route avg 0.974..1.006 m/s
+OLD  all_pieces_s2   front  5 pts   util 51.4..61.5%   band width 0.031 m/s
+NEW  full/s1         front 74 pts   util  7.3..59.2%   time 2.39..15.73 s
+```
+
+The prediction in the table above lands exactly: the new front's fast end is `util 7.3%,
+2.39 s`, which is the pure R40 circle — 16 of the config's 218 pieces, 2.389 s — the first
+row of §10.7. The old objective compressed an entire front into a 3.3% band of pace; the
+new one spreads it across a 6.6x range of time.
+
 ## 10.8 Stale docs found, not yet fixed
 
-- `configs/trains/measured_consist.yaml:52` — claims `F[1] = min_speed` and that `max_accel` is
-  unused. Both false: the forward pass reads it through the friction ellipse. (An edit fixing
-  this was drafted and not applied.)
+- ~~`configs/trains/measured_consist.yaml:52` — claims `F[1] = min_speed` and that `max_accel`
+  is unused.~~ **FIXED** — the comment now states `F[1] = expected traversal time` and records
+  that the forward pass reads `max_accel` through the friction ellipse.
 - `CLAUDE.md` baseline "401 passed" was already stale before this pass (408 before Etap 1's
   +11 tests). Also §6 TIER 5 items are all still open.
 - `CLAUDE.md` Code Map still calls `src/train/evaluation.py` the runtime "orchestrator".
