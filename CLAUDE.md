@@ -10,8 +10,8 @@
 - **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
-- **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
-- **Known baseline (2026-08-01): 0 failed, 431 passed, 0 skipped** (clean).
+- **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
+- **Known baseline (2026-08-18): 0 failed, 444 passed, 0 skipped** (clean).
   - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
 
 ---
@@ -150,7 +150,8 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 
 **3. Objectives & constraints.** `TrackOptimizationProblem(ElementwiseProblem)` (`src/problem.py`), `n_obj=2`, `n_ieq_constr = 5 + catalog.n_pieces`, **no equality constraints (H)**.
 - `F[0] = -weighted_utilization` — `(n_physical_pieces + (special_piece_weight−1)·n_special) / total_inventory`, where `n_special` = switch pairs + cross-junctions + double-crossovers and `special_piece_weight` defaults to 3.0, so multi-path topology raises the score instead of being stripped as overhead.
-- `F[1] = expected_traversal_time` (minimized directly, no negation) via `_expected_traversal_time(...)` at `SPEED_SAFETY_MARGIN=0.95`: each of the `2^J` routes is profiled (3-pass `compute_speed_profile`, `src/train/scoring.py`), every **physical** piece is charged the MEAN of its traversal times across all passages (identity via `TraversalPath.piece_uids`; a descriptor CROSS_90/DC spans two slots but is one piece, unified through junction records), and the objective sums over distinct pieces. Switchless layout ⇒ exactly that loop's `lap_time`; no usable route ⇒ `+inf` (time 0 would rank best). **Nadal's criterion** is one of the per-segment caps (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
+- `F[1] = expected_traversal_time` (minimized directly, no negation) via `_expected_traversal_time(...)` at `SPEED_SAFETY_MARGIN=0.95`: each of the `2^J` routes is profiled (3-pass `compute_speed_profile`, `src/train/scoring.py`), every **physical** piece is charged the MEAN of its traversal times across all passages (identity via `TraversalPath.piece_uids`; a descriptor CROSS_90/DC spans two slots but is one piece, unified through junction records), and the objective sums over distinct pieces. A plain (non-self-crossing) loop ⇒ exactly that loop's `lap_time`; a self-crossing one comes out **below** its lap time, because the crossing is one physical piece the lap passes twice yet is charged once. No usable route ⇒ `+inf` (time 0 would rank best). **Nadal's criterion** is one of the per-segment caps (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
+  - **Why it replaced the previous `F[1]`** (measured over the archive, not argued). The old objective was `-_slowest_route_speed(...)`: each of the `2^J` routes profiled, take that route's **`avg_speed`**, keep the MINIMUM over routes, negate — i.e. maximize the worst route's average pace. It failed because a route's `avg_speed` **rises with piece count** (0.842 on a 16-piece R40 circle → 1.009 on a 96-piece racetrack), so it moved *with* utilization instead of against it, leaving no conflict for a front to spread along; the surviving spread was a sliver, 0.974–1.007 m/s across a whole front. Median feasible-front size went from **2 points** (182 archived runs, min 1, max 12, 65 of them a single point) to **39** (1137 runs, max 130). On `all_pieces` the front is now continuous from the 16-piece R40 circle (util 7.3%, 2.39 s) to a 59.2% layout at 15.73 s, where the old objective produced 4–6 points inside a 0.03 m/s band.
 - **Loop closure is an inequality (G), not H:** `G[0..2] = |dx|/tol−1, |dy|/tol−1, |dθ°|/tol−1`; `G[3]` = boundary; `G[4]` = collisions (`unresolved_crossings/5 + dangling_cross_ports + dangling_DC_ports`); `G[5..]` = per-type inventory excess (normalized by `max_occ[t]`).
 - Degenerate (0-piece) layouts get `F = +inf`, `G = 1e6` — never NaN (breaks dominance comparison).
 - Custom out-keys `n_sw_pairs` / `n_cross_comm` / `n_dc_comm` ride on the Population for the category-elite archive.
@@ -161,7 +162,7 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 
 **6. Heuristic sampling.** Hybrid (`IntegerSampling._do`): `heuristic_ratio` (default 0.20) of the population is inventory/boundary-aware closed loops (`_gen_simple_loop` / `_oval` / `_racetrack` / `_oval_with_siding` / `_oval_two_sidings` / `_figure_eight` / `_figure_eight_cross` / `_figure_eight_dbl_crossover`); the remainder are random partial-fill chromosomes. All pattern dimensions derive from boundary + inventory.
 
-**7. Survival & constraint handling.** `NSGA2` uses `ConstrRankAndCrowding()` (Deb feasibility-first), wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`): three-phase schedule (hold → linear decay → strict), epsilon_0 from the 10th percentile of infeasible CVs capped at 30. Closure + boundary (`G[0..3]`) are SOFT (relaxable); collisions + inventory are HARD — weighted ×1000 via `cv_ieq.scale` so no epsilon can relax them (never bake epsilon into CV; see memory note on the tournament crash).
+**7. Survival & constraint handling.** `NSGA2` uses `ConstrRankAndCrowding()` (Deb feasibility-first), wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`): three-phase schedule (hold → linear decay → strict), epsilon_0 from the 10th percentile of infeasible CVs, capped at `SOFT_CONSTRAINT_COUNT` (4). That cap binds in every run measured so far — `cv_eps` starts at exactly 4.0 in 420/420 archived cells — so the calibration is saturated and what ships is a constant on a decay schedule, not a population-fitted epsilon. Closure + boundary (`G[0..3]`) are SOFT (relaxable); collisions + inventory are HARD — weighted ×1000 via `cv_ieq.scale` so no epsilon can relax them (never bake epsilon into CV; see memory note on the tournament crash). The crowding metric is `algorithm.crowding_func` (default `cd`, built by `_build_survival`). **`pcd` was measured and is not better**: 10 arms × 21 configs × 3 seeds on both metrics, no arm reaches `p < 0.5` for `pcd > cd`, mean HV deltas span −0.016..+0.003, and cost is equal (19.7 h vs 20.2 h) — so `cd` stays the default. Selecting `pcd` routes through `_pruning_crowding`, which restores the clamp the compiled `calc_pcd` kernel is missing: unguarded it writes past its buffer once `n_remove >= n_distinct − n_obj`, an intermittent segfault this problem hits routinely (a 1000-individual population holds ~25 distinct `F`).
 
 **8. Callbacks.** Always attached: `FeasibleEliteCallback` (re-injects best-utilization feasible), `CategoryEliteArchive` (per switch/cross/DC category elites; must run AFTER the global elite), `ConvergenceMonitorCallback` (HV/IGD/feasibility + run-cumulative feasible front — dedupe before NDS or the run slows down quadratically). `SnapshotCallback` only when `output_dir` is set; `ProgressCallback` only when `verbose`.
 
@@ -233,7 +234,7 @@ results -> visualization + run_info.md + category_report.md -> outputs/
 
 ### After Any Code Change
 1. `/test` — verify nothing broke
-2. `python -m pycodestyle src tests main.py run_v1_all_configs.py` — style gate, must exit 0
+2. `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py` — style gate, must exit 0
 3. `/review` — quick check for interface/convention issues
 4. `/quality src/<file>.py` — deep quality gate for new or refactored code (rewrites to project standards)
 
@@ -282,9 +283,9 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - **`Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
 - **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
 
-### Test Suite Notes (2026-08-01)
+### Test Suite Notes (2026-08-18)
 
-- 40 `tests/test_*.py` files, 404 `def test_` functions, 431 collected tests. Baseline: **0 failed, 431 passed, 0 skipped** (clean).
+- 40 `tests/test_*.py` files, 416 `def test_` functions, 444 collected tests. Baseline: **0 failed, 444 passed, 0 skipped** (clean).
 - The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
 - All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
 

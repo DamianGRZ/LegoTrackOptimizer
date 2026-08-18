@@ -134,6 +134,18 @@ Two goals pull on every layout, and they genuinely conflict:
   that pass it, and the objective sums over distinct pieces. Every siding branch and
   bypassed straight costs real seconds, so density trades directly against time.
 
+That second goal used to be *speed* rather than time: the layout was scored by the
+average pace of its slowest route, and the GA was asked to push that pace up. It does not
+work, for a reason worth recording. Average pace **improves as a layout grows** — a bare
+16-piece circle averages 0.84 m/s because it is all curve, while a 96-piece racetrack
+averages 1.01 m/s because long straights let the train reach its motor cap. So the speed
+goal pulled in the *same* direction as "use more of the kit" instead of against it, and
+two objectives that agree leave nothing for a trade-off curve to form on. Whole fronts
+came out inside a 0.03 m/s sliver. Measured across the run archive, replacing pace with
+time moved the median Pareto front from **2 points** (182 runs) to **39** (1137 runs). On
+the full-inventory config the front is now continuous from a 16-piece circle (7.3% of the
+kit, 2.39 s) to a 59.2% layout at 15.73 s.
+
 Buildability is enforced separately, as **inequality constraints** (there are no
 equality constraints): the loop must close in `x`, `y`, and heading; everything must
 fit the boundary; segments may not illegally overlap; and no piece type may exceed its
@@ -163,7 +175,10 @@ ships its own:
 
 Everything runs on pymoo's **NSGA-II** with Deb's feasibility-first ranking
 (`ConstrRankAndCrowding`) and the custom sampling, crossover, mutation, and repair
-plugged in. An adaptive epsilon handler relaxes the *soft* constraints (closure,
+plugged in. The crowding metric that breaks ties inside a front is selectable; the
+default is NSGA-II's original crowding distance, and pymoo's suggested alternative for
+two-objective problems (pruning crowding distance) was measured across every ablation
+arm and came out indistinguishable from it, at equal cost. An adaptive epsilon handler relaxes the *soft* constraints (closure,
 boundary) early in a run — so promising-but-imperfect layouts survive long enough to
 be repaired — while the *hard* ones (collisions, inventory) stay strict throughout.
 Category-elite callbacks protect the best switch, crossing, and double-crossover
