@@ -261,6 +261,10 @@ def append_run_summary(
     lines: list[str] = ["", "## Run Summary", ""]
     lines += _termination_lines(res, config)
     lines.append(f"- Population: {config.algorithm.pop_size}")
+    # Not derivable from the embedded YAML: both carry defaults no config file sets.
+    survival = ("ConstrRankAndCrowding" if config.algorithm.components.constr_survival
+                else "RankAndCrowding")
+    lines.append(f"- Survival: {survival}(crowding_func={config.algorithm.crowding_func})")
 
     pop = getattr(res, "pop", None)
     if pop is None:

@@ -12,10 +12,16 @@ from pymoo.parallelization.starmap import StarmapParallelization
 from pymoo.termination.default import DefaultMultiObjectiveTermination
 from pymoo.termination.max_gen import MaximumGenerationTermination
 
+from pydantic import ValidationError
+from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding, RankAndCrowding
+from pymoo.operators.survival.rank_and_crowding.metrics import calc_crowding_distance
+
 from src.algorithm.runner import (
     _build_elementwise_runner,
+    _build_survival,
     _build_termination,
     _epsilon_alpha,
+    _pruning_crowding,
 )
 from src.config import OptimizationConfig
 
@@ -173,3 +179,105 @@ class TestBuildElementwiseRunner:
             if pool is not None:
                 pool.close()
                 pool.join()
+
+
+# =============================================================================
+# Survival wiring — which crowding metric sorts the splitting front
+# =============================================================================
+
+def _survival_config(crowding_func="cd", constr_survival=True):
+    return OptimizationConfig(
+        inventory={"STRAIGHT_16": 8, "R40_CURVE": 16},
+        algorithm={"crowding_func": crowding_func,
+                   "components": {"constr_survival": constr_survival}},
+    )
+
+
+class TestCrowdingFuncConfig:
+    """An unknown metric must fail at load time — pymoo raises KeyError mid-run."""
+
+    def test_defaults_to_cd(self):
+        config = OptimizationConfig(inventory={"STRAIGHT_16": 8})
+        assert config.algorithm.crowding_func == "cd"
+
+    def test_unknown_metric_rejected(self):
+        with pytest.raises(ValidationError):
+            OptimizationConfig(inventory={"STRAIGHT_16": 8},
+                               algorithm={"crowding_func": "nope"})
+
+
+class TestBuildSurvival:
+    """``constr_survival`` picks the operator, ``crowding_func`` its metric."""
+
+    def test_constr_rank_and_crowding_by_default(self):
+        assert isinstance(_build_survival(_survival_config()), ConstrRankAndCrowding)
+
+    def test_falls_back_to_stock_rank_and_crowding(self):
+        survival = _build_survival(_survival_config(constr_survival=False))
+        assert isinstance(survival, RankAndCrowding)
+        assert not isinstance(survival, ConstrRankAndCrowding)
+
+    def test_cd_keeps_duplicates_in_the_comparison(self):
+        metric = _build_survival(_survival_config("cd")).ranking.crowding_func
+        assert metric.function is calc_crowding_distance
+        assert metric.filter_out_duplicates is False
+
+    def test_pcd_reaches_the_operator_through_the_guard(self):
+        metric = _build_survival(_survival_config("pcd")).ranking.crowding_func
+        assert metric.function is _pruning_crowding
+        assert metric.filter_out_duplicates is True
+
+    def test_metric_survives_the_stock_fallback_arm(self):
+        metric = _build_survival(_survival_config("pcd", False)).crowding_func
+        assert metric.function is _pruning_crowding
+
+
+class TestPruningCrowdingGuard:
+    """Survival measures ``n_remove`` on the full front while the metric sees only
+    the distinct rows, so on this problem it routinely exceeds what the compiled
+    kernel tolerates. Unguarded, that corrupts memory: these tests fail by killing
+    the interpreter rather than by asserting.
+    """
+
+    @staticmethod
+    def _front(n_points):
+        import numpy as np
+        util = np.linspace(0.05, 0.95, n_points)
+        return np.column_stack([-util, 200.0 + 300.0 * util])
+
+    def test_clamps_n_remove_to_the_kernel_bound(self):
+        import numpy as np
+        F = self._front(40)
+        bound = _pruning_crowding(F, n_remove=len(F) - F.shape[1] - 1)
+        assert np.array_equal(_pruning_crowding(F, n_remove=len(F)), bound)
+        assert np.array_equal(_pruning_crowding(F, n_remove=10 ** 6), bound)
+
+    def test_negative_n_remove_floors_at_zero(self):
+        import numpy as np
+        F = self._front(40)
+        assert np.array_equal(_pruning_crowding(F, n_remove=-5),
+                              _pruning_crowding(F, n_remove=0))
+
+    def test_clone_heavy_front_selects_without_crashing(self):
+        import numpy as np
+        from pymoo.core.population import Population
+        from pymoo.core.problem import Problem
+
+        class TwoObjective(Problem):
+            def __init__(self):
+                super().__init__(n_var=1, n_obj=2, n_ieq_constr=0, xl=0, xu=1)
+
+        # Measured regime: a merged pool of 2000 holding ~72 distinct F rows.
+        n_pool, n_survive = 2000, 1000
+        distinct = self._front(72)
+        rng = np.random.default_rng(0)
+        F = distinct[rng.integers(0, len(distinct), size=n_pool)]
+        pop = Population.new(X=np.zeros((n_pool, 1)), F=F)
+
+        survivors = _build_survival(_survival_config("pcd")).do(
+            TwoObjective(), pop, n_survive=n_survive,
+        )
+
+        assert len(survivors) == n_survive
+        crowding = np.array([ind.get("crowding") for ind in survivors], dtype=float)
+        assert not np.isnan(crowding).any()

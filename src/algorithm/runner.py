@@ -14,7 +14,12 @@ import numpy as np
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.constraints.eps import AdaptiveEpsilonConstraintHandling
 from pymoo.core.callback import Callback
-from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding
+from pymoo.functions import load_function
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
+from pymoo.operators.repair.rounding import RoundingRepair
+from pymoo.operators.sampling.rnd import IntegerRandomSampling
+from pymoo.operators.survival.rank_and_crowding import ConstrRankAndCrowding, RankAndCrowding
 from pymoo.optimize import minimize
 from pymoo.parallelization.starmap import StarmapParallelization
 from pymoo.termination.default import DefaultMultiObjectiveTermination
@@ -655,6 +660,68 @@ def _salvage_failed_run(algorithm, monitor, output_dir, logger):
     return res
 
 
+def _build_search_components(config, problem, catalog):
+    """Sampling, crossover, mutation, repair per ``algorithm.components``.
+
+    Each disabled flag falls back to pymoo's stock integer recipe (docs
+    ``customization/discrete``): IntegerRandomSampling, SBX/PM at the
+    tutorial defaults with RoundingRepair, and no repair operator.
+    """
+    comp = config.algorithm.components
+    dims = problem.dims
+
+    sampler = (
+        IntegerSampling(
+            catalog, config,
+            heuristic_ratio=config.algorithm.heuristic_ratio,
+            seed=config.algorithm.seed,
+        )
+        if comp.heuristic_sampling else IntegerRandomSampling()
+    )
+    if comp.custom_operators:
+        crossover = PartitionedCrossover(dims, prob=config.algorithm.crossover_prob)
+        mutation = PartitionedMutation(dims, prob=config.algorithm.mutation_prob)
+    else:
+        crossover = SBX(prob=0.9, eta=15, vtype=float, repair=RoundingRepair())
+        mutation = PM(eta=20, vtype=float, repair=RoundingRepair())
+    repair = (
+        TrackRepairPipeline(
+            dims=dims,
+            inventory_by_index=problem.inventory_by_index,
+            catalog_fk_table=catalog._fk_table,
+            enable_closure_repair=True,
+            enable_boundary_repair=True,
+        )
+        if comp.repair else None
+    )
+    return sampler, crossover, mutation, repair
+
+
+_calc_pcd = load_function("calc_pcd")
+
+
+def _pruning_crowding(F: np.ndarray, n_remove: int = 0, **kwargs) -> np.ndarray:
+    """Pruning crowding distance ('pcd') with the kernel's own clamp restored.
+
+    ``F`` arrives already stripped of objective-space duplicates by pymoo's
+    ``FunctionalDiversity`` wrapper, so the bound is measured against it. The
+    compiled kernel writes past its output buffer once asked to prune a front
+    down to its last ``n_obj`` members, which surfaces as an intermittent
+    segfault; pymoo's Python reference clamps at ``n - n_obj`` and the compiled
+    one still faults there, so stop one step below.
+    """
+    n_points, n_obj = F.shape
+    return _calc_pcd(F, n_remove=np.intc(max(min(int(n_remove), n_points - n_obj - 1), 0)))
+
+
+def _build_survival(config: OptimizationConfig):
+    """Survival operator per ``components.constr_survival`` and ``crowding_func``."""
+    label = config.algorithm.crowding_func
+    survival = (ConstrRankAndCrowding if config.algorithm.components.constr_survival
+                else RankAndCrowding)
+    return survival(crowding_func=_pruning_crowding if label == "pcd" else label)
+
+
 def run_optimization(
     config: OptimizationConfig,
     catalog: TrackCatalog,
@@ -662,6 +729,9 @@ def run_optimization(
     output_dir: Path | None = None,
 ) -> object:
     """Run NSGA-II multi-objective track optimization.
+
+    Search components (sampling / operators / repair / epsilon / elites) are
+    gated by ``config.algorithm.components``; see ``_build_search_components``.
 
     If ``output_dir`` is given, progression snapshots are rendered live into
     ``<output_dir>/snapshots/`` during the run. Otherwise snapshots are still
@@ -683,54 +753,46 @@ def run_optimization(
     if config.algorithm.seed is not None:
         np.random.seed(config.algorithm.seed)
 
-    sampler = IntegerSampling(
-        catalog, config,
-        heuristic_ratio=config.algorithm.heuristic_ratio,
-        seed=config.algorithm.seed,
-    )
-
-    repair = TrackRepairPipeline(
-        dims=dims,
-        inventory_by_index=problem.inventory_by_index,
-        catalog_fk_table=catalog._fk_table,
-        enable_closure_repair=True,
-        enable_boundary_repair=True,
-    )
-
-    crossover = PartitionedCrossover(dims, prob=config.algorithm.crossover_prob)
-    mutation = PartitionedMutation(dims, prob=config.algorithm.mutation_prob)
+    comp = config.algorithm.components
+    sampler, crossover, mutation, repair = _build_search_components(config, problem, catalog)
 
     algo_name = config.algorithm.name
-    base_algorithm = NSGA2(
+    algo_kwargs = dict(
         pop_size=config.algorithm.pop_size,
         sampling=sampler,
         crossover=crossover,
         mutation=mutation,
-        repair=repair,
-        survival=ConstrRankAndCrowding(),
+        survival=_build_survival(config),
         eliminate_duplicates=config.algorithm.eliminate_duplicates,
     )
-    logger.info("NSGA-II with ConstrRankAndCrowding (Deb's feasibility-first)")
+    if repair is not None:
+        algo_kwargs["repair"] = repair
+    base_algorithm = NSGA2(**algo_kwargs)
 
-    algorithm = LegoAdaptiveEpsilon(
-        base_algorithm,
-        n_ieq_constr=problem.n_ieq_constr,
-        hold_until=0.2,
-        perc_eps_until=0.9,
-        n_gen_planned=config.algorithm.n_gen,
-    )
+    if comp.adaptive_epsilon:
+        algorithm = LegoAdaptiveEpsilon(
+            base_algorithm,
+            n_ieq_constr=problem.n_ieq_constr,
+            hold_until=0.2,
+            perc_eps_until=0.9,
+            n_gen_planned=config.algorithm.n_gen,
+        )
+    else:
+        algorithm = base_algorithm
 
     termination = _build_termination(config)
 
-    elite_callback = FeasibleEliteCallback()
     # After FeasibleEliteCallback: the global elite's slot is no longer
     # "worst", so category injection never clobbers it.
-    category_archive = CategoryEliteArchive()
+    category_archive = CategoryEliteArchive() if comp.elite_injection else None
     monitor = ConvergenceMonitorCallback(output_dir=output_dir,
                                          closure_tolerance=config.closure_tolerance,
                                          angle_tolerance=config.angle_tolerance)
     monitor.epsilon_source = algorithm
-    chain: list[Callback] = [elite_callback, category_archive, monitor]
+    chain: list[Callback] = []
+    if comp.elite_injection:
+        chain += [FeasibleEliteCallback(), category_archive]
+    chain.append(monitor)
     if output_dir is not None:
         snapshot_cb = SnapshotCallback(
             _compute_snapshot_targets(config.algorithm.n_gen),
@@ -743,6 +805,19 @@ def run_optimization(
         chain.append(ProgressCallback(every_n_gen=1, total_inventory=config.total_inventory))
     callback = CallbackChain(*chain)
 
+    # Positive record of the ablation state: every flag and the object it selected,
+    # so a run log proves which components were active rather than implying it.
+    logger.info("Components: " + ", ".join(f"{name}={'on' if on else 'off'}"
+                                           for name, on in comp.model_dump().items()))
+    logger.info(f"Wiring: algorithm={type(algorithm).__name__}, "
+                f"sampling={type(sampler).__name__}, "
+                f"crossover={type(crossover).__name__}, "
+                f"mutation={type(mutation).__name__}, "
+                f"repair={type(repair).__name__ if repair is not None else 'none'}, "
+                f"survival={type(algo_kwargs['survival']).__name__}"
+                f"(crowding_func={config.algorithm.crowding_func}), "
+                f"callbacks=[{', '.join(type(cb).__name__ for cb in chain)}]")
+
     logger.info(f"Starting {algo_name} track optimization...")
     logger.info("Objectives: utilization + traversal time (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
@@ -751,7 +826,8 @@ def run_optimization(
         f"Chromosome: {dims.n_var} genes (main={dims.n_main}, junctions={dims.max_junctions})"
     )
     logger.info(f"Total inventory: {config.total_inventory} pieces")
-    logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
+    if comp.heuristic_sampling:
+        logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
 
     if eval_pool is not None:
         logger.info(f"Parallel evaluation: {config.n_workers} workers")
