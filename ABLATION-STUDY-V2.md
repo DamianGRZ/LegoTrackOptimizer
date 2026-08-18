@@ -161,10 +161,22 @@ when produced by the command above.
 
 **"Front size" means the archive** — rows in `pareto_archive.csv` — not the count of distinct
 objective vectors in the final population, which is a diversity measure and runs 10–15x larger.
+Conflating them inverts conclusions: on `with_crossing` seed 1 the `repair` arm's final
+population holds **827 distinct objective vectors against `full`'s 70**, yet its archive is the
+*narrower* of the two (52 rows against 71) and it loses on HV, 0.565 against 0.724. The extra
+points sit under the competitor's front.
 
 **Cost is reported from seeds 1–3 only** (§5.6): those three ran as one uninterrupted session,
 while seed 4 was measured on a different day across several stop/resume cycles. HV is unaffected
 — it is deterministic given (config, seed) — but wall-clock is not comparable across sessions.
+
+**Reading the archive — four traps.** `max_closure_error` is euclidean while `G[0..2]` are
+per-axis, so a euclidean closure check rejects layouts the constraints accept. `n_eval` in
+`convergence.csv` reads 0 under the adaptive-epsilon wrapper and non-zero without it, which
+looks like a cross-arm difference and is an artifact — use `n_gen x pop_size` as the budget
+axis. `category_report.md` exists iff `elite_injection` is on, not iff the run found something
+feasible. And `G[4]` is `unresolved_crossings/5 + dangling_cross_ports + dangling_DC_ports` —
+there is no switch term in it, so "orphan switches" is not a metric this problem computes.
 
 ---
 
@@ -422,6 +434,105 @@ routes by CV whenever either parent is infeasible. Since `baseline` never reache
 in 68 of 84 cells, **most baseline runs were single-objective constraint minimizers**, not
 NSGA-II. Against `ConstrRankAndCrowding` this differs by 17% of survivors.
 
+### 5.8 The crowding metric changes nothing
+
+pymoo's survival documentation recommends `'pcd'` (pruning crowding distance) for two-objective
+problems, and this problem has `n_obj=2`. The mechanism looked promising: `cd` is built with
+`filter_out_duplicates=False` and `pcd` with `True`, and that flag filters duplicates in
+**objective space**, which this encoding produces in bulk — `eliminate_duplicates=True` removes
+duplicate *genotypes* only, and distinct genomes routinely decode to the same phenotype.
+Measured on `full`, seed 1:
+
+```
+config              unique F at gen 1 -> final     final population distinct
+all_pieces                    823 -> 72                        7.2%
+with_crossing                 810 -> 70                        7.0%
+switch_cross_rect             581 -> 79                        9.9%
+dc_figure8_wide               431 -> 58                        9.7%
+```
+
+Over 90% of the final population is a clone in objective space — exactly the regime where a
+metric that ignores duplicates should misread density.
+
+It makes no difference. Every arm was re-run under `pcd` on seeds {1,2,3} — a further 630
+cells, zero crashes — and paired against its own `cd` arm, blocked on (config, seed):
+
+| arm | pcd wins | losses | ties | mean HV delta | p |
+|---|---:|---:|---:|---:|---:|
+| `seeding` | 31 | 32 | 0 | +0.003 | 0.60 |
+| `repair` | 31 | 32 | 0 | −0.004 | 0.60 |
+| `full` | 29 | 34 | 0 | −0.000 | 0.78 |
+| `full_minus_epsilon` | 28 | 35 | 0 | −0.001 | 0.84 |
+| `full_minus_seeding` | 27 | 36 | 0 | −0.016 | 0.90 |
+| `full_minus_repair` | 25 | 38 | 0 | −0.003 | 0.96 |
+| `full_minus_elites` | 22 | 41 | 0 | −0.002 | 0.99 |
+| `full_minus_operators` | 16 | 46 | 1 | −0.003 | 1.00 |
+| `operators` | 5 | 4 | 54 | −0.001 | 0.50 |
+| `baseline` | 1 | 0 | 62 | +0.000 | 0.50 |
+
+**`pcd` never wins.** It loses more blocks than it wins in eight arms of ten, every mean delta
+sits inside −0.016..+0.003, no arm reaches `p < 0.5`, and cost is equal (19.7 h against 20.2 h
+over the same 630 cells). `cd` stays the default. The duplicate-density hypothesis is not so
+much refuted as shown to be irrelevant: objective-space cloning is real, but which clone
+survives does not move the hypervolume. In `baseline` and `operators` most blocks are exact
+ties, because `ConstrRankAndCrowding` applies the metric only to the feasible subset and there
+is barely one; across the campaign 118 of 630 pairs produced bit-identical hypervolume.
+
+**Implementation note, load-bearing.** Selecting `pcd` must route through `_pruning_crowding`
+(`src/algorithm/runner.py`). pymoo 0.6.1.6's *compiled* `calc_pcd` writes past its output buffer
+once `n_remove >= n_distinct − n_obj`, surfacing as an intermittent SIGSEGV or a corrupted
+neighbouring array. The Python reference clamps at `n − n_obj` and the compiled kernel still
+faults on that exact value, so the wrapper stops one step below. Not a corner case here:
+survival computes `n_remove` on the full front while the metric sees only the distinct rows.
+
+### 5.9 Generation 1 runs undersized, and it does not matter
+
+pymoo attaches repair in two places. `Initialization` repairs the whole initial population and
+then deduplicates it **without refilling to `pop_size`** (`pymoo/core/initialization.py:39,42`),
+whereas `Mating` refills in a loop (`pymoo/core/infill.py:33`).
+
+**19 of 21 configs start generation 1 below `pop_size`**, by up to 8% (`switch_one_siding_wide`
+600 → 552, `all_pieces_rect` 800 → 753). Every missing individual is a heuristic seed; the
+random block never collapses. Repair causes the loss in 17 of those 19. The mechanism, pinned
+with a negative control: the seed loop deals far fewer patterns than seed rows, round-robin
+(`src/sampling.py:646`), so each variant is written ~7 times and the only thing distinguishing
+the copies is a random start offset — which `BoundaryAwareRepair` zeroes on any layout that
+would leave the box (`src/repair.py:611`). With `enable_boundary_repair=False` the collapse
+disappears entirely (600/600).
+
+Three measurements say it is harmless:
+
+1. **`pop_size` is delivered for the whole run.** `n_offsprings` defaults to `pop_size` and
+   survival is called with `n_survive=self.pop_size`, so the merged pool is truncated back to
+   size at the first generational step. Across 379 archived runs the per-generation population
+   deviates at generation 1 only — **zero deviations at any generation >= 2**.
+2. **No diversity is lost.** Dedup keeps the first occurrence and matches at `epsilon=1e-16`, so
+   every deleted row was bit-identical to a retained one. Over 30 populations (5 configs x 6
+   sampler seeds) no seed family and no decoded phenotype was ever eliminated.
+3. **The raw seeds work unaided.** The `seeding` arm applies no repair anywhere and still solves
+   every config, so the patterns close on their own.
+
+What remains is a mild reallocation of initial mating weight — and two design smells worth
+separate attention:
+
+- **The sampler and the repair pipeline work against each other.** `src/sampling.py:747`
+  documents the random start offset as existing specifically to give `eliminate_duplicates`
+  room to keep cycled seeds distinct, and `src/repair.py:611` erases exactly that offset, on
+  exactly those seeds.
+- **Seed budget is allocated per variant, not per family.** In `all_pieces`, `oval_two_sidings`
+  contributes 16 variants and claims 34% of the seed rows while `figure_eight` contributes 2 and
+  claims 4%. That is a far larger lever on which topologies the search bootstraps from than the
+  deduplication is.
+
+### 5.10 In half the configs the sampler, not the GA, produces the champion
+
+From a separate full-system sweep (one run per config, production settings): a feasible layout
+exists in **generation 1 in 21/21** configs, and in **10 of 21** the best utilization never
+improves for the rest of the run. The GA broadened the front in 21/21 (e.g. 20 → 138 distinct
+objective vectors), and where it does improve utilization it is worth up to **+17.4pp**
+(`all_pieces_rect`) — those are the configs whose boundary does not match a seed pattern. No
+elite was ever lost: the final best always equals the run best.
+
 ---
 
 ## 6. Threats to validity
@@ -493,7 +604,7 @@ NSGA-II. Against `ConstrRankAndCrowding` this differs by 17% of survivors.
 
 | item | cost | what it buys |
 |---|---|---|
-| re-run the stock arm at pymoo's documented discrete settings (`eta=3.0, prob=1.0`) | ~3 h | a fair comparator; every claim about `baseline`/`operators`/`full_minus_operators` currently rests on a partly inert one |
+| re-run the stock arm at pymoo's documented discrete settings (`eta=3.0, prob=1.0`), or on `MixedVariableGA` | ~3 h | a fair comparator; every claim about `baseline`/`operators`/`full_minus_operators` currently rests on a partly inert one. pymoo ships `MixedVariableGA` / `MixedVariableMating`, whose type-correct operators (`UX`, `ChoiceRandomMutation`, `BFM`) suit a heterogeneous genome like this one far better than flat integer SBX/PM |
 | score the existing archive at generations 25/50/100 as well as the end | scoring change only | prices every component at short budgets, where §5.1 shows repair is doing real work |
 | an arm that disables the decoder's internal clamps | design + ~3 h | separates "repair" from "the decoder repairs anyway" (§2, §5.3) |
 | raise the `epsilon_0` cap or rescale soft-G, then re-measure | small change + ~3 h | the schedule is saturated in 100% of runs, so it has never been tested (§5.4) |
