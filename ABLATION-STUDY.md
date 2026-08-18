@@ -104,8 +104,8 @@ operator with a validator inside it, and it runs in every arm including `baselin
 `src/decoder/construction.py:673` — `_apply_crossing_repair`, emergent self-crossings → CROSS_90
 `src/decoder/construction.py:955` — `_auto_center`, the translate branch of `BoundaryAwareRepair`
 
-On 300 stock-sampled chromosomes for `all_pieces` the decoder drops **28.5% of the active
-main-loop genes** on inventory grounds (158.6 → 113.4 pieces) and 3.5 descriptors per decode.
+On 300 stock-sampled chromosomes for `all_pieces` the decoder drops **a quarter of the active
+main-loop genes** on inventory grounds (182.8 → 137.7, 24.7%) and 1.9 descriptors per decode.
 Consequences in §5.3 and §6.
 
 ---
@@ -257,10 +257,10 @@ NSGA-II's *constructor* defaults — continuous-problem settings; pymoo's own di
 `eta=3.0, prob=1.0`. On this 454-gene genome:
 
 ```
-PM eta=20 : 0.0402 genes changed per offspring (eta=3 would change 32.9% of genes)
-  main_flips  212 genes, span 1 -> 0.00000 changes.  Never.
-  descriptor active bits, span 1 -> likewise zero
-SBX eta=15: 5.4 novel gene values per child, of which main_types 0.03, flips 0.0
+PM eta=20, prob_var=1/n_var : 0.033 genes changed per offspring; main_flips 0.00000. Never.
+PM eta=3   at that prob_var : 0.247 — eta is not the lever
+PM eta=3,  prob_var=1.0     : 84.4 genes, 18.6% of the genome — the discrete recipe's lever
+SBX eta=15: 5.47 novel gene values per child, of which main_types 0.03, flips 0.0
 ```
 
 PM cannot cross the threshold on a binary gene, and SBX between parents holding 0 and 1 produces
@@ -426,16 +426,17 @@ faults there, so the wrapper stops one step below. Not a corner case: survival c
 
 `Initialization` repairs the whole initial population and then deduplicates it **without
 refilling to `pop_size`** (`pymoo/core/initialization.py:39,42`), whereas `Mating` refills in a
-loop. So **19 of 21 configs start generation 1 below `pop_size`**, by up to 8%
-(`switch_one_siding_wide` 600 → 552, `all_pieces_rect` 800 → 753). Every missing individual is a
-heuristic seed; repair causes the loss in 17 of the 19. The seed loop deals far fewer patterns
-than seed rows, round-robin, so each variant is written ~7 times differing only in a random start
-offset — which `BoundaryAwareRepair` zeroes on any layout that would leave the box
-(`src/repair.py:611`). With `enable_boundary_repair=False` the collapse disappears (600/600).
+loop. So **19 of 21 configs start generation 1 below `pop_size`**, by up to 9%
+(`switch_one_siding_wide` 600 → 546, `all_pieces_rect` 800 → 752). Every missing individual is a
+heuristic seed, and repair causes the loss: the sampled population survives dedup intact without
+the pipeline (600/600, 800/800) and comes out at 552 and 753 with it. The culprit is the clamping
+stages, not the two the flags expose — disabling closure **and** boundary repair changes nothing
+(552, 753), leaving `JunctionValidityRepair` and `InventoryRepair` mapping distinct raw genomes
+onto identical repaired ones.
 
 Three measurements say it is harmless. `pop_size` is delivered for the whole run — `n_offsprings`
-defaults to it and survival is called with `n_survive=self.pop_size`, and across 379 archived
-runs the population deviates at generation 1 only, **zero deviations at generation >= 2**. No
+defaults to it and survival is called with `n_survive=self.pop_size`, and across all 84 `full`
+cells the population deviates at generation 1 only, **zero deviations at generation >= 2**. No
 diversity is lost — dedup keeps the first occurrence at `epsilon=1e-16`, so each deleted row was
 bit-identical to a retained one, and over 30 populations no seed family and no decoded phenotype
 was ever eliminated. And the raw seeds work unaided: the `seeding` arm applies no repair anywhere
@@ -444,19 +445,19 @@ and still solves every config.
 Two design smells surface from the audit. **The sampler and the repair pipeline work against
 each other** — `src/sampling.py:747` documents the random start offset as existing specifically
 to give `eliminate_duplicates` room to keep cycled seeds distinct, and `src/repair.py:611` erases
-exactly that offset on exactly those seeds. And **seed budget is allocated per variant, not per
+exactly that offset. Not the cause of the shortfall above, but the two pull against each other. And **seed budget is allocated per variant, not per
 family**: in `all_pieces`, `oval_two_sidings` contributes 16 variants and claims 34% of the seed
 rows while `figure_eight` contributes 2 and claims 4% — a far larger lever on which topologies
 the search bootstraps from than the deduplication is.
 
 ### 5.10 In half the configs the sampler, not the GA, produces the champion
 
-From a separate full-system sweep (one run per config, production settings): a feasible layout
-exists in **generation 1 in 21/21** configs, and in **10 of 21** the best utilization never
-improves for the rest of the run. The GA broadened the front in 21/21 (e.g. 20 → 138 distinct
-objective vectors), and where it does improve utilization it is worth up to **+17.4pp**
-(`all_pieces_rect`) — the configs whose boundary does not match a seed pattern. No elite was ever
-lost: the final best always equals the run best.
+The `full` arm reaches a feasible layout in **generation 1 in all 84 cells**, and in **9 of 21
+configs the best objective never improves on it** — the initial population already holds the
+champion. Three more improve on one seed of four, so there it is the draw, not the config. Where
+the search does improve it is worth up to **+22.2pp** (`default`), and 13–14pp on
+`switch_cross_rect` and 10.5pp on `with_double_crossover` on every seed. Measured on `best_f0`,
+which ranks the whole population, so these are lower bounds.
 
 ---
 
