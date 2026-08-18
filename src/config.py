@@ -50,6 +50,37 @@ class TerminationConfig(BaseModel):
     )
 
 
+class SearchComponentsConfig(BaseModel):
+    """Ablation toggles for the search components added on top of pymoo.
+
+    All-on is the production system. All-off is the ablation baseline: the same
+    problem (encoding, decoder, objectives, constraints) solved with stock pymoo
+    modules only -- IntegerRandomSampling, SBX/PM with RoundingRepair, and
+    NSGA-II's own RankAndCrowding survival with unweighted CV.
+    """
+
+    heuristic_sampling: bool = Field(
+        default=True, description="Heuristic seed sampling vs IntegerRandomSampling",
+    )
+    custom_operators: bool = Field(
+        default=True, description="Partitioned crossover/mutation vs stock SBX/PM",
+    )
+    repair: bool = Field(
+        default=True, description="TrackRepairPipeline vs no repair",
+    )
+    adaptive_epsilon: bool = Field(
+        default=True, description="LegoAdaptiveEpsilon wrapper vs plain NSGA2",
+    )
+    elite_injection: bool = Field(
+        default=True, description="Feasible + category elite re-injection callbacks",
+    )
+    constr_survival: bool = Field(
+        default=True,
+        description="ConstrRankAndCrowding (constraint-vector NDS for infeasibles) vs "
+                    "NSGA-II's own default RankAndCrowding (scalar-CV truncation)",
+    )
+
+
 class AlgorithmConfig(BaseModel):
     """NSGA-II algorithm parameters."""
 
@@ -65,8 +96,15 @@ class AlgorithmConfig(BaseModel):
     crossover_prob: float = Field(default=0.2, ge=0, le=1, description="Crossover probability")
     mutation_prob: float = Field(default=0.8, ge=0, le=1, description="Mutation probability")
     eliminate_duplicates: bool = Field(default=True, description="Remove duplicate solutions")
+    crowding_func: Literal["cd", "pcd", "ce", "mnn", "2nn"] = Field(
+        default="cd",
+        description="Crowding metric the survival operator sorts the splitting front by. "
+                    "'cd' is NSGA-II's original; 'pcd' additionally scores objective-space "
+                    "duplicates as zero, which pymoo recommends for two-objective problems.",
+    )
     seed: Optional[int] = Field(default=None, description="Random seed for reproducibility")
     termination: TerminationConfig = Field(default_factory=TerminationConfig)
+    components: SearchComponentsConfig = Field(default_factory=SearchComponentsConfig)
 
 
 class OptimizationConfig(BaseModel):
