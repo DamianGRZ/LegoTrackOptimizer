@@ -217,7 +217,7 @@ class TestInfeasibilitySentinel:
 
 
 class TestF1SingleRouteTime:
-    """F[1] = expected traversal time; for one route it is that loop's lap time.
+    """F[1] = expected traversal time; on a plain loop it is that loop's lap time.
 
     Per-segment derailment safety is enforced inside the speed profile: the
     3-pass profiler brakes for curves and accelerates on straights, and F[1]
@@ -320,7 +320,9 @@ class TestF1WholeGraphTime:
     Every one of the 2^J routes (take/skip each siding) is profiled; each
     physical piece is charged the mean of its traversal times across all
     passages (identity via piece_uids), and F[1] sums over distinct pieces.
-    A switchless layout has one route, so F[1] reduces to its lap time.
+    A plain loop has one route covering each piece once, so F[1] reduces to
+    its lap time; a self-crossing one charges the crossing once for two
+    passages and lands below it.
     """
 
     def test_f1_equals_per_piece_mean_over_routes(self, switches_config, catalog):
@@ -398,7 +400,7 @@ class TestF1WholeGraphTime:
         )
 
     def test_single_path_reduces_to_lap_time(self, switches_config, catalog):
-        """A switchless layout's F[1] is exactly its one route's lap time."""
+        """A plain loop's F[1] is exactly its one route's lap time."""
         import numpy as np
         from src.problem import TrackOptimizationProblem, SPEED_SAFETY_MARGIN
         from src.decoder import decode_chromosome
