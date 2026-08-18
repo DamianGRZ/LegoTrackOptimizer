@@ -64,15 +64,15 @@ almost always ejects it from the layout.
 
 | parameter | what it does | note |
 |---|---|---|
-| `pop_size` | how many layouts the GA holds at once | in the grid (§3.4) |
+| `pop_size` | how many layouts the GA holds at once | in the grid (§3.3) |
 | `n_gen` | how many rounds of improvement it runs | in the grid |
 | `crossover_prob` / `mutation_prob` | the slider between crossover and mutation | see §1.1, §1.2 |
-| `heuristic_ratio` | share of the initial population that is a seed pattern | hard ceiling 0.5 (`src/config.py:93`, `le=0.5`) |
+| `heuristic_ratio` | share of the initial population that is a seed pattern | hard ceiling 0.5 (`src/config.py:94`, `le=0.5`) |
 | `eliminate_duplicates` | drop repeated solutions | always on today |
 | `termination.period` | stop early on stagnation | campaigns force 0 for equal budgets |
 
-Where the runner reads them: `src/algorithm/runner.py:675` (`heuristic_ratio`), `:681`
-(`crossover_prob`), `:682` (`mutation_prob`), `:740` (`eliminate_duplicates`).
+Where the runner reads them: `src/algorithm/runner.py:676` (`heuristic_ratio`), `:682`
+(`crossover_prob`), `:683` (`mutation_prob`), `:766` (`eliminate_duplicates`).
 
 `heuristic_ratio = 0.0` is **not** `heuristic_sampling = False`: it keeps the custom partial-fill
 random generator and removes only the seed patterns.
@@ -87,7 +87,7 @@ random generator and removes only the seed patterns.
 than the main loop; for switch configs this is the only number steering mutation
 `src/operators.py:121` / `:129` / `:136` — three 50% rates deciding how strongly children mix the
 parents' DC descriptors, junction descriptors and start position. Never changed.
-`src/algorithm/runner.py:691` / `:692` — `enable_closure_repair` and `enable_boundary_repair`,
+`src/algorithm/runner.py:692` / `:693` — `enable_closure_repair` and `enable_boundary_repair`,
 both wired `True`. The ablation switches repair on and off as a whole; splitting it costs two
 lines and answers a question nobody has asked — which stage of repair actually works.
 `pymoo/algorithms/base/genetic.py:41` — `n_offsprings` defaults to `pop_size`. A smaller value
@@ -95,9 +95,10 @@ gives steady-state renewal instead of full replacement, but it changes evaluatio
 generation, so the budget stops being `pop_size x n_gen`.
 
 The epsilon schedule rests on five numbers, none of them in a config:
-`src/algorithm/runner.py:756` — `hold_until=0.2`, `perc_eps_until=0.9`
-`src/algorithm/runner.py:536` — `theta=0.2`, `ratchet_trigger=0.25`, `ratchet_cooldown=5`
-`src/algorithm/runner.py:449` — `HARD_CONSTRAINT_WEIGHT = 1000.0`
+`src/algorithm/runner.py:450` — `HARD_CONSTRAINT_WEIGHT = 1000.0`
+`src/algorithm/runner.py:535` — all five schedule numbers, as constructor defaults:
+`hold_until=0.2`, `perc_eps_until=0.7`, `theta=0.2`, `ratchet_trigger=0.25`, `ratchet_cooldown=5`
+`src/algorithm/runner.py:777` — the only one any caller changes: `perc_eps_until=0.9`
 
 Note that the epsilon calibration is saturated in every archived run (`ABLATION-STUDY.md` §5.4),
 so exposing these numbers is a prerequisite for measuring the schedule at all, not a tuning
@@ -130,7 +131,7 @@ hypervolumes stop being comparable (§4). Inventory and boundary are externally 
 Selection pressure looks like a parameter but is not available: pymoo's tournament is written for
 a two-way comparison and raises on anything else.
 
-`pymoo/algorithms/moo/nsga2.py:25` — `raise ValueError("Only implemented for binary tournament!")`
+`pymoo/algorithms/moo/nsga2.py:26` — `raise ValueError("Only implemented for binary tournament!")`
 
 `crowding_func` is **settled, not swept**: pymoo recommends `pcd` for two-objective problems, it
 was run as a paired second axis over every arm, and it never wins (`ABLATION-STUDY.md` §5.8). A
@@ -153,7 +154,7 @@ way", never as "a bigger population is better".
 
 `n_gen` is **not** a pure budget knob here. The epsilon schedule's phase boundaries are fractions
 of the *planned* generation count (`hold_until=0.2`, `perc_eps_until=0.9`, passed at
-`src/algorithm/runner.py:756`), driven by `n_gen_planned` rather than elapsed generations, and
+`src/algorithm/runner.py:776`), driven by `n_gen_planned` rather than elapsed generations, and
 snapshot targets rescale the same way. Halving `n_gen` halves the absolute length of the strict
 phase while keeping its relative position — a short-`n_gen` cell is not a truncated long one.
 
@@ -206,22 +207,32 @@ configs. That is where it ends: the population is back to size from generation 2
 ### 3.4 Config selection and cost
 
 Do not use all 21 configs — the component ablation covers breadth, this study needs depth. Pick a
-set spanning the behaviours in `ABLATION-STUDY.md` §5: at least one config where the GA genuinely
-improves on its seed (`all_pieces_rect`, `default`, `switch_cross_rect`) and one where the seed
-is already the champion (`dc_figure8_wide`, `cross_figure8_wide`).
+set spanning the behaviours in `ABLATION-STUDY.md` §5.10: one config where the search reliably
+improves on its initial population (`default`, `switch_cross_rect`, `with_double_crossover` — on
+every seed) and one where that population already holds the champion (`dc_figure8_wide`,
+`cross_figure8_wide`, `with_crossing` — flat on all four). Not `all_pieces_rect`: flat on three
+seeds and +16pp on the fourth, so it measures the draw.
 
-Measured single-run wall-clock at production settings — use these to budget, do not guess:
+Single-run wall-clock at production settings, in minutes, from the ablation archive (`full` arm,
+seeds 1–3, `gen_seconds` summed per run) — budget from these, do not guess:
 
 ```
-default 0.5 min   compact 0.7   plain_wide_racetrack 1.1   switch_one_siding_wide 1.5
-switch_two_sidings_tall 1.7   dc_figure8_wide 2.0   cross_figure8_wide 2.0
-cross_figure8_tall 2.1   all_pieces 4.0   with_crossing 4.0   with_switches 11.1
-dc_figure8_large 40.6
+with_double_crossover_small 0.3   with_double_crossover_narrow 0.3   plain_wide_racetrack 0.8
+with_double_crossover 0.8   switch_two_sidings_tall 1.1   switch_one_siding_wide 1.2
+dc_figure8_wide 1.5   cross_figure8_wide 1.6   cross_figure8_tall 2.0   switch_cross_rect 2.1
+cross_dc_rect 2.2   dc_figure8_large 2.2   all_pieces_rect 2.3   default 2.4   compact 2.9
+all_pieces_150x150 3.4   with_crossing 3.6   all_pieces 3.9   all_pieces_350x350 4.1
+with_switches 8.5   with_switches_and_crossing 9.8
 ```
 
-`dc_figure8_large` has a measured pathology: seconds per generation grow ~15x **within a single
-run** (0.71 → 10.66) as layouts grow, because the self-intersection scan is quadratic in piece
-count. Avoid it unless the study is specifically about cost.
+`with_double_crossover`, `with_switches` and `with_switches_and_crossing` ship
+`termination.period: 100` and the archive forced it to 0, so their figures are an upper bound on
+a production run that stops early.
+
+The self-intersection scan is quadratic in piece count, so cost per generation rises with layout
+size — but no config in the current archive runs away with it. `dc_figure8_large`, once the worst
+offender at a reported 40 minutes a run, now finishes in 2.2 and its generation time *falls*
+across the run (1.42 s at generation 1, 0.48 s at the end).
 
 ### 3.5 Order to extend in
 
@@ -245,8 +256,8 @@ never run there (§1.3).
   live in `src/normalization.py`. Do not skip the `has_extent` guard — a single-point archive
   self-normalized against `[1.1, 1.1]` scores **1.21**, the maximum possible, and single-point
   archives are common here.
-- **Never pool raw HV across configs**: `special_piece_weight` differs, so F[0] is on different
-  scales. Across configs pool signs and ranks only.
+- **Never pool raw HV across configs**: `special_piece_weight` is 6.0 in 9 of the 21 configs and
+  3.0 in the rest, so F[0] is on different scales. Across configs pool signs and ranks only.
 - **Never mix normalization boxes in one table.** Adding cells later means scoring them against
   the frozen box or recomputing and re-reporting everything.
 - **Front size is not a quality metric.** Measured: one arm produced 827 distinct points against
@@ -291,8 +302,8 @@ is correct — the public method expects a whole population, the chain passes th
 population and only then draws which individuals keep the change. That is cheap for vectorized
 library operators; ours walk individuals one at a time and some are expensive — the costliest
 straightens track near a self-crossing, which means building the layout and comparing every
-segment with every other, quadratic in piece count. At `mutation_prob: 0.05` (`with_crossing`,
-both `cross_figure8_*`) roughly 95% of that work is done and thrown away. It can be avoided by
+segment with every other, quadratic in piece count. At `mutation_prob: 0.05` — `all_pieces_150x150`,
+`with_crossing` and both `cross_figure8_*` — roughly 95% of that work is done and thrown away. It can be avoided by
 setting the probability to 1.0 and moving the draw inside our operator — statistically identical,
 but it changes the meaning of the number in every config, so not during a parameter study.
 
