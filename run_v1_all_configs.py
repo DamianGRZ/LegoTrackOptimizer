@@ -57,9 +57,11 @@ def run_one(config_name: str) -> dict:
             dims=dims, config=DecoderConfig.from_optimization_config(config),
         )
         summary.update({
+            # F[0] is negated utilization; F[1] is already the minimized
+            # traversal time in seconds, so only the former flips sign.
             "best_util": float(-F[best_idx, 0]),
-            "best_min_speed": float(-F[best_idx, 1]),
-            "n_pieces": layout.n_pieces,
+            "best_traversal_time": float(F[best_idx, 1]),
+            "n_pieces": layout.n_physical_pieces,
             "n_switch_pairs": layout.n_switch_pairs,
         })
 
@@ -91,7 +93,7 @@ def main() -> None:
         print(f"  feasible:       {s['n_feasible']}/{s['pop_size']}")
         if "best_util" in s:
             print(f"  best util:      {s['best_util']:.1%} ({s['n_pieces']} pieces)")
-            print(f"  best min_speed: {s['best_min_speed']:.2f} m/s")
+            print(f"  best time:      {s['best_traversal_time']:.2f} s")
             print(f"  switch pairs:   {s['n_switch_pairs']}")
         else:
             print("  no feasible solutions")

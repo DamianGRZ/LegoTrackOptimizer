@@ -11,6 +11,7 @@ These tests pin the pure pose-recovery helper (`_dc_body_poses`) so the visual
 bug can't silently regress.
 """
 import numpy as np
+import pytest
 
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
@@ -93,3 +94,32 @@ def test_plot_layout_draws_dc_body_once(monkeypatch):
     plt.close(fig)
 
     assert calls == [(-24.0, -8.0)], f"DC body drawn {len(calls)}x at {calls}"
+
+
+def _metrics_piece_line(fig):
+    """The 'Pieces: N' entry of the metrics box, whichever renderer drew it."""
+    for text in fig.axes[0].texts:
+        for line in text.get_text().splitlines():
+            if line.startswith("Pieces:"):
+                return line
+    raise AssertionError("no 'Pieces:' entry in the metrics box")
+
+
+@pytest.mark.parametrize("plot_name", ["plot_layout", "plot_multi_path_layout"])
+def test_metrics_box_reports_physical_pieces(plot_name):
+    """Both dispatch paths must report PHYSICAL pieces: a descriptor DC spans two
+    traversal slots but is one body, and the box already dedupes 'Crossovers'."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import src.visualization.track_renderer as tr
+
+    layout = _figure8_dc_layout()
+    assert layout.n_physical_pieces == layout.n_pieces - 1  # exactly one DC record
+    cat = TrackCatalog.load("data/track_pieces_v2.yaml")
+
+    fig = getattr(tr, plot_name)(layout, cat, boundary=None, title="t")
+    line = _metrics_piece_line(fig)
+    plt.close(fig)
+
+    assert line == f"Pieces: {layout.n_physical_pieces}"

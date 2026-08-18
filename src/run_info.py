@@ -203,7 +203,9 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
 
 def _format_individual(label: str, layout, util: float, time_s: float,
                        cv: float | None) -> list[str]:
-    line = (f"- **{label}**: {layout.n_pieces} pieces, util={util:.1%}, "
+    """Summary line for one individual; the count is PHYSICAL pieces, matching
+    ``count_pieces`` and the category report rather than traversal slots."""
+    line = (f"- **{label}**: {layout.n_physical_pieces} pieces, util={util:.1%}, "
             f"time={time_s:.2f} s, switch_pairs={layout.n_switch_pairs}")
     if cv is not None:
         line += f", CV={cv:.2f}"

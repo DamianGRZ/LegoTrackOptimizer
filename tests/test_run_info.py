@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from src.intersection import CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX
-from src.run_info import count_pieces
+from src.run_info import _format_individual, count_pieces
 from src.types import CrossJunction, DblCrossover, MultiPathLayout, SwitchPair
 
 S16 = 0
@@ -50,3 +50,20 @@ class TestCountPieces:
     def test_legacy_layout_counts_indices_per_slot(self):
         legacy = SimpleNamespace(indices=[S16, R40, R40, -1])
         assert count_pieces(legacy) == {S16: 1, R40: 2}
+
+
+class TestFormatIndividual:
+    """The summary line must agree with the category report, not slot counts."""
+
+    def test_headline_count_dedupes_descriptor_dc(self):
+        layout = MultiPathLayout(
+            main_loop_pieces=[S16, DOUBLE_CROSSOVER_INDEX, S16, DOUBLE_CROSSOVER_INDEX],
+            dbl_crossovers=[DblCrossover(slot=0, positions=(1, 3), routes=(2, 3),
+                                         origin=(0.0, 0.0, 0.0))],
+        )
+        assert layout.n_pieces == 4 and layout.n_physical_pieces == 3
+
+        line, = _format_individual("Best feasible", layout, 0.5, 1.25, cv=None)
+
+        assert "3 pieces" in line
+        assert "4 pieces" not in line
