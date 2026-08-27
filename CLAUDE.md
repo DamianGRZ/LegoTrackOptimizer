@@ -275,7 +275,7 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 
 **`src/algorithm/`** — `runner.py` (`run_optimization()`, `save_results()`, callbacks: `ProgressCallback`, `FeasibleEliteCallback`, `CategoryEliteArchive`, `SnapshotCallback`, `CallbackChain`, `LegoAdaptiveEpsilon`, category report writer); `monitoring.py` (`ConvergenceMonitorCallback`: HV/IGD/feasibility + cumulative feasible front).
 
-**`src/visualization/`** — `track_renderer.py` (`plot_layout()`, `plot_multi_path_layout()` — a piece-render fix must patch BOTH dispatch paths); `pareto_plot.py` (`plot_pareto_front()` built on pymoo `Scatter`).
+**`src/visualization/`** — `track_renderer.py` (`plot_layout()` — the sole renderer: one full-size track view plus a metrics/legend info panel, closure tolerances required as keyword args so the drift overlay is gated by the optimizer's own thresholds; piece geometry drawn via the shared `_draw_piece`/`_draw_piece_sequence` helpers); `pareto_plot.py` (`plot_pareto_front()` built on pymoo `Scatter`).
 
 ### Stale / Needs Action (NOT auto-delete)
 

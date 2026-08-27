@@ -42,7 +42,7 @@ from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.run_info import count_pieces
 from src.sampling import IntegerSampling
-from src.visualization import plot_layout, plot_multi_path_layout, plot_pareto_front
+from src.visualization import plot_layout, plot_pareto_front
 
 # Headless pipeline: PNGs only. The interactive Tk backend crashes when its
 # objects are garbage-collected from a multiprocessing.Pool result-handler
@@ -397,21 +397,16 @@ class SnapshotCallback(Callback):
                 entry["X"], self._catalog, self._config.inventory,
                 dims=self._dims, config=self._decoder_config,
             )
-            util = float(-entry["F"][0])
-            time_s = float(entry["F"][1])
-            base = (f"Snapshot {snap_idx}/{total} | Gen {gen} | {category} | "
-                    f"{layout.n_physical_pieces} pcs, score={util:.1%}, "
-                    f"time={time_s:.2f} s")
-            title = base if category == "feasible" else f"{base}, CV={entry['cv']:.2f}"
+            title = f"Snapshot {snap_idx}/{total} | Gen {gen} | {category}"
             save_path = self._snap_dir / f"snapshot_{snap_idx:02d}_{category}.png"
-            if hasattr(layout, "n_switch_pairs") and layout.n_switch_pairs > 0:
-                fig = plot_multi_path_layout(
-                    layout, self._catalog, self._config.boundary, title, save_path,
-                )
-            else:
-                fig = plot_layout(
-                    layout, self._catalog, self._config.boundary, title, save_path,
-                )
+            fig = plot_layout(
+                layout, self._catalog, self._config.boundary, title, save_path,
+                closure_tolerance=self._config.closure_tolerance,
+                angle_tolerance=self._config.angle_tolerance,
+                inventory=self._config.inventory,
+                objectives=entry["F"],
+                cv=entry["cv"] if category == "infeasible" else None,
+            )
             plt.close(fig)
         except Exception as e:
             logger.warning(f"Could not render snapshot {snap_idx:02d} {category}: {e}")
@@ -975,9 +970,9 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
             n_phys = layout.n_physical_pieces
             plot_fn(
                 layout,
-                f"Best with {category} ({n_phys}/{total_inv} pcs, "
-                f"score {util:.1%})",
+                f"Best with {category}",
                 output_dir / f"best_with_{category}.png",
+                objectives=np.asarray(ind.F, dtype=float),
             )
             spans = [p.states for p in layout.paths if len(p.states) > 1]
             lines += [
@@ -1068,11 +1063,15 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     except Exception as e:
         logger.warning(f"Could not plot Pareto front: {e}")
 
-    def _plot_layout(layout, title, path):
-        if hasattr(layout, 'n_switch_pairs') and layout.n_switch_pairs > 0:
-            fig = plot_multi_path_layout(layout, catalog, config.boundary, title, path)
-        else:
-            fig = plot_layout(layout, catalog, config.boundary, title, path)
+    def _render_layout(layout, title, path, objectives=None, cv=None):
+        fig = plot_layout(
+            layout, catalog, config.boundary, title, path,
+            closure_tolerance=config.closure_tolerance,
+            angle_tolerance=config.angle_tolerance,
+            inventory=config.inventory,
+            objectives=objectives,
+            cv=cv,
+        )
         plt.close(fig)
 
     # Each artifact block is isolated: a decode/render failure in one must not
@@ -1107,14 +1106,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
                 X[best_feas_idx], catalog, config.inventory,
                 dims=dims, config=decoder_cfg,
             )
-            best_feas_util = -F[best_feas_idx, 0]
-            best_feas_time = F[best_feas_idx, 1]
-            _plot_layout(
-                best_feas_layout,
-                f"Best Feasible ({best_feas_layout.n_physical_pieces}/"
-                f"{sum(config.inventory.values())} pcs, score {best_feas_util:.1%}, "
-                f"{best_feas_time:.2f} s)",
-                output_dir / "best_layout.png",
+            _render_layout(
+                best_feas_layout, "Best Feasible", output_dir / "best_layout.png",
+                objectives=F[best_feas_idx],
             )
         else:
             logger.warning("No feasible solutions found")
@@ -1133,22 +1127,18 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
                 X[best_infeas_idx], catalog, config.inventory,
                 dims=dims, config=decoder_cfg,
             )
-            best_infeas_util = -F[best_infeas_idx, 0]
-            best_infeas_time = F[best_infeas_idx, 1]
             best_infeas_cv = float(np.sum(np.maximum(0, G[best_infeas_idx])))
-            _plot_layout(
-                best_infeas_layout,
-                f"Best Infeasible ({best_infeas_layout.n_physical_pieces}/"
-                f"{sum(config.inventory.values())} pcs, score {best_infeas_util:.1%}, "
-                f"{best_infeas_time:.2f} s, CV={best_infeas_cv:.2f})",
-                output_dir / "best_infeasible.png",
+            _render_layout(
+                best_infeas_layout, "Best Infeasible", output_dir / "best_infeasible.png",
+                objectives=F[best_infeas_idx],
+                cv=best_infeas_cv,
             )
     except Exception as e:
         logger.warning(f"Could not render best_infeasible.png: {e}")
 
     try:
         _write_category_report(res, output_dir, catalog, config, dims,
-                               decoder_cfg, F, X, feasible_mask, _plot_layout)
+                               decoder_cfg, F, X, feasible_mask, _render_layout)
     except Exception as e:
         logger.warning(f"Could not write category report: {e}")
 
