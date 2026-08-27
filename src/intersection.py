@@ -8,8 +8,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from numpy.typing import NDArray
 
-CROSS_90_INDEX = 3
-DOUBLE_CROSSOVER_INDEX = 6
+from src.encoding import CROSS_90 as CROSS_90_INDEX
+from src.encoding import DOUBLE_CROSSOVER as DOUBLE_CROSSOVER_INDEX
 
 # Port set covered by each catalog route of DOUBLE_CROSSOVER (yaml order):
 #   0 = track1_through (A,B)

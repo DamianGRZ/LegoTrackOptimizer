@@ -15,8 +15,8 @@ FK = np.array([
     [24.0, 0.0, 0.0],       # 1 STRAIGHT_24
     [15.307, 3.045, 22.5],  # 2 R40_CURVE
     [0.0, 0.0, 90.0],       # 3 CROSS_90 (unused here)
-    [0.0, 0.0, 0.0],        # 4 SWITCH_LEFT
-    [0.0, 0.0, 0.0],        # 5 SWITCH_RIGHT
+    [0.0, 0.0, 0.0],        # 4 R40_SWITCH_LEFT
+    [0.0, 0.0, 0.0],        # 5 R40_SWITCH_RIGHT
     [0.0, 0.0, 0.0],        # 6 DOUBLE_CROSSOVER
 ], dtype=np.float64)
 

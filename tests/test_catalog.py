@@ -189,6 +189,56 @@ class TestTopologyAndRoutes:
         assert topo is not None
         assert len(topo.routes) == 4
 
+    def test_route_radii_are_r40_where_the_track_bends(self):
+        """Every place the track bends -- the curve, both switch diverging legs,
+        both crossover diagonals -- is R40; every other route runs straight."""
+        from pathlib import Path
+        from src.catalog.catalog import _route_radii_mm
+        from src.catalog.loader import load_catalog_spec
+
+        spec = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
+        r40 = 40.0 * spec.meta.stud_mm
+        expected = {
+            "STRAIGHT_16":      {"main": None},
+            "STRAIGHT_24":      {"main": None},
+            "R40_CURVE":        {"main": r40},
+            "CROSS_90":         {"horizontal": None, "vertical": None},
+            "R40_SWITCH_LEFT":  {"through": None, "diverging": r40},
+            "R40_SWITCH_RIGHT": {"through": None, "diverging": r40},
+            "DOUBLE_CROSSOVER": {"track1_through": None, "track2_through": None,
+                                 "cross_1_to_2": r40, "cross_2_to_1": r40},
+        }
+        for piece_id, want in expected.items():
+            got = _route_radii_mm(spec.by_id[piece_id], spec.meta.stud_mm)
+            assert got == want, f"{piece_id}: {got}"
+
+    def test_crossover_is_not_a_crossing(self, catalog: TrackCatalog):
+        """CROSS_90 only lets two routes intersect; DOUBLE_CROSSOVER also carries a
+        train between tracks, so they must not share a class."""
+        cross, crossover = catalog.get_topology(3), catalog.get_topology(6)
+
+        assert cross.piece_class == PieceClass.CROSSING_4PORT
+        assert crossover.piece_class == PieceClass.CROSSOVER_4PORT
+        assert cross.is_crossing() and not cross.is_crossover()
+        assert crossover.is_crossover() and not crossover.is_crossing()
+
+    def test_topology_predicates_resolve_for_every_piece(self, catalog: TrackCatalog):
+        """Dropping a class from PieceClass without updating these predicates only
+        fails when one is CALLED, so every piece is exercised here."""
+        expected = {
+            0: (False, False, False),   # STRAIGHT_16
+            1: (False, False, False),   # STRAIGHT_24
+            2: (False, False, False),   # R40_CURVE
+            3: (False, True, False),    # CROSS_90
+            4: (True, False, False),    # R40_SWITCH_LEFT
+            5: (True, False, False),    # R40_SWITCH_RIGHT
+            6: (False, False, True),    # DOUBLE_CROSSOVER
+        }
+        for idx, want in expected.items():
+            topo = catalog.get_topology(idx)
+            got = (topo.is_switch(), topo.is_crossing(), topo.is_crossover())
+            assert got == want, f"piece {idx} classified {got}, expected {want}"
+
     def test_get_fk_route(self, catalog: TrackCatalog):
         """Can get FK for specific route."""
         # CROSS_90 route 0 should be west-east (dx=16)
@@ -244,8 +294,8 @@ class TestStudMm:
 
 class TestLoadValidation:
     """TrackCatalog loading fails loudly on YAML drift instead of silently
-    shrinking: unknown ids, missing canonical pieces, and stud/mm radius
-    disagreements are all load-time errors."""
+    shrinking: unknown ids, missing canonical pieces, and a declared radius with
+    no route to attach it to are all load-time errors."""
 
     def _full_spec(self):
         from pathlib import Path
@@ -257,7 +307,8 @@ class TestLoadValidation:
         from src.catalog.loader import load_catalog_spec
         tiny = Path(__file__).parent / "fixtures" / "catalog_tiny.yaml"
         spec = load_catalog_spec(tiny)
-        with pytest.raises(ValueError, match="canonical"):
+        # The message must name PieceIndex -- the one place a new piece is added.
+        with pytest.raises(ValueError, match="PieceIndex"):
             TrackCatalog._from_spec(spec)
 
     def test_missing_canonical_piece_raises(self):
@@ -268,12 +319,27 @@ class TestLoadValidation:
         with pytest.raises(ValueError, match="DOUBLE_CROSSOVER"):
             TrackCatalog._from_spec(spec)
 
-    def test_radius_drift_raises(self):
+    def test_radius_comes_from_the_piece(self):
+        """The piece's own radius_studs drives the runtime radius, so there is no
+        second table left that could disagree with it."""
         spec = self._full_spec()
         pieces = [
             p.model_copy(update={"radius_studs": 56.0}) if p.piece_id == "R40_CURVE" else p
             for p in spec.pieces
         ]
-        spec = spec.model_copy(update={"pieces": pieces})
-        with pytest.raises(ValueError, match="R40_CURVE"):
-            TrackCatalog._from_spec(spec)
+        catalog = TrackCatalog._from_spec(spec.model_copy(update={"pieces": pieces}))
+        assert catalog.radius_table[2] == pytest.approx(56.0 * spec.meta.stud_mm)
+
+    def test_declared_radius_without_its_curved_route_raises(self):
+        """Renaming the route that bends would score it as a straight and let the
+        train take that curve at the motor cap, so loading refuses it."""
+        spec = self._full_spec()
+        switch = spec.by_id["R40_SWITCH_LEFT"]
+        renamed = {"through": switch.routes["through"],
+                   "branch": switch.routes["diverging"]}
+        pieces = [
+            p.model_copy(update={"routes": renamed}) if p.piece_id == "R40_SWITCH_LEFT" else p
+            for p in spec.pieces
+        ]
+        with pytest.raises(ValueError, match="curved routes"):
+            TrackCatalog._from_spec(spec.model_copy(update={"pieces": pieces}))

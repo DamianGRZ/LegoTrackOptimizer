@@ -120,7 +120,10 @@ class TestV2YamlCrossings:
         from src.catalog.loader import load_catalog_spec
         cat = load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
         x = cat.by_id["DOUBLE_CROSSOVER"]
-        assert x.kind == "crossing"
+        # Not "crossing": its diagonals carry a train between tracks, which a
+        # CROSS_90 cannot do.
+        assert x.kind == "crossover"
+        assert cat.by_id["CROSS_90"].kind == "crossing"
         assert x.length_studs == 48.0
         assert set(x.routes.keys()) == {"track1_through", "track2_through",
                                         "cross_1_to_2", "cross_2_to_1"}

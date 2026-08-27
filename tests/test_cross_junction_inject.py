@@ -17,7 +17,7 @@ from src.encoding import (
     CROSS_90,
     R40_CURVE,
     STRAIGHT_16,
-    SWITCH_LEFT,
+    R40_SWITCH_LEFT,
     PartitionedDimensions,
     create_empty_chromosome,
     set_cross_junction,
@@ -158,7 +158,7 @@ class TestInjectCrossJunctionFailurePaths:
 
     def test_slot_occupied_by_switch_skipped(self, cat, dims) -> None:
         pieces = list(CROSSING_PIECES)
-        pieces[CROSS_SLOT_1] = int(SWITCH_LEFT)
+        pieces[CROSS_SLOT_1] = int(R40_SWITCH_LEFT)
         original = list(pieces)
         x = create_empty_chromosome(dims)
         set_cross_junction(x, dims, slot=0, active=1, pos_1=CROSS_SLOT_1, pos_2=CROSS_SLOT_2)

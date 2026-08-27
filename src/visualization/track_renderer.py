@@ -18,8 +18,8 @@ from src.encoding import (
     STRAIGHT_24 as PIECE_IDX_STRAIGHT_24,
     R40_CURVE as PIECE_IDX_R40_CURVE,
     CROSS_90 as PIECE_IDX_CROSS_90,
-    SWITCH_LEFT as PIECE_IDX_SWITCH_LEFT,
-    SWITCH_RIGHT as PIECE_IDX_SWITCH_RIGHT,
+    R40_SWITCH_LEFT as PIECE_IDX_SWITCH_LEFT,
+    R40_SWITCH_RIGHT as PIECE_IDX_SWITCH_RIGHT,
     DOUBLE_CROSSOVER as PIECE_IDX_DBL_CROSSOVER,
 )
 
@@ -43,17 +43,15 @@ from src.lego_track_models import (
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt  # noqa: E402
 
-# Color palette for piece types (index-based, post-R40-collapse)
-# Indices: 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE,
-#          3=CROSS_90, 4=SWITCH_LEFT, 5=SWITCH_RIGHT, 6=DOUBLE_CROSSOVER
+# Color palette per piece type.
 PIECE_COLORS = {
-    0: "#3498db",  # STRAIGHT_16 - Blue
-    1: "#2980b9",  # STRAIGHT_24 - Darker Blue
-    2: "#27ae60",  # R40_CURVE - Green
-    3: "#9b59b6",  # CROSS_90 - Purple
-    4: "#e74c3c",  # SWITCH_LEFT - Red
-    5: "#e67e22",  # SWITCH_RIGHT - Orange
-    6: "#8e44ad",  # DOUBLE_CROSSOVER - Deep Purple
+    PIECE_IDX_STRAIGHT_16: "#3498db",
+    PIECE_IDX_STRAIGHT_24: "#2980b9",
+    PIECE_IDX_R40_CURVE: "#27ae60",
+    PIECE_IDX_CROSS_90: "#9b59b6",
+    PIECE_IDX_SWITCH_LEFT: "#e74c3c",
+    PIECE_IDX_SWITCH_RIGHT: "#e67e22",
+    PIECE_IDX_DBL_CROSSOVER: "#8e44ad",
 }
 
 # Fallback colors for unknown pieces
@@ -61,18 +59,6 @@ FALLBACK_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
-
-# Shortened names for legend
-PIECE_SHORT_NAMES = {
-    0: "STRAIGHT_16",
-    1: "STRAIGHT_24",
-    2: "R40_CURVE",
-    3: "CROSS_90",
-    4: "SWITCH_LEFT",
-    5: "SWITCH_RIGHT",
-    6: "DBL_CROSSOVER",
-}
-
 
 # Piece index constants for rendering are imported from src.encoding (single
 # source of truth: the canonical 0..6 chromosome mapping).
@@ -434,8 +420,9 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_r
         pass
 
 
-def get_piece_short_name(piece_idx: int) -> str:
-    return PIECE_SHORT_NAMES.get(piece_idx, f"PIECE_{piece_idx}")
+def get_piece_short_name(piece_idx: int, catalog: TrackCatalog) -> str:
+    """Catalog id for a piece index: the same name run_info.md prints."""
+    return catalog.index_to_id[piece_idx]
 
 
 def _draw_piece_sequence(ax, pieces, states, *, reversed_flags=None, limit=None):
@@ -509,7 +496,7 @@ def plot_layout(
 
     Args:
         layout: Track layout to plot.
-        catalog: Unused; kept for call-compatibility with the render pipeline.
+        catalog: Piece catalog; supplies the id per index for the legend.
         boundary: Optional boundary configuration to draw.
         title: Plot title.
         save_path: Optional path to save plot as PNG.
@@ -559,7 +546,7 @@ def plot_layout(
     legend_elements = []
     for piece_idx in sorted(piece_indices_seen):
         color = get_piece_color(piece_idx)
-        name = get_piece_short_name(piece_idx)
+        name = get_piece_short_name(piece_idx, catalog)
         if piece_idx in SWITCH_INDICES:
             legend_elements.append(
                 plt.Line2D([0], [0], marker="D", color=color, linestyle="-",
