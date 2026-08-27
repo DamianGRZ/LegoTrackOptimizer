@@ -57,7 +57,7 @@ class TestSpeedProfile:
         assert profile.total_distance == 0.0
 
     def test_friction_circle_limits_accel_on_curve(self, catalog, train_config):
-        """On a mixed layout, friction ellipse reduces avg_speed vs unconstrained model."""
+        """On a mixed layout, the friction circle reduces avg_speed vs unconstrained model."""
         # Build an oval: 8 R40_CURVE curves + 8 straights
         chromosome = np.array([2] * 8 + [0] * 8, dtype=np.int32)
         layout = build_layout(chromosome, catalog)
@@ -66,3 +66,26 @@ class TestSpeedProfile:
         assert profile.avg_speed > 0.5
         assert profile.avg_speed < train_config.v_motor_max
         assert profile.max_speed <= train_config.v_motor_max + 0.01
+
+
+class TestRotationInvariance:
+    """A closed loop's lap time must not depend on which piece is index 0.
+
+    The triple unroll returns the middle copy, so the forward start transient
+    and the backward pass's missing wrap-braking never reach the returned lap.
+    Uses the measured consist (low max_accel = long transients) and a racetrack
+    with straight runs long enough for braking to propagate several pieces."""
+
+    def test_lap_time_is_rotation_invariant(self, catalog, measured_train_config):
+        loop = [2] * 8 + [0] * 8 + [2] * 8 + [0] * 8
+        times = set()
+        for k in range(len(loop)):
+            rotated = loop[k:] + loop[:k]
+            layout = build_layout(np.array(rotated, dtype=np.int32), catalog)
+            profile = compute_speed_profile(
+                layout, catalog, train_config=measured_train_config, safety_margin=0.95,
+            )
+            times.add(round(profile.lap_time, 9))
+        assert len(times) == 1, (
+            f"lap time varies with rotation: {sorted(times)}"
+        )

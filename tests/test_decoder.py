@@ -167,3 +167,45 @@ class TestBackwardCompatibility:
 
         assert layout.n_pieces > 0
         assert len(layout.indices) == layout.n_pieces
+
+
+class TestSidingRotationInvariance:
+    """Cyclic shifts of the loop rotate the whole layout in world space, so the
+    same physical siding must commit at every shift: the OUT walk measures in
+    the IN switch's entry frame, not along the world X axis."""
+
+    def test_siding_commits_at_every_rotation(self, catalog, switches_config):
+        from src.sampling import _gen_oval_with_siding
+
+        dims = compute_dimensions(switches_config, catalog)
+        inv = catalog.inventory_by_index(switches_config.inventory)
+        decoder_config = DecoderConfig.from_optimization_config(switches_config)
+
+        variants = _gen_oval_with_siding(inv, dims)
+        assert variants, "seeder produced no oval+siding variant for this inventory"
+        pieces, flips, junctions, _cross, _dc = variants[0]
+        n = len(pieces)
+        active, pos, hand, n_str = junctions[0]
+
+        # The walk cannot wrap past the array end, so keep the shifted junction
+        # in the front half with room downstream.
+        shifts = [k for k in range(0, n, 2) if 2 <= (pos - k) % n <= n // 2]
+        assert len(shifts) >= 6, "test needs a spread of rotations"
+
+        dropped = []
+        for k in shifts:
+            shifted_pieces = [int(p) for p in pieces[k:]] + [int(p) for p in pieces[:k]]
+            shifted_flips = [int(f) for f in flips[k:]] + [int(f) for f in flips[:k]]
+            junction = (active, (pos - k) % n, hand, n_str)
+            x = create_chromosome_from_pieces(
+                dims, shifted_pieces, main_loop_flips=shifted_flips, junctions=[junction],
+            )
+            layout = decode_chromosome(
+                x, catalog, switches_config.inventory, dims=dims, config=decoder_config,
+            )
+            if layout.n_switch_pairs != 1:
+                dropped.append((k, layout.drop_log))
+
+        assert not dropped, (
+            f"the same siding must commit at every rotation; dropped at {dropped}"
+        )

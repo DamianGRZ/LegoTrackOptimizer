@@ -82,7 +82,7 @@ class TestGrowDcFigureEight:
         before = _decode(x, cat, dc_dims)
         n0 = before.n_pieces
 
-        _grow_dc_figure_eight(x, dc_dims)
+        assert _grow_dc_figure_eight(x, dc_dims), "canonical figure-8 must report the regrow"
 
         after = _decode(x, cat, dc_dims)
         assert after.n_dbl_crossovers == 1, "grow must preserve the double-crossover"
@@ -96,7 +96,7 @@ class TestGrowDcFigureEight:
                   + [int(R40_CURVE)] * 8 + [int(STRAIGHT_16)] * 6)
         x = create_chromosome_from_pieces(dc_dims, pieces)
         snapshot = x.copy()
-        _grow_dc_figure_eight(x, dc_dims)
+        assert not _grow_dc_figure_eight(x, dc_dims)
         assert np.array_equal(x, snapshot)
 
     def test_grow_stops_at_boundary(self, cat):
@@ -109,5 +109,5 @@ class TestGrowDcFigureEight:
         )
         x = _base_figure_eight(tight, k=0)
         snapshot = x.copy()
-        _grow_dc_figure_eight(x, tight)
+        assert not _grow_dc_figure_eight(x, tight)
         assert np.array_equal(x, snapshot), "must not grow past the boundary"

@@ -370,18 +370,16 @@ def _compensated_pair_grow(
     """
     if catalog is None:
         _mutate_piece_type(x, dims)
-        return False
+        return True
 
     types, flips = _active_view(x, dims)
     n = len(types)
     if n < 4 or n + 2 > dims.n_main:
         return False
 
-    # Descriptor positions are slot indices while lo/hi below are active-order
-    # gap indices; the two only agree on a compact loop, so decline otherwise.
-    active_idx = np.flatnonzero(x[:dims.n_main] != INACTIVE)
-    if not np.array_equal(active_idx, np.arange(n)):
-        return False
+    # All indices below are active-order — the same indexing the decoder gives
+    # descriptor positions (_read_main_loop skips INACTIVE slots) — so holed
+    # loops grow like compact ones; the success write re-packs from slot 0.
 
     # Per-type budget: sidings consume STRAIGHT_16 (templates.straight_idx),
     # so their straights charge the 16-stud pool.
@@ -556,7 +554,7 @@ def _swap_dc_traversals(x: NDArray, dims: PartitionedDimensions) -> None:
 
 def _grow_dc_figure_eight(
     x: NDArray, dims: PartitionedDimensions, catalog: Optional[TrackCatalog] = None,
-) -> None:
+) -> bool:
     """Grow an active DOUBLE_CROSSOVER figure-8 by one size step.
 
     The figure-8 main loop is FK-closure-tuned, so it cannot be edited
@@ -569,10 +567,12 @@ def _grow_dc_figure_eight(
     Reusing the builder guarantees the grown loop still closes; any
     non-canonical layout is a safe no-op. This is the ONLY growth path for DC
     loops, letting them raise utilization instead of being frozen and out-grown.
+    Returns True when the loop was regrown; every no-op path leaves ``x``
+    untouched and returns False.
     """
     dcs = get_active_double_crossovers(x, dims)
     if not dcs:
-        return
+        return False
     slot, _active, _p1, r1, _p2, r2 = dcs[0]
 
     types = x[:dims.n_main]
@@ -580,15 +580,15 @@ def _grow_dc_figure_eight(
     n_active = len(active_idx)
     # A canonical figure-8 packs contiguously from slot 0 with length 8k+40.
     if n_active < 40 or (n_active - 40) % 8 != 0:
-        return
+        return False
     if not np.array_equal(active_idx, np.arange(n_active)):
-        return
+        return False
     k = (n_active - 40) // 8
     exp_pieces, exp_flips = _figure_eight_main_loop(k)
     flips = x[dims.main_flips_start:dims.main_flips_start + n_active]
     if (types[:n_active].tolist() != [int(p) for p in exp_pieces]
             or flips.tolist() != [int(f) for f in exp_flips]):
-        return  # not the canonical figure-8 — don't risk corrupting it
+        return False  # not the canonical figure-8 — don't risk corrupting it
 
     new_pieces, new_flips = _figure_eight_main_loop(k + 1)
     new_len = len(new_pieces)
@@ -599,7 +599,7 @@ def _grow_dc_figure_eight(
             or n_straights > dims.total_straights
             or width < 128 + 32 * (k + 1)
             or height < 200):
-        return
+        return False
 
     # Rewrite the main loop cleanly (also heals any stray genes) + bump DC pos_2.
     types[:] = INACTIVE
@@ -608,6 +608,7 @@ def _grow_dc_figure_eight(
         x[i] = piece
         x[dims.main_flips_start + i] = flip
     set_double_crossover(x, dims, slot, 1, 0, r1, new_len // 2, r2)
+    return True
 
 
 # =============================================================================
@@ -655,14 +656,22 @@ _DC_GROW_PROB = 0.5            # P(compensated-pair grow)
 _DC_FIGURE8_GROW_PROB = 0.25   # P(figure-8 grow), applied after _DC_GROW_PROB
 
 
+def _apply_junction_op(x: NDArray, dims: PartitionedDimensions) -> None:
+    """Apply one weighted junction sub-operator."""
+    op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
+    _JUNCTION_OPS[op_idx](x, dims)
+
+
 class PartitionedMutation(Mutation):
     """Segment-aware mutation with weighted sub-operator selection.
 
     Each individual that passes the probability gate receives at most one edit:
 
     - **DC-bearing**: closure-safe grows only (50% compensated pair, 25%
-      figure-8 regrow, 25% untouched) — anything else breaks the FK-tuned loop.
-    - **Siding-bearing**: 10% junction op, else the compensated-pair grow.
+      figure-8 regrow, 25% untouched) — anything else breaks the FK-tuned
+      loop; a declined grow falls through to the other grow.
+    - **Siding-bearing**: 10% junction op, else the compensated-pair grow
+      (falling back to a junction op when the grow declines).
     - **Otherwise**: 10% junction op (when junction slots exist), else one of
       the seven weighted _MAIN_LOOP_OPS.
 
@@ -691,33 +700,33 @@ class PartitionedMutation(Mutation):
 
         for i in range(len(X)):
             # DC figure-8 chromosomes: every main-loop/flip op would break the
-            # FK-tuned loop and drop the DC. So the ONLY mutation they may
-            # receive is the closure-safe grow (regenerate one size up); with
-            # the remaining probability they pass through unmutated and rely on
-            # crossover (which keeps DC parents intact) for the rest.
+            # FK-tuned loop and drop the DC, so they receive only the two
+            # closure-safe grows; a declined grow falls through to the other.
+            # With the remaining probability they pass through unmutated and
+            # rely on crossover (which keeps DC parents intact) for the rest.
             if get_active_double_crossovers(X[i], self.dims):
                 r = np.random.random()
                 if r < _DC_GROW_PROB:
-                    _compensated_pair_grow(X[i], self.dims, catalog)
+                    if not _compensated_pair_grow(X[i], self.dims, catalog):
+                        _grow_dc_figure_eight(X[i], self.dims, catalog)
                 elif r < _DC_GROW_PROB + _DC_FIGURE8_GROW_PROB:
-                    _grow_dc_figure_eight(X[i], self.dims, catalog)
+                    if not _grow_dc_figure_eight(X[i], self.dims, catalog):
+                        _compensated_pair_grow(X[i], self.dims, catalog)
                 continue
 
             # Siding-bearing chromosomes get only closure-safe edits, like DC: a
-            # junction op or the compensated-pair grow. The other main-loop ops add
-            # uncompensated pieces that break closure around the siding.
+            # junction op or the compensated-pair grow; a declined grow falls
+            # back to a junction op so the selected individual is still edited.
             if get_active_junctions(X[i], self.dims):
                 if np.random.random() < junc_thresh:
-                    op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
-                    _JUNCTION_OPS[op_idx](X[i], self.dims)
-                else:
-                    _compensated_pair_grow(X[i], self.dims, catalog)
+                    _apply_junction_op(X[i], self.dims)
+                elif not _compensated_pair_grow(X[i], self.dims, catalog):
+                    _apply_junction_op(X[i], self.dims)
                 continue
 
             r = np.random.random()
             if r < junc_thresh:
-                op_idx = np.random.choice(len(_JUNCTION_OPS), p=_JUNCTION_WEIGHTS)
-                _JUNCTION_OPS[op_idx](X[i], self.dims)
+                _apply_junction_op(X[i], self.dims)
             else:
                 op_idx = np.random.choice(len(_MAIN_LOOP_OPS), p=_MAIN_LOOP_WEIGHTS)
                 _MAIN_LOOP_OPS[op_idx](X[i], self.dims, catalog)

@@ -137,7 +137,9 @@ class CrossJunction:
     coincide in world space and cross at ~90 deg, so all four ports are used and
     none dangles. The injection algorithm sets both slots in main_loop_pieces to
     CROSS_90. Both passes are straight-through (CROSS_90 FK == STRAIGHT_16 FK), so
-    no per-slot route map is needed. Mirrors DblCrossover.
+    no per-slot route map is needed. Mirrors DblCrossover. ``slot`` is the
+    committing descriptor's index, or -1 when the record comes from the emergent
+    self-intersection repair.
 
     NOTE: this models a *bare self-crossing* (figure-8), NOT the 4-switch routing
     cross-junction (4 switches around a central cross). The latter is not
@@ -237,7 +239,7 @@ class MultiPathLayout:
 
         CROSS_90 / DOUBLE_CROSSOVER records occupy TWO traversal slots in
         ``main_loop_pieces`` but are one physical piece, so subtract one per
-        record (emergent CROSS_90s occupy a single slot already).
+        record (descriptor and emergent crossings share this shape).
         """
         n_paired = len(self.cross_junctions) + len(self.dbl_crossovers)
         branch = sum(len(sp.branch_pieces) for sp in self.switch_pairs)
@@ -247,10 +249,9 @@ class MultiPathLayout:
     def n_cross_pieces(self) -> int:
         """Physical CROSS_90 pieces in the loop, regardless of origin.
 
-        A descriptor-committed crossing marks BOTH its slots CROSS_90 and
-        carries a CrossJunction record; an emergent one (self-intersection
-        repair) marks one slot and carries no record. Physical pieces are
-        therefore CROSS_90 slots minus one per record.
+        Every committed crossing — descriptor or emergent — marks BOTH its
+        slots CROSS_90 and carries a CrossJunction record, so physical pieces
+        are CROSS_90 slots minus one per record.
         """
         cross_slots = sum(1 for p in self.main_loop_pieces if p == CROSS_90_INDEX)
         return cross_slots - len(self.cross_junctions)

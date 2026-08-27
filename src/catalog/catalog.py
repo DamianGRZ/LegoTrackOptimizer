@@ -115,9 +115,12 @@ class TrackCatalog:
 
         for ps in spec.pieces:
             if ps.piece_id not in _CANONICAL_PIECE_INDEX:
-                # Unknown piece — skip rather than invent an index; the chromosome
-                # encoding is tied to the canonical map.
-                continue
+                raise ValueError(
+                    f"unknown piece {ps.piece_id!r}: the chromosome encoding is tied "
+                    f"to the canonical map {sorted(_CANONICAL_PIECE_INDEX)}; extend "
+                    f"_CANONICAL_PIECE_INDEX and PieceIndex to add a piece"
+                )
+            _check_radius_consistency(ps, spec.meta.stud_mm)
             index = _CANONICAL_PIECE_INDEX[ps.piece_id]
             catalog._max_index = max(catalog._max_index, index)
 
@@ -169,6 +172,13 @@ class TrackCatalog:
             catalog._index_to_piece[index] = piece
             catalog._id_to_index[ps.piece_id] = index
 
+        missing = sorted(set(_CANONICAL_PIECE_INDEX) - set(catalog._id_to_index))
+        if missing:
+            raise ValueError(
+                f"catalog spec is missing canonical pieces {missing}; the chromosome "
+                f"encoding (PieceIndex) requires every canonical piece to load"
+            )
+
         catalog._rebuild_topologies()
         catalog._build_tables()
         return catalog
@@ -218,16 +228,22 @@ class TrackCatalog:
         for route in routes_data:
             fk_data = route.get("fk", {})
             physics = route.get("physics", {})
+            dx = fk_data.get("dx", 0.0)
+            dy = fk_data.get("dy", 0.0)
+            dtheta = fk_data.get("dtheta", 0.0)
+            radius_mm = physics.get("radius_mm")
 
             routes.append(
                 FKRoute(
                     entry_port=route.get("entry_port", 0),
                     exit_port=route.get("exit_port", 1),
-                    dx=fk_data.get("dx", 0.0),
-                    dy=fk_data.get("dy", 0.0),
-                    dtheta=fk_data.get("dtheta", 0.0),
-                    arc_length=piece.arc_length,
-                    radius_mm=physics.get("radius_mm"),
+                    dx=dx,
+                    dy=dy,
+                    dtheta=dtheta,
+                    arc_length=_route_arc_length_studs(
+                        dx, dy, dtheta, radius_mm, self.stud_mm,
+                    ),
+                    radius_mm=radius_mm,
                 )
             )
 
@@ -333,6 +349,30 @@ class TrackCatalog:
             )
         return radii
 
+    def get_arc_length_route(self, piece_idx: int, route_idx: int = 0) -> float:
+        """Arc length (studs) of a specific route."""
+        topo = self._topologies.get(piece_idx)
+        if topo is not None and 0 <= route_idx < len(topo.routes):
+            return topo.routes[route_idx].arc_length
+        if 0 <= piece_idx < len(self._arc_length_table):
+            return float(self._arc_length_table[piece_idx])
+        return 0.0
+
+    def get_route_arc_lengths(
+        self, piece_indices: NDArray, route_indices: NDArray
+    ) -> NDArray[np.float64]:
+        """Per-piece arc lengths along the traversed route. Overrides the
+        default-route length only where a non-through route (switch diverging,
+        DC diagonal) is taken, mirroring get_route_radii."""
+        piece_indices = np.asarray(piece_indices, dtype=np.int32)
+        route_indices = np.asarray(route_indices, dtype=np.int32)
+        lengths = self.get_arc_lengths(piece_indices)
+        for pos in np.flatnonzero(route_indices):
+            lengths[pos] = self.get_arc_length_route(
+                int(piece_indices[pos]), int(route_indices[pos])
+            )
+        return lengths
+
     def classify_pieces(self) -> Dict[PieceClass, List[int]]:
         """Group pieces by class."""
         result: Dict[PieceClass, List[int]] = {pc: [] for pc in PieceClass}
@@ -432,6 +472,25 @@ def _default_route_name(ps: TrackPieceSpec) -> str:
     return next(iter(ps.routes))
 
 
+def _check_radius_consistency(ps: TrackPieceSpec, stud_mm: float) -> None:
+    """The YAML stud radii and the hardcoded mm route radii describe one
+    quantity; loading fails when they drift apart."""
+    declared = (
+        ("radius_studs", ps.radius_studs, _DEFAULT_RADIUS_MM.get(ps.piece_id)),
+        ("diverging_radius_studs", ps.diverging_radius_studs,
+         (_ROUTE_RADIUS_MM.get(ps.piece_id) or {}).get("diverging")),
+    )
+    for field, studs, table_mm in declared:
+        if studs is None or table_mm is None:
+            continue
+        if abs(studs * stud_mm - table_mm) > 1e-6:
+            raise ValueError(
+                f"{ps.piece_id}.{field} = {studs} studs ({studs * stud_mm} mm) "
+                f"disagrees with the hardcoded radius table's {table_mm} mm; "
+                f"update both together"
+            )
+
+
 def _default_radius_for(ps: TrackPieceSpec) -> Optional[float]:
     """Radius in mm of ps's default route; None when that route runs straight.
 
@@ -443,6 +502,29 @@ def _default_radius_for(ps: TrackPieceSpec) -> Optional[float]:
     if per_route and default_route in per_route:
         return per_route[default_route]
     return _DEFAULT_RADIUS_MM.get(ps.piece_id)
+
+
+def _route_arc_length_studs(
+    dx: float, dy: float, dtheta_deg: float, radius_mm: Optional[float], stud_mm: float,
+) -> float:
+    """Path length (studs) of one route, from its endpoint pose and radius.
+
+    Exact for the shapes the catalog data describes: a straight (chord), a
+    single circular arc through the endpoints turning ``dtheta`` (R40 curve,
+    switch diverging leg), and a symmetric S-curve of the route's radius with
+    zero net turn (double-crossover diagonal).
+    """
+    chord = math.hypot(dx, dy)
+    theta = math.radians(abs(dtheta_deg))
+    if theta > 1e-9:
+        half = theta / 2.0
+        return chord * half / math.sin(half)
+    if radius_mm:
+        radius_studs = radius_mm / stud_mm
+        ratio = chord / (4.0 * radius_studs)
+        if 0.0 < ratio < 1.0:
+            return 4.0 * radius_studs * math.asin(ratio)
+    return chord
 
 
 def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:

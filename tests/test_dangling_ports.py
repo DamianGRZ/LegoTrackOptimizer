@@ -10,7 +10,7 @@ import pytest
 from src.catalog import TrackCatalog
 from src.encoding import CROSS_90, R40_CURVE, STRAIGHT_16
 from src.geometry import compute_fk_chain
-from src.intersection import count_dangling_cross_ports
+from src.intersection import count_dangling_cross_ports, cross_pair_perpendicular
 
 
 @pytest.fixture
@@ -57,3 +57,26 @@ class TestCountDanglingCrossPorts:
         # Slot 0 (CROSS_90, heading 0) and slot 27 (STR_16, heading 90)
         # should be at the same midpoint -> partner exists -> 0 dangling.
         assert count_dangling_cross_ports(s, repaired) == 0
+
+
+class TestCrossPairPerpendicular:
+    """cross_pair_perpendicular is the single definition of a valid CROSS_90
+    crossing; its tolerances decide which self-crossings may be legalized."""
+
+    def test_perpendicular_shared_midpoint_accepted(self) -> None:
+        states = np.array([[0.0, 0.0, 0.0], [8.0, -8.0, 90.0]])
+        assert cross_pair_perpendicular(states, 0, 1)
+
+    def test_oblique_crossing_rejected(self) -> None:
+        """The GA's usual 67.5 deg oblique self-crossing is not CROSS_90-legalizable."""
+        theta = np.radians(67.5)
+        states = np.array([
+            [0.0, 0.0, 0.0],
+            [8.0 - 8.0 * np.cos(theta), -8.0 * np.sin(theta), 67.5],
+        ])
+        assert not cross_pair_perpendicular(states, 0, 1)
+
+    def test_separated_midpoints_rejected(self) -> None:
+        """Perpendicular headings 5 studs apart are two places, not one crossing."""
+        states = np.array([[0.0, 0.0, 0.0], [13.0, -8.0, 90.0]])
+        assert not cross_pair_perpendicular(states, 0, 1)

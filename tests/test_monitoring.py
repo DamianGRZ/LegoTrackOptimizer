@@ -29,6 +29,15 @@ class FakeAlgo:
         self.evaluator = FakeEvaluator(n_eval)
 
 
+class FakeWrappedAlgo(FakeAlgo):
+    """Meta-proxy shape (epsilon wrapper): dead outer counter, live counter
+    on ``__super__``'s evaluator."""
+
+    def __init__(self, n_gen, F, CV, inner_n_eval):
+        super().__init__(n_gen, F, CV, n_eval=0)
+        self.__super__ = SimpleNamespace(evaluator=FakeEvaluator(inner_n_eval))
+
+
 class TestConvergenceMonitorCallback:
     def test_callback_initializes_data_keys(self):
         from src.algorithm.monitoring import ConvergenceMonitorCallback
@@ -206,3 +215,23 @@ class TestConvergenceCsv:
         cb.notify(self._algo(1))
         assert cb.data["n_unique_F"] == [2]
         assert not (tmp_path / "convergence.csv").exists()
+
+
+class TestNEvalCounter:
+    """n_eval must report the LIVE evaluation counter: the epsilon Meta-wrapper
+    keeps its running state on __super__ while its own evaluator stays at zero."""
+
+    def test_reads_wrapped_counter(self):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+        algo = FakeWrappedAlgo(
+            1, np.array([[-0.5, -1.0]]), np.array([[0.0]]), inner_n_eval=12345,
+        )
+        cb.notify(algo)
+        assert cb.data["n_eval"][0] == 12345
+
+    def test_plain_algorithm_counter_unchanged(self):
+        from src.algorithm.monitoring import ConvergenceMonitorCallback
+        cb = ConvergenceMonitorCallback()
+        cb.notify(FakeAlgo(1, np.array([[-0.5, -1.0]]), np.array([[0.0]]), n_eval=777))
+        assert cb.data["n_eval"][0] == 777

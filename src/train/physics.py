@@ -149,12 +149,13 @@ def available_accel(
 ) -> float:
     """Available longitudinal accel/brake at speed v on a curve of radius_m.
 
-    Implements the friction ellipse (Kapania & Gerdes 2015, TUM/FTM pattern):
-    lateral and longitudinal friction limits may differ, giving an elliptical
-    combined-grip boundary rather than a circular one.
+    Capped friction circle: the combined tire force stays inside the circle
+    of radius mu_design * g, and the longitudinal component is additionally
+    bounded by the drive/brake cap. The cap is a motor-torque (or brake)
+    limit, not a grip limit, so lateral demand does not derate it until the
+    combined demand reaches the circle:
 
-    Lateral limit: mu_design * g (all-wheel sliding friction).
-    Longitudinal limit: max_accel (driven-wheel traction) or brake_decel.
+        a_long = min(cap, sqrt((mu_design * g)^2 - a_lat^2))
 
     During acceleration, a one-iteration coupler correction adds the lateral
     destabilising force from trailing vehicles to the lateral demand.
@@ -173,27 +174,23 @@ def available_accel(
     a_lat_max = config.mu_design * config.g
     cap = config.brake_decel if is_braking else config.max_accel
 
-    # No lateral demand on straights
+    # No lateral demand on straights; the circle still bounds the cap itself.
     if math.isinf(radius_m) or radius_m <= 0:
-        return cap
+        return min(cap, a_lat_max)
 
     a_lat = v * v / radius_m
-
-    # Friction ellipse: a_long = cap * sqrt(1 - (a_lat / a_lat_max)^2)
-    ratio = a_lat / a_lat_max
-    if ratio >= 1.0:
+    if a_lat >= a_lat_max:
         return 0.0
-    a_long = cap * math.sqrt(1.0 - ratio * ratio)
+    a_long = min(cap, math.sqrt(a_lat_max * a_lat_max - a_lat * a_lat))
 
     # Coupler correction: acceleration only, one iteration
     if not is_braking and config.mass_trailing > 0:
         phi = config.coupler_offset / (2.0 * radius_m)
         a_coupler_lat = (config.mass_trailing / config.mass_loco) * a_long * math.sin(phi)
         a_lat_total = a_lat + a_coupler_lat
-        ratio_total = a_lat_total / a_lat_max
-        if ratio_total >= 1.0:
+        if a_lat_total >= a_lat_max:
             return 0.0
-        a_long = cap * math.sqrt(1.0 - ratio_total * ratio_total)
+        a_long = min(cap, math.sqrt(a_lat_max * a_lat_max - a_lat_total * a_lat_total))
 
     return a_long
 

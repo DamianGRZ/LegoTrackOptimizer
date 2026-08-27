@@ -30,6 +30,17 @@ _CLOSURE_COLUMNS = ("mean_closure_x", "mean_closure_y", "mean_closure_theta")
 _NAN = float("nan")
 
 
+def _n_eval(algorithm) -> int:
+    """True evaluation count. A Meta-wrapped algorithm (the epsilon wrapper)
+    runs on ``__super__``, whose evaluator holds the live counter, while the
+    wrapper's own evaluator stays at zero."""
+    counts = [int(algorithm.evaluator.n_eval)]
+    inner = getattr(algorithm, "__super__", None)
+    if inner is not None and hasattr(inner, "evaluator"):
+        counts.append(int(inner.evaluator.n_eval))
+    return max(counts)
+
+
 class ConvergenceMonitorCallback(Callback):
     """Per-generation: HV, IGD, feasibility rate, mean closure residuals.
 
@@ -98,7 +109,7 @@ class ConvergenceMonitorCallback(Callback):
 
         row: dict[str, int | float] = {
             "n_gen": int(algorithm.n_gen),
-            "n_eval": int(algorithm.evaluator.n_eval),
+            "n_eval": _n_eval(algorithm),
             "hv": self._hv(F_feas) if n_feas else 0.0,
             "igd": self._igd(F_feas) if n_feas else _NAN,
             "n_feas": n_feas,

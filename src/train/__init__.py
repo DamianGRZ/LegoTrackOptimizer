@@ -4,7 +4,7 @@ Public API:
     TrainConfig — immutable locomotive physics parameters
     DEFAULT_TRAIN_CONFIG — default TrainConfig instance
     v_eff_array — vectorized speed cap over radius array
-    available_accel — friction-ellipse longitudinal acceleration
+    available_accel — capped friction-circle longitudinal acceleration
     SpeedProfile — time-optimal speed profile result
     compute_speed_profile — 3-pass speed profiling algorithm
 """

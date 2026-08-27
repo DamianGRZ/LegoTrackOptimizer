@@ -49,6 +49,8 @@ def _expected_traversal_time(
     catalog: TrackCatalog,
     train_config,
     safety_margin: float = SPEED_SAFETY_MARGIN,
+    closure_pos_tol: float = 4.0,
+    closure_angle_tol: float = 5.0,
 ) -> float:
     """Expected time to cover every physical piece of the layout once.
 
@@ -78,15 +80,13 @@ def _expected_traversal_time(
         if len(path.piece_sequence) == 0:
             continue
         indices = np.asarray(path.piece_sequence, dtype=np.int32)
+        route_indices = np.asarray(path.route_indices, dtype=np.int32)
         profile = compute_speed_profile(
-            Layout(
-                indices=indices,
-                states=path.states,
-                route_indices=np.asarray(path.route_indices, dtype=np.int32),
-            ),
+            Layout(indices=indices, states=path.states, route_indices=route_indices),
             catalog, train_config, safety_margin=safety_margin,
+            closure_pos_tol=closure_pos_tol, closure_angle_tol=closure_angle_tol,
         )
-        arc_m = catalog.get_arc_lengths(indices) * stud_to_m
+        arc_m = catalog.get_route_arc_lengths(indices, route_indices) * stud_to_m
         safe_speeds = np.where(profile.speeds > 0, profile.speeds, STALLED_SPEED_MS)
         for uid, seg_time in zip(path.piece_uids, arc_m / safe_speeds, strict=True):
             entry = per_piece.setdefault(alias.get(uid, uid), [0.0, 0])
@@ -196,6 +196,8 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # _expected_traversal_time.
         traversal_time = _expected_traversal_time(
             layout, self.catalog, self._train_config,
+            closure_pos_tol=self.closure_tolerance,
+            closure_angle_tol=self.angle_tolerance,
         )
 
         out["F"] = [-utilization, traversal_time]

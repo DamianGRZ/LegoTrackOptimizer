@@ -153,13 +153,18 @@ class TestDynamicsDomain:
         assert np.allclose(phys.coupler_force_lat_per_segment, 0.0, atol=1e-9)
 
     def test_coupler_force_lat_proportional_to_trailing_mass(self, catalog):
-        """Doubling mass_trailing doubles the lateral coupler force (when a_long != 0)."""
+        """Doubling mass_trailing doubles the lateral coupler force (when a_long != 0).
+
+        F_coup_lat = m_trailing * a_long * sin(phi), so proportionality needs
+        the two consists to realize the SAME speed profile: a torque-limited
+        cap and a moderate margin keep the coupler correction from clipping
+        the on-curve budget differently per mass."""
         # Pick a layout with brake transitions (so a_long is non-zero)
         layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 2, catalog)
-        tc1 = TrainConfig(mass_trailing=0.327, coupler_offset=0.106)
-        tc2 = TrainConfig(mass_trailing=0.654, coupler_offset=0.106)
-        phys1 = evaluate_layout(layout, catalog, tc1, safety_margin=0.95)
-        phys2 = evaluate_layout(layout, catalog, tc2, safety_margin=0.95)
+        tc1 = TrainConfig(mass_trailing=0.327, coupler_offset=0.106, max_accel=0.68)
+        tc2 = TrainConfig(mass_trailing=0.654, coupler_offset=0.106, max_accel=0.68)
+        phys1 = evaluate_layout(layout, catalog, tc1, safety_margin=0.7)
+        phys2 = evaluate_layout(layout, catalog, tc2, safety_margin=0.7)
         # Where coupler_force_lat is non-trivial, ratio should be ~2
         nonzero = np.abs(phys1.coupler_force_lat_per_segment) > 1e-3
         if nonzero.any():

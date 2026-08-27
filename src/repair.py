@@ -399,9 +399,11 @@ class JunctionValidityRepair(Repair):
                 pos = np.clip(pos, 0, max_pos)
                 modified = True
 
-            # Clamp handedness to valid range [0, 3]
-            if hand < 0 or hand > 3:
-                hand = np.clip(hand, 0, 3)
+            # Map handedness into its declared [0, 1] domain with the decoder's
+            # own rule (mod 2), so repairing a stray value never changes the
+            # template the decoder would pick.
+            if hand < 0 or hand > 1:
+                hand = hand % 2
                 modified = True
 
             # Clamp n_straights to available inventory

@@ -93,6 +93,12 @@ class TestBuildTermination:
         term = _build_termination(_config())
         assert isinstance(term, DefaultMultiObjectiveTermination)
 
+    def test_eval_cap_never_binds(self):
+        """DefaultTermination's hidden n_max_evals=100000 default (generation
+        100 at pop 1000) must be disarmed: this project budgets by generations."""
+        term = _build_termination(_config())
+        assert term.max_evals.n_max_evals == float("inf")
+
     def test_n_gen_caps_when_smaller_than_termination_max(self):
         term = _build_termination(_config(n_gen=200, n_max_gen=1000))
         assert term.max_gen.n_max_gen == 200
