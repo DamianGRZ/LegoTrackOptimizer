@@ -1,5 +1,5 @@
 """Track layout geometry: vectorized forward kinematics (FK), closure metrics,
-and the single-loop ``Layout`` view consumed by the train physics and renderer."""
+and the single-loop ``Layout`` view consumed by the train physics."""
 
 from __future__ import annotations
 
@@ -49,12 +49,37 @@ def compute_fk_chain(fk_deltas: NDArray[np.float64]) -> NDArray[np.float64]:
     return states
 
 
+def compute_closure_metrics(states: NDArray[np.float64]) -> Tuple[float, float]:
+    """Closure error (studs) and angle error (degrees) of a state trajectory.
+
+    Both errors are measured relative to ``states[0]``, so shifted or centered
+    trajectories score the same. Angle error is the distance from the net
+    turning to the nearest multiple of 360; 0, 360, and 720 all close.
+    An empty trajectory returns (0.0, 0.0) — rejecting degenerate layouts is
+    the evaluator's responsibility, not the metric's.
+
+    Args:
+        states: (n+1, 3) array of states [x, y, theta].
+
+    Returns:
+        (closure_error, angle_error) tuple.
+    """
+    if len(states) <= 1:
+        return (0.0, 0.0)
+
+    dx = float(states[-1, 0] - states[0, 0])
+    dy = float(states[-1, 1] - states[0, 1])
+    total_angle = abs(float(states[-1, 2] - states[0, 2]))
+    remainder = total_angle % 360.0
+    return (float(np.hypot(dx, dy)), min(remainder, 360.0 - remainder))
+
+
 @dataclass
 class Layout:
     """Single-loop layout view (one piece sequence + FK states).
 
     A simpler representation than MultiPathLayout, consumed by the train
-    physics (per-route views) and the switchless renderer path.
+    physics (per-route views).
     """
 
     indices: NDArray[np.int32]
@@ -81,20 +106,13 @@ class Layout:
 
     @property
     def closure_error(self) -> float:
-        """Euclidean distance from final position to starting position."""
-        dx = self.final_state[0] - self.states[0, 0]
-        dy = self.final_state[1] - self.states[0, 1]
-        return float(np.sqrt(dx ** 2 + dy ** 2))
+        """Distance in studs from the final position back to states[0]."""
+        return compute_closure_metrics(self.states)[0]
 
     @property
     def angle_error(self) -> float:
-        """Normalized angular deviation from 360 degrees."""
-        total = abs(self.final_state[2])
-        if total == 0:
-            return 360.0
-        # Distance to the nearest multiple of 360
-        remainder = total % 360
-        return min(remainder, 360 - remainder)
+        """Distance in degrees from net turning to the nearest multiple of 360."""
+        return compute_closure_metrics(self.states)[1]
 
     @property
     def total_angle(self) -> float:
@@ -145,27 +163,3 @@ def build_layout(chromosome: NDArray, catalog: TrackCatalog) -> Layout:
     states = compute_fk_chain(fk_deltas)
 
     return Layout(indices=indices, states=states)
-
-
-def compute_closure_metrics(states: NDArray[np.float64]) -> Tuple[float, float]:
-    """Compute closure error and angle error from state trajectory.
-
-    Args:
-        states: (n+1, 3) array of states [x, y, theta].
-
-    Returns:
-        (closure_error, angle_error) tuple.
-    """
-    if len(states) <= 1:
-        return (0.0, 360.0)
-
-    final = states[-1]
-    closure_error = float(np.sqrt(final[0] ** 2 + final[1] ** 2))
-    total_angle = abs(final[2])
-    if total_angle == 0:
-        angle_error = 360.0
-    else:
-        remainder = total_angle % 360
-        angle_error = min(remainder, 360 - remainder)
-
-    return (closure_error, angle_error)

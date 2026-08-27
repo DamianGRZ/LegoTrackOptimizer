@@ -805,7 +805,7 @@ def _compute_single_path(
             piece_sequence=[],
             states=np.zeros((1, 3), dtype=np.float64),
             closure_error=0.0,
-            angle_error=360.0,
+            angle_error=0.0,
         )
 
     # Catalog route indices for switch pieces (per YAML route order):
@@ -1009,7 +1009,7 @@ def _empty_layout() -> MultiPathLayout:
         piece_sequence=[],
         states=np.zeros((1, 3), dtype=np.float64),
         closure_error=0.0,
-        angle_error=360.0,
+        angle_error=0.0,
     )
     return MultiPathLayout(
         main_loop_pieces=[],
