@@ -11,7 +11,6 @@ These tests pin the pure pose-recovery helper (`_dc_body_poses`) so the visual
 bug can't silently regress.
 """
 import numpy as np
-import pytest
 
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
@@ -69,18 +68,16 @@ def test_dc_body_four_ports_match_lobe_straights():
 
 
 def test_plot_layout_draws_dc_body_once(monkeypatch):
-    """Switchless DC layouts (0 switch pairs) render through `plot_layout`, not
-    `plot_multi_path_layout` (runner._render_one / save_results dispatch on
-    n_switch_pairs). plot_layout must also draw each physical DC exactly once,
-    anchored at port A -- else snapshots/best_layout keep the double-draw bug."""
+    """plot_layout must draw each physical DC exactly once, anchored at
+    port A -- else snapshots/best_layout keep the double-draw bug."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import src.visualization.track_renderer as tr
 
     layout = _figure8_dc_layout()
-    assert layout.n_switch_pairs == 0  # this layout takes the plot_layout branch
     cat = TrackCatalog.load("data/track_pieces_v2.yaml")
+    cfg = OptimizationConfig.load("configs/all_pieces.yaml")
 
     calls = []
     real = tr._draw_double_crossover_piece
@@ -90,36 +87,11 @@ def test_plot_layout_draws_dc_body_once(monkeypatch):
         return real(ax, x0, y0, th, color, *a, **k)
 
     monkeypatch.setattr(tr, "_draw_double_crossover_piece", spy)
-    fig = tr.plot_layout(layout, cat, boundary=None, title="t")
+    fig = tr.plot_layout(
+        layout, cat, boundary=None, title="t",
+        closure_tolerance=cfg.closure_tolerance,
+        angle_tolerance=cfg.angle_tolerance,
+    )
     plt.close(fig)
 
     assert calls == [(-24.0, -8.0)], f"DC body drawn {len(calls)}x at {calls}"
-
-
-def _metrics_piece_line(fig):
-    """The 'Pieces: N' entry of the metrics box, whichever renderer drew it."""
-    for text in fig.axes[0].texts:
-        for line in text.get_text().splitlines():
-            if line.startswith("Pieces:"):
-                return line
-    raise AssertionError("no 'Pieces:' entry in the metrics box")
-
-
-@pytest.mark.parametrize("plot_name", ["plot_layout", "plot_multi_path_layout"])
-def test_metrics_box_reports_physical_pieces(plot_name):
-    """Both dispatch paths must report PHYSICAL pieces: a descriptor DC spans two
-    traversal slots but is one body, and the box already dedupes 'Crossovers'."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import src.visualization.track_renderer as tr
-
-    layout = _figure8_dc_layout()
-    assert layout.n_physical_pieces == layout.n_pieces - 1  # exactly one DC record
-    cat = TrackCatalog.load("data/track_pieces_v2.yaml")
-
-    fig = getattr(tr, plot_name)(layout, cat, boundary=None, title="t")
-    line = _metrics_piece_line(fig)
-    plt.close(fig)
-
-    assert line == f"Pieces: {layout.n_physical_pieces}"

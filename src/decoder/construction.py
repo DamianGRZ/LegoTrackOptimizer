@@ -36,6 +36,7 @@ from src.encoding import (
 from src.geometry import compute_closure_metrics, compute_fk_chain
 from src.intersection import (
     CROSS_90_INDEX,
+    _cross_midpoint,
     cross_pair_perpendicular,
     find_crossing_pairs,
 )
@@ -437,9 +438,8 @@ def _inject_cross_junctions(
         main_flips[p1] = 0
         main_flips[p2] = 0
         occupied.update((p1, p2))
-        origin = (float(states[p1][0]), float(states[p1][1]), float(states[p1][2]))
         cross_junctions.append(CrossJunction(
-            slot=slot, positions=(p1, p2), origin=origin,
+            slot=slot, positions=(p1, p2), origin=_cross_midpoint(states[p1]),
         ))
 
     return cross_junctions
@@ -723,8 +723,9 @@ def _apply_crossing_repair(
         result[pos_j] = CROSS_90_INDEX
         result_flips[pos_i] = 0
         result_flips[pos_j] = 0
-        origin = (float(states[pos_i][0]), float(states[pos_i][1]), float(states[pos_i][2]))
-        records.append(CrossJunction(slot=-1, positions=(pos_i, pos_j), origin=origin))
+        records.append(CrossJunction(
+            slot=-1, positions=(pos_i, pos_j), origin=_cross_midpoint(states[pos_i]),
+        ))
 
     return result, result_flips, records
 
@@ -990,6 +991,10 @@ def _auto_center(
         if len(path.states) > 1:
             path.states[:, 0] += shift_x
             path.states[:, 1] += shift_y
+    # Junction records carry world poses; they must move with the track.
+    for record in (*multi_path.cross_junctions, *multi_path.dbl_crossovers):
+        origin_x, origin_y, origin_theta = record.origin
+        record.origin = (origin_x + shift_x, origin_y + shift_y, origin_theta)
 
 
 # =============================================================================

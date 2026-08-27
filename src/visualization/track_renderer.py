@@ -1,7 +1,7 @@
 """Visualization functions for track layouts and optimization results."""
 
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import matplotlib
 import numpy as np
@@ -10,8 +10,7 @@ from matplotlib.patches import Patch, Polygon
 
 from src.config import BoundaryConfig
 from src.catalog import TrackCatalog
-from src.geometry import Layout
-from src.types import MultiPathLayout
+from src.types import MultiPathLayout, TraversalPath
 from src.encoding import (
     SWITCH_INDICES,
     STRAIGHT_16 as PIECE_IDX_STRAIGHT_16,
@@ -22,6 +21,7 @@ from src.encoding import (
     R40_SWITCH_RIGHT as PIECE_IDX_SWITCH_RIGHT,
     DOUBLE_CROSSOVER as PIECE_IDX_DBL_CROSSOVER,
 )
+from src.run_info import count_pieces
 
 # Geometry helpers (arc/offset paths, rail constants) from the track model.
 from src.lego_track_models import (
@@ -73,6 +73,16 @@ SWITCH_ARC_PTS = 30              # arc points for the (short) switch S-curve bra
 SWITCH_BRANCH_WIDTH_STUD = 6.4   # thinner bed for the switch diverge S-curve
 DC_CROSS_WIDTH_STUD = 3.6        # thin bed for the double-crossover scissors roads
 
+# Track-axes type sizes, in typographic points.
+AXIS_LABEL_FONTSIZE = 11
+TITLE_FONTSIZE = 14
+
+# Piece-joint seam: background-colored line across the bed at every piece
+# boundary, so pieces can be counted by eye. Width in points, not studs —
+# it must stay visible at any zoom level.
+JOINT_COLOR = "white"
+JOINT_LW = 1.2
+
 
 def get_piece_color(piece_idx: int) -> str:
     if piece_idx in PIECE_COLORS:
@@ -100,6 +110,18 @@ def _draw_track_bed(ax, x, y, color, alpha=0.88, zorder=2, width_stud=None):
                          edgecolor='none', alpha=alpha, zorder=zorder))
 
 
+def _draw_joint(ax, x, y, theta_deg):
+    """Seam across the bed at a piece boundary, perpendicular to the heading.
+
+    Drawn at piece boundaries only (FK states), never inside a piece body.
+    """
+    perp = np.radians(theta_deg + 90.0)
+    half = BED_WIDTH_STUD / 2.0
+    dx, dy = half * np.cos(perp), half * np.sin(perp)
+    ax.plot([x - dx, x + dx], [y - dy, y + dy], color=JOINT_COLOR,
+            lw=JOINT_LW, solid_capstyle='butt', zorder=4)
+
+
 def _draw_rails(ax, x, y, offset=RAIL_OFFSET, zorder=3):
     """Draw two thin gray rails offset from centerline."""
     lx, ly = offset_path(x, y, +offset)
@@ -119,28 +141,37 @@ def _local_to_world(x0, y0, theta0):
     return to_world
 
 
-def _draw_segment(ax, p, q, color, draw_rails_flag=True, **bed_kw):
-    """Draw a straight bed (+ optional rails) between two world points p and q."""
+def _draw_segment(ax, p, q, color, **bed_kw):
+    """Draw a straight bed with its rails between two world points p and q."""
     xs = np.array([p[0], q[0]])
     ys = np.array([p[1], q[1]])
     _draw_track_bed(ax, xs, ys, color, **bed_kw)
-    if draw_rails_flag:
-        _draw_rails(ax, xs, ys)
+    _draw_rails(ax, xs, ys)
 
 
-def _draw_arc(ax, cx, cy, radius, start_ang, sweep_deg, color,
-              draw_rails_flag=True, n=N_ARC_PTS, **bed_kw):
-    """Draw an arc bed (+ optional inner/outer rails) about center (cx, cy)."""
-    xc, yc = arc_points(cx, cy, radius, start_ang, sweep_deg, n=n)
-    _draw_track_bed(ax, xc, yc, color, **bed_kw)
-    if draw_rails_flag:
-        xi, yi = arc_points(cx, cy, radius - RAIL_OFFSET, start_ang, sweep_deg, n=n)
-        xo, yo = arc_points(cx, cy, radius + RAIL_OFFSET, start_ang, sweep_deg, n=n)
-        ax.plot(xi, yi, color=COL_RAIL, lw=RAIL_LW, solid_capstyle='butt', zorder=3)
-        ax.plot(xo, yo, color=COL_RAIL, lw=RAIL_LW, solid_capstyle='butt', zorder=3)
+def _draw_arc(ax, cx, cy, radius, start_ang, sweep_deg, color, n=N_ARC_PTS,
+              width_stud=None, alpha=0.88):
+    """Draw an arc bed with its inner/outer rails about center (cx, cy).
+
+    The bed is the ring between two concentric arcs, NOT an offset of the
+    centerline polyline: gradient normals are one-sided at a polyline's ends,
+    tilting the end edges by half a chord angle and leaving a background
+    wedge at every curve-curve joint. Ring edges lie exactly on the radii,
+    so consecutive pieces tile seamlessly.
+    """
+    half = float(BED_WIDTH_STUD if width_stud is None else width_stud) / 2.0
+    x_out, y_out = arc_points(cx, cy, radius + half, start_ang, sweep_deg, n=n)
+    x_in, y_in = arc_points(cx, cy, radius - half, start_ang, sweep_deg, n=n)
+    verts = list(zip(x_out, y_out)) + list(zip(x_in[::-1], y_in[::-1]))
+    ax.add_patch(Polygon(verts, closed=True, facecolor=color,
+                         edgecolor='none', alpha=alpha, zorder=2))
+    xi, yi = arc_points(cx, cy, radius - RAIL_OFFSET, start_ang, sweep_deg, n=n)
+    xo, yo = arc_points(cx, cy, radius + RAIL_OFFSET, start_ang, sweep_deg, n=n)
+    ax.plot(xi, yi, color=COL_RAIL, lw=RAIL_LW, solid_capstyle='butt', zorder=3)
+    ax.plot(xo, yo, color=COL_RAIL, lw=RAIL_LW, solid_capstyle='butt', zorder=3)
 
 
-def _draw_straight_piece(ax, x0, y0, theta0, length, color, draw_rails_flag=True):
+def _draw_straight_piece(ax, x0, y0, theta0, length, color):
     """Draw a straight track piece with proper geometry.
 
     Args:
@@ -149,15 +180,14 @@ def _draw_straight_piece(ax, x0, y0, theta0, length, color, draw_rails_flag=True
         theta0: Entry heading (degrees).
         length: Piece length (studs).
         color: Track bed color.
-        draw_rails_flag: Whether to draw rails.
     """
     theta_rad = np.radians(theta0)
     x1 = x0 + length * np.cos(theta_rad)
     y1 = y0 + length * np.sin(theta_rad)
-    _draw_segment(ax, (x0, y0), (x1, y1), color, draw_rails_flag)
+    _draw_segment(ax, (x0, y0), (x1, y1), color)
 
 
-def _draw_curve_piece(ax, x0, y0, theta0, radius, sweep_deg, color, draw_rails_flag=True):
+def _draw_curve_piece(ax, x0, y0, theta0, radius, sweep_deg, color):
     """Draw a curved track piece with proper arc geometry.
 
     Args:
@@ -167,7 +197,6 @@ def _draw_curve_piece(ax, x0, y0, theta0, radius, sweep_deg, color, draw_rails_f
         radius: Curve radius (studs).
         sweep_deg: Sweep angle (positive = left/CCW, negative = right/CW).
         color: Track bed color.
-        draw_rails_flag: Whether to draw rails.
     """
     # Arc center is perpendicular to entry heading: left turn (positive sweep)
     # -> center +90deg; right turn (negative sweep) -> center -90deg.
@@ -179,11 +208,10 @@ def _draw_curve_piece(ax, x0, y0, theta0, radius, sweep_deg, color, draw_rails_f
     # Start angle is from center to entry point
     start_ang = np.degrees(np.arctan2(y0 - cy, x0 - cx))
 
-    _draw_arc(ax, cx, cy, radius, start_ang, sweep_deg, color, draw_rails_flag)
+    _draw_arc(ax, cx, cy, radius, start_ang, sweep_deg, color)
 
 
-def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch,
-                       draw_rails_flag=True):
+def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch):
     """Draw a switch piece with main straight path and diverging branch (S-curve).
 
     Args:
@@ -193,12 +221,11 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch,
         direction: 'left' or 'right'.
         color_main: Main path color.
         color_branch: Branch path color.
-        draw_rails_flag: Whether to draw rails.
     """
     tw = _local_to_world(x0, y0, theta0)
 
     # Main straight path (SWITCH_LEN studs)
-    _draw_segment(ax, (x0, y0), tw(SWITCH_LEN, 0.0), color_main, draw_rails_flag)
+    _draw_segment(ax, (x0, y0), tw(SWITCH_LEN, 0.0), color_main)
 
     flip = 1 if direction == 'left' else -1
 
@@ -206,7 +233,7 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch,
     c1x, c1y = tw(0.0, flip * R40)
     a1_start = theta0 - 90 * flip
     a1_sweep = flip * ARC1_ANGLE
-    _draw_arc(ax, c1x, c1y, R40, a1_start, a1_sweep, color_branch, draw_rails_flag,
+    _draw_arc(ax, c1x, c1y, R40, a1_start, a1_sweep, color_branch,
               n=SWITCH_ARC_PTS, width_stud=SWITCH_BRANCH_WIDTH_STUD)
 
     # Junction point at end of Arc 1
@@ -222,12 +249,12 @@ def _draw_switch_piece(ax, x0, y0, theta0, direction, color_main, color_branch,
     c2y = jy + R40 * np.sin(perp_dir)
     a2_start = np.degrees(np.arctan2(jy - c2y, jx - c2x))
     a2_sweep = -flip * ARC2_ANGLE
-    _draw_arc(ax, c2x, c2y, R40, a2_start, a2_sweep, color_branch, draw_rails_flag,
+    _draw_arc(ax, c2x, c2y, R40, a2_start, a2_sweep, color_branch,
               n=SWITCH_ARC_PTS, width_stud=SWITCH_BRANCH_WIDTH_STUD)
 
 
 def _draw_switch_with_install(ax, x0, y0, theta0, catalog_direction,
-                              color_main, color_branch, draw_rails_flag, installed_reversed):
+                              color_main, color_branch, installed_reversed):
     """Render a switch accounting for installation orientation.
 
     `_draw_switch_piece` always sprouts the diverge S-curve from the train's
@@ -247,13 +274,13 @@ def _draw_switch_with_install(ax, x0, y0, theta0, catalog_direction,
         x_far = x0 + SWITCH_LEN * np.cos(theta_rad)
         y_far = y0 + SWITCH_LEN * np.sin(theta_rad)
         _draw_switch_piece(ax, x_far, y_far, theta0 + 180.0, catalog_direction,
-                           color_main, color_branch, draw_rails_flag)
+                           color_main, color_branch)
     else:
         _draw_switch_piece(ax, x0, y0, theta0, catalog_direction,
-                           color_main, color_branch, draw_rails_flag)
+                           color_main, color_branch)
 
 
-def _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
+def _draw_cross90_piece(ax, x0, y0, theta0, color):
     """Draw a 90-degree crossing with two perpendicular routes.
 
     Args:
@@ -261,18 +288,17 @@ def _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
         x0, y0: Start position (studs).
         theta0: Entry heading (degrees).
         color: Track bed color.
-        draw_rails_flag: Whether to draw rails.
     """
     tw = _local_to_world(x0, y0, theta0)
 
     # Horizontal route (main path): 0 to 16 studs along entry heading.
-    _draw_segment(ax, tw(0, 0), tw(16, 0), color, draw_rails_flag)
+    _draw_segment(ax, tw(0, 0), tw(16, 0), color)
 
     # Vertical route (perpendicular): centered at (8, 0), spanning -8 to +8.
-    _draw_segment(ax, tw(8, -8), tw(8, 8), color, draw_rails_flag)
+    _draw_segment(ax, tw(8, -8), tw(8, 8), color)
 
 
-def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True):
+def _draw_double_crossover_piece(ax, x0, y0, theta0, color):
     """Draw a double crossover as a clean 4-PORT scissors crossover.
 
     The piece (4DBrix 210.1, 48x16 studs) has exactly FOUR ports — A,B on
@@ -289,20 +315,19 @@ def _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag=True
         x0, y0: Start position (studs) - entry of track 1 (port A).
         theta0: Entry heading (degrees).
         color: Track bed color.
-        draw_rails_flag: Whether to draw rails.
     """
     tw = _local_to_world(x0, y0, theta0)
     length, lat = DC_LENGTH_STUDS, DC_LATERAL_STUDS
 
     # Two parallel through-tracks: A->B (y=0) and C->D (y=lat).
-    _draw_segment(ax, tw(0.0, 0.0), tw(length, 0.0), color, draw_rails_flag)
-    _draw_segment(ax, tw(0.0, lat), tw(length, lat), color, draw_rails_flag)
+    _draw_segment(ax, tw(0.0, 0.0), tw(length, 0.0), color)
+    _draw_segment(ax, tw(0.0, lat), tw(length, lat), color)
 
     # Central scissors: crossover roads A->D and C->B, thin and confined to the
     # middle third so they cross once at the center without stubbing the mainlines.
-    _draw_segment(ax, tw(16.0, 0.0), tw(32.0, lat), color, draw_rails_flag,
+    _draw_segment(ax, tw(16.0, 0.0), tw(32.0, lat), color,
                   width_stud=DC_CROSS_WIDTH_STUD, alpha=0.75)
-    _draw_segment(ax, tw(16.0, lat), tw(32.0, 0.0), color, draw_rails_flag,
+    _draw_segment(ax, tw(16.0, lat), tw(32.0, 0.0), color,
                   width_stud=DC_CROSS_WIDTH_STUD, alpha=0.75)
 
     # Mark the FOUR ports (A, B, C, D) so the piece reads 4-port, not 6.
@@ -382,8 +407,7 @@ def _r40_flip_from_dtheta(piece_idx: int, dtheta_deg: float) -> int:
     return 1 if d < 0 else 0
 
 
-def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_reversed=False,
-                flip=0):
+def _draw_piece(ax, piece_idx, x0, y0, theta0, installed_reversed=False, flip=0):
     """Draw a single piece with proper geometry based on piece type.
 
     Args:
@@ -391,7 +415,6 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_r
         piece_idx: Piece index (post-refactor 0..6).
         x0, y0: Start position (studs).
         theta0: Entry heading (degrees).
-        draw_rails_flag: Whether to draw rails.
         installed_reversed: Only meaningful for switches (see prior docstring).
         flip: For R40_CURVE only — 0 draws a LEFT arc (+22.5°), 1 draws RIGHT
             (-22.5°). Other piece types ignore this flag.
@@ -399,39 +422,33 @@ def _draw_piece(ax, piece_idx, x0, y0, theta0, draw_rails_flag=True, installed_r
     color = get_piece_color(piece_idx)
 
     if piece_idx == PIECE_IDX_STRAIGHT_16:
-        _draw_straight_piece(ax, x0, y0, theta0, 16.0, color, draw_rails_flag)
+        _draw_straight_piece(ax, x0, y0, theta0, 16.0, color)
     elif piece_idx == PIECE_IDX_STRAIGHT_24:
-        _draw_straight_piece(ax, x0, y0, theta0, 24.0, color, draw_rails_flag)
+        _draw_straight_piece(ax, x0, y0, theta0, 24.0, color)
     elif piece_idx == PIECE_IDX_R40_CURVE:
         sweep = CURVE_ANGLE if not flip else -CURVE_ANGLE
-        _draw_curve_piece(ax, x0, y0, theta0, R40, sweep, color, draw_rails_flag)
+        _draw_curve_piece(ax, x0, y0, theta0, R40, sweep, color)
     elif piece_idx == PIECE_IDX_SWITCH_LEFT:
         _draw_switch_with_install(ax, x0, y0, theta0, 'left', color, color,
-                                  draw_rails_flag, installed_reversed)
+                                  installed_reversed)
     elif piece_idx == PIECE_IDX_SWITCH_RIGHT:
         _draw_switch_with_install(ax, x0, y0, theta0, 'right', color, color,
-                                  draw_rails_flag, installed_reversed)
+                                  installed_reversed)
     elif piece_idx == PIECE_IDX_CROSS_90:
-        _draw_cross90_piece(ax, x0, y0, theta0, color, draw_rails_flag)
+        _draw_cross90_piece(ax, x0, y0, theta0, color)
     elif piece_idx == PIECE_IDX_DBL_CROSSOVER:
-        _draw_double_crossover_piece(ax, x0, y0, theta0, color, draw_rails_flag)
+        _draw_double_crossover_piece(ax, x0, y0, theta0, color)
     else:
         # Unknown/inactive index: nothing to draw (valid layouts only carry 0..6).
         pass
 
 
-def get_piece_short_name(piece_idx: int, catalog: TrackCatalog) -> str:
-    """Catalog id for a piece index: the same name run_info.md prints."""
-    return catalog.index_to_id[piece_idx]
-
-
-def _draw_piece_sequence(ax, pieces, states, *, reversed_flags=None, limit=None):
+def _draw_piece_sequence(ax, pieces, states, *, reversed_flags=None):
     """Draw the piece geometry for one traversal sequence.
 
-    Shared by all three render paths so a piece-rendering fix lands once
-    instead of in three near-identical loops. A DOUBLE_CROSSOVER is one
-    physical piece threaded twice; its body is drawn once via _draw_dc_bodies,
-    never per traversal.
+    The single shared drawing loop, so a piece-rendering fix lands once.
+    A DOUBLE_CROSSOVER is one physical piece threaded twice; its body is
+    drawn once via _draw_dc_bodies, never per traversal.
 
     Args:
         ax: Matplotlib axes.
@@ -439,400 +456,295 @@ def _draw_piece_sequence(ax, pieces, states, *, reversed_flags=None, limit=None)
         states: (n+1, 3) [x, y, theta] poses; theta in degrees.
         reversed_flags: Optional per-slot bool; True installs that slot's
             switch reversed. None means no slot is reversed.
-        limit: Draw only the first `limit` slots (and their DC bodies);
-            None draws all.
     """
-    n = len(pieces) if limit is None else min(limit, len(pieces))
-    for i in range(n):
+    for i in range(len(pieces)):
         if i + 1 >= len(states):
             break
         piece_idx = int(pieces[i])
+        _draw_joint(ax, states[i, 0], states[i, 1], states[i, 2])
         if piece_idx == PIECE_IDX_DBL_CROSSOVER:
             continue
         flip = _r40_flip_from_dtheta(piece_idx, states[i + 1, 2] - states[i, 2])
         installed_reversed = bool(reversed_flags[i]) if reversed_flags is not None else False
         _draw_piece(ax, piece_idx, states[i, 0], states[i, 1], states[i, 2],
-                    draw_rails_flag=True, installed_reversed=installed_reversed, flip=flip)
-    _draw_dc_bodies(ax, [int(p) for p in pieces[:n]], states)
+                    installed_reversed=installed_reversed, flip=flip)
+    _draw_dc_bodies(ax, [int(p) for p in pieces], states)
 
 
-def _draw_boundary(ax, boundary, *, label=None):
+def _draw_boundary(ax, boundary):
     """Draw the boundary rectangle as a dashed line, if a boundary is given."""
     if boundary is None:
         return
     rect_x = [boundary.min_x, boundary.max_x, boundary.max_x, boundary.min_x, boundary.min_x]
     rect_y = [boundary.min_y, boundary.min_y, boundary.max_y, boundary.max_y, boundary.min_y]
-    ax.plot(rect_x, rect_y, "k--", linewidth=1, alpha=0.5, label=label)
+    ax.plot(rect_x, rect_y, "k--", linewidth=1, alpha=0.5)
 
 
-def _setup_axes(ax, *, label_fontsize=None):
+def _setup_axes(ax):
     """Equal aspect, axis labels (studs), and a light grid."""
     ax.set_aspect("equal")
-    label_kw = {"fontsize": label_fontsize} if label_fontsize is not None else {}
-    ax.set_xlabel("X (studs)", **label_kw)
-    ax.set_ylabel("Y (studs)", **label_kw)
+    ax.set_xlabel("X (studs)", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Y (studs)", fontsize=AXIS_LABEL_FONTSIZE)
     ax.grid(True, alpha=0.3)
 
 
-def _metrics_box(ax, text, *, fontsize):
-    """Draw the standard top-left metrics text box."""
-    ax.text(0.02, 0.98, text, transform=ax.transAxes, fontsize=fontsize,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8))
+# =============================================================================
+# Unified single-figure renderer: full-size track view + info panel
+# =============================================================================
+
+PANEL_FIGSIZE = (14.0, 10.0)
+TRACK_WIDTH_RATIO = 4.0
+PANEL_WIDTH_RATIO = 1.15
+PANEL_METRICS_FONTSIZE = 10
+PANEL_LEGEND_FONTSIZE = 9
+PANEL_TEXT_XY = (0.02, 0.98)   # metrics-block anchor in panel-axes fraction
+PANEL_LEGEND_GAP = 0.02        # axes-fraction gap between metrics block and legend
+BRANCH_COLOR = "#e74c3c"
+DRIFT_COLOR = "#888888"
 
 
-def plot_layout(
-    layout: Layout,
-    catalog: TrackCatalog,
-    boundary: Optional[BoundaryConfig] = None,
-    title: str = "Track Layout",
-    save_path: Optional[Union[str, Path]] = None,
-) -> Figure:
-    """Plot track layout with colored pieces and connection dots.
+def _junction_marker(piece_idx: int) -> Optional[str]:
+    """Marker shape for a junction piece: 'D' switch, 's' crossing, None otherwise.
 
-    Each piece type has a different color. Switches are drawn as their S-curve
-    body plus a diamond marker; crossings get a square marker.
-    Start is marked with green square, end with red circle.
-
-    Args:
-        layout: Track layout to plot.
-        catalog: Piece catalog; supplies the id per index for the legend.
-        boundary: Optional boundary configuration to draw.
-        title: Plot title.
-        save_path: Optional path to save plot as PNG.
-
-    Returns:
-        Matplotlib figure.
+    Single source for both the on-track marker and its legend symbol.
     """
-    fig, ax = plt.subplots(figsize=(12, 10))
-
-    if layout.n_pieces == 0:
-        ax.text(0.5, 0.5, "Empty Layout", ha="center", va="center", fontsize=16)
-        ax.set_title(title)
-        return fig
-
-    x = layout.states[:, 0]
-    y = layout.states[:, 1]
-
-    # Legend + special-position bookkeeping (by index for consistent ordering).
-    indices = [int(v) for v in layout.indices]
-    piece_indices_seen = set(indices)
-    switch_positions = [i for i, p in enumerate(indices) if p in SWITCH_INDICES]
-    crossing_positions = [i for i, p in enumerate(indices) if p == PIECE_IDX_CROSS_90]
-
-    _draw_piece_sequence(ax, indices, layout.states)
-
-    for i in switch_positions:
-        color = get_piece_color(indices[i])
-        mid_x = (x[i] + x[i + 1]) / 2
-        mid_y = (y[i] + y[i + 1]) / 2
-        ax.plot(mid_x, mid_y, "D", color=color, markersize=8, markeredgecolor="black",
-                markeredgewidth=1, zorder=6)
-
-    for i in crossing_positions:
-        color = get_piece_color(indices[i])
-        mid_x = (x[i] + x[i + 1]) / 2
-        mid_y = (y[i] + y[i + 1]) / 2
-        ax.plot(mid_x, mid_y, "s", color=color, markersize=8, markeredgecolor="black",
-                markeredgewidth=1, zorder=6)
-
-    ax.plot(x[0], y[0], "gs", markersize=12, label="Start", zorder=10)
-    ax.plot(x[-1], y[-1], "ro", markersize=12, label="End", zorder=10)
-
-    _draw_boundary(ax, boundary, label="Boundary")
-    _setup_axes(ax, label_fontsize=11)
-    ax.set_title(title, fontsize=14)
-
-    legend_elements = []
-    for piece_idx in sorted(piece_indices_seen):
-        color = get_piece_color(piece_idx)
-        name = get_piece_short_name(piece_idx, catalog)
-        if piece_idx in SWITCH_INDICES:
-            legend_elements.append(
-                plt.Line2D([0], [0], marker="D", color=color, linestyle="-",
-                           linewidth=3, markersize=6, markeredgecolor="black", label=name)
-            )
-        elif piece_idx == PIECE_IDX_CROSS_90:
-            # Square marker for CROSS_90 (matches the square position markers).
-            legend_elements.append(
-                plt.Line2D([0], [0], marker="s", color=color, linestyle="-",
-                           linewidth=3, markersize=6, markeredgecolor="black", label=name)
-            )
-        else:
-            # Straights, curves, and the DOUBLE_CROSSOVER (drawn as its own body)
-            # get a filled swatch.
-            legend_elements.append(Patch(facecolor=color, edgecolor="black", label=name))
-
-    legend_elements.extend([
-        plt.Line2D([0], [0], marker="s", color="w", markerfacecolor="g", markersize=10,
-                   label="Start"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="r", markersize=10,
-                   label="End"),
-    ])
-
-    if boundary is not None:
-        legend_elements.append(plt.Line2D([0], [0], color="k", linestyle="--", label="Boundary"))
-
-    ax.legend(handles=legend_elements, loc="upper right", fontsize=9)
-
-    # Add metrics text. "Crossings" counts CROSS_90 pieces (the square-marked
-    # ones); DOUBLE_CROSSOVERs are reported separately, deduped to physical
-    # pieces (one DC is threaded twice but is one body).
-    n_switches = sum(1 for i in layout.indices if int(i) in SWITCH_INDICES)
-    n_crossings = sum(1 for i in layout.indices if int(i) == PIECE_IDX_CROSS_90)
-    n_crossovers = len(_dc_body_poses(indices, layout.states))
-    metrics_lines = [
-        f"Pieces: {layout.n_physical_pieces}",
-        f"Switches: {n_switches}",
-        f"Crossings: {n_crossings}",
-    ]
-    if n_crossovers:
-        metrics_lines.append(f"Crossovers: {n_crossovers}")
-    metrics_lines += [
-        f"Closure Error: {layout.closure_error:.2f} studs",
-        f"Angle Error: {layout.angle_error:.2f}°",
-        f"Area: {layout.area:.0f} studs²",
-    ]
-    _metrics_box(ax, "\n".join(metrics_lines), fontsize=10)
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
-
-    return fig
+    if piece_idx in SWITCH_INDICES:
+        return "D"
+    if piece_idx == PIECE_IDX_CROSS_90:
+        return "s"
+    return None
 
 
-def plot_multi_path_layout(
-    layout: MultiPathLayout,
-    catalog: TrackCatalog,
-    boundary: Optional[BoundaryConfig] = None,
-    title: str = "Multi-Path Track Layout",
-    save_path: Optional[Union[str, Path]] = None,
-) -> Figure:
-    """Plot multi-path track layout showing all traversal paths.
+def _cross_marker_points(layout: MultiPathLayout) -> list[tuple[float, float]]:
+    """One (x, y) per PHYSICAL CROSS_90: the crossing-center world pose carried by
+    each CrossJunction record. A committed crossing spans two main-loop slots, so
+    scanning slots would mark the same piece twice."""
+    return [(center_x, center_y)
+            for center_x, center_y, _ in (cj.origin for cj in layout.cross_junctions)]
 
-    Each path is drawn with a different color. The main path (all straight-through)
-    is drawn in blue, branch paths in other colors.
 
-    Args:
-        layout: MultiPathLayout to plot.
-        catalog: Unused; kept for call-compatibility with the render pipeline.
-        boundary: Optional boundary configuration to draw.
-        title: Plot title.
-        save_path: Optional path to save plot as PNG.
+def _drift_segments(layout: MultiPathLayout, closure_tolerance: float,
+                    angle_tolerance: float) -> list[np.ndarray]:
+    """Post-merge drift states of the paths that FAIL closure at these tolerances.
 
-    Returns:
-        Matplotlib figure.
+    The thresholds must be the optimizer's own, or the figure can flag a layout
+    the evaluation pipeline considers closed.
     """
-    n_paths = len(layout.paths)
-
-    if n_paths == 0:
-        fig, ax = plt.subplots(figsize=(12, 10))
-        ax.text(0.5, 0.5, "Empty Layout", ha="center", va="center", fontsize=16)
-        ax.set_title(title)
-        return fig
-
-    # Create subplots: one for combined view, one for each path
-    n_cols = min(3, n_paths + 1)
-    n_rows = (n_paths + 1 + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
-
-    axes = np.asarray(axes).flatten()
-
-    # Hide unused subplots
-    for i in range(n_paths + 1, len(axes)):
-        axes[i].set_visible(False)
-
-    # Combined view (first subplot)
-    ax_combined = axes[0]
-    _plot_combined_paths(ax_combined, layout, boundary, title)
-
-    # Individual path views
-    for i, path in enumerate(layout.paths):
-        if i + 1 < len(axes):
-            ax = axes[i + 1]
-            _plot_single_path(ax, path, boundary, i)
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        fig.savefig(save_path, format='png', dpi=150, bbox_inches='tight')
-
-    return fig
+    failed = {
+        idx for idx, path in enumerate(layout.paths)
+        if path.closure_error > closure_tolerance or path.angle_error > angle_tolerance
+    }
+    return [states for idx, states in layout.get_post_merge_drift() if idx in failed]
 
 
-def _plot_combined_paths(ax, layout: MultiPathLayout, boundary, title):
-    """Plot main path with branch sections highlighted differently."""
-    # Draw main path (path 0) with proper piece geometry
-    main_path = layout.paths[0] if layout.paths else None
-    if main_path is None or len(main_path.states) <= 1:
-        return
+def _draw_junction_markers(ax, layout: MultiPathLayout, main_path: TraversalPath) -> None:
+    """Diamonds on switch slots, one square per physical crossing center."""
+    x, y = main_path.states[:, 0], main_path.states[:, 1]
+    for sp in layout.switch_pairs:
+        for pos in (sp.in_position, sp.out_position):
+            if pos < len(x) - 1 and pos < len(layout.main_loop_pieces):
+                piece_idx = layout.main_loop_pieces[pos]
+                ax.plot((x[pos] + x[pos + 1]) / 2, (y[pos] + y[pos + 1]) / 2,
+                        _junction_marker(piece_idx), color=get_piece_color(piece_idx),
+                        markersize=10, markeredgecolor="black", markeredgewidth=1.5,
+                        zorder=8)
+    cross_color = get_piece_color(PIECE_IDX_CROSS_90)
+    for cx, cy in _cross_marker_points(layout):
+        ax.plot(cx, cy, _junction_marker(PIECE_IDX_CROSS_90), color=cross_color,
+                markersize=8, markeredgecolor="black", markeredgewidth=1, zorder=6)
 
-    x = main_path.states[:, 0]
-    y = main_path.states[:, 1]
 
-    # OUT positions of all switch pairs — these switches are installed reversed.
+def _draw_branches(ax, layout: MultiPathLayout) -> bool:
+    """Draw each siding's internal pieces plus overlay; IN/OUT switches are skipped
+    (already drawn at their main-loop positions). Returns True if any was drawn."""
+    drawn = False
+    for pieces, states in layout.get_branch_segments():
+        if len(states) <= 1:
+            continue
+        drawn = True
+        for k in range(1, len(pieces) - 1):
+            sx, sy, stheta = states[k]
+            _, _, theta_next = states[k + 1] if k + 1 < len(states) else states[k]
+            flip = _r40_flip_from_dtheta(pieces[k], theta_next - stheta)
+            _draw_joint(ax, sx, sy, stheta)
+            _draw_piece(ax, pieces[k], sx, sy, stheta, flip=flip)
+        ax.plot(states[:, 0], states[:, 1], color=BRANCH_COLOR, linewidth=2.5,
+                alpha=0.6, zorder=5)
+    return drawn
+
+
+def _draw_track_view(ax, layout: MultiPathLayout, main_path: TraversalPath, boundary, *,
+                     closure_tolerance: float, angle_tolerance: float) -> tuple[bool, bool]:
+    """Full track on one axes: main loop (with reversed OUT switches), DC bodies,
+    branches, junction markers, tolerance-gated FK drift, start/end, boundary.
+
+    Returns (has_branch, has_drift) for the legend.
+    """
     out_positions = {sp.out_position for sp in layout.switch_pairs}
     reversed_flags = [i in out_positions for i in range(len(main_path.piece_sequence))]
     _draw_piece_sequence(ax, main_path.piece_sequence, main_path.states,
                          reversed_flags=reversed_flags)
 
-    ax.plot(x[0], y[0], "gs", markersize=10, zorder=10)
-    ax.plot(x[-1], y[-1], "ro", markersize=10, zorder=10)
+    _draw_junction_markers(ax, layout, main_path)
+    has_branch = _draw_branches(ax, layout)
 
-    # Mark switch positions on main path. The pair holds two opposite-handed
-    # switches; read the actual piece index from the augmented main_loop_pieces.
-    for sp in layout.switch_pairs:
-        for pos in (sp.in_position, sp.out_position):
-            if pos < len(x) - 1 and pos < len(layout.main_loop_pieces):
-                sw_idx = layout.main_loop_pieces[pos]
-                sw_color = get_piece_color(sw_idx)
-                mid_x = (x[pos] + x[pos + 1]) / 2
-                mid_y = (y[pos] + y[pos + 1]) / 2
-                ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=10,
-                        markeredgecolor="black", markeredgewidth=1.5, zorder=8)
+    drift = _drift_segments(layout, closure_tolerance, angle_tolerance)
+    for drift_states in drift:
+        ax.plot(drift_states[:, 0], drift_states[:, 1], color=DRIFT_COLOR,
+                linewidth=1.0, linestyle=":", alpha=0.6, zorder=3)
 
-    # Draw the DIVERGENT section of each branched switch pair, deduplicated.
-    # Source-of-truth for the slice is path.divergent_ranges, populated by the
-    # decoder while building each path. Slicing piece_sequence/states by the
-    # comparator-inferred range was incorrect because branch and main paths
-    # have different lengths past the first IN switch and never realign.
-    for seg_idx, (pieces, states) in enumerate(layout.get_branch_segments()):
-        if len(states) <= 1:
-            continue
-
-        # Skip the IN switch (pieces[0]) and OUT switch (pieces[-1]); they're
-        # already drawn at their main-loop positions by the main-path render
-        # above. Drawing them again here at the branch-end positions (which
-        # differ from the main-loop positions) would visually duplicate them
-        # at conflicting angles. Just draw the branch INTERNAL pieces.
-        for k in range(1, len(pieces) - 1):
-            sx, sy, stheta = states[k]
-            _, _, stheta_next = states[k + 1] if k + 1 < len(states) else (sx, sy, stheta)
-            flip = _r40_flip_from_dtheta(pieces[k], stheta_next - stheta)
-            _draw_piece(ax, pieces[k], sx, sy, stheta, draw_rails_flag=True, flip=flip)
-
-        ax.plot(
-            states[:, 0], states[:, 1],
-            color='#e74c3c', linewidth=2.5, linestyle='-',
-            alpha=0.6, zorder=5,
-            label='Branch' if seg_idx == 0 else None,
-        )
-
-    # Overlay post-merge FK drift as a diagnostic indicator. These points
-    # represent physically real pieces (already drawn solid above) whose FK
-    # positions drifted because a branch's merge route did not align with the
-    # main loop. Drawn dotted gray to distinguish from real geometry.
-    drift_segments = layout.get_post_merge_drift()
-    for seg_idx, (_, drift_states) in enumerate(drift_segments):
-        ax.plot(
-            drift_states[:, 0], drift_states[:, 1],
-            color='#888888', linewidth=1.0, linestyle=':',
-            alpha=0.6, zorder=3,
-            label='FK drift (failed merge)' if seg_idx == 0 else None,
-        )
-
+    x, y = main_path.states[:, 0], main_path.states[:, 1]
+    ax.plot(x[0], y[0], "gs", markersize=12, zorder=10)
+    ax.plot(x[-1], y[-1], "ro", markersize=12, zorder=10)
     _draw_boundary(ax, boundary)
-    _setup_axes(ax)
-    ax.set_title(f"{title}\n(All {len(layout.paths)} Paths)")
-    ax.legend(fontsize=8, loc="upper right")
+    return has_branch, bool(drift)
 
-    # Metrics
-    n_switches = sum(1 for p in layout.main_loop_pieces if p in SWITCH_INDICES)
-    metrics = (
-        f"Pieces: {layout.n_physical_pieces}\n"
-        f"Switches: {n_switches}\n"
-        f"Switch Pairs: {layout.n_switch_pairs}\n"
-        f"Max Closure: {layout.max_closure_error:.2f}\n"
-        f"Max Angle: {layout.max_angle_error:.2f}°"
+
+def _panel_metrics_lines(layout: MultiPathLayout, inventory: Optional[dict[str, int]],
+                         objectives: Optional[Sequence[float]], cv: Optional[float],
+                         closure_tolerance: float, angle_tolerance: float) -> list[str]:
+    """Metric rows for the info panel. F rows require objectives, the constraint
+    row requires cv; errors are shown against their tolerances."""
+    used = layout.n_physical_pieces
+    total = sum(inventory.values()) if inventory else None
+    lines = [f"Pieces: {used}" if total is None else f"Pieces: {used}/{total}"]
+    if objectives is not None:
+        lines.append(f"F[0] utilization: {-float(objectives[0]):.1%}")
+        lines.append(f"F[1] time: {float(objectives[1]):.2f} s")
+    lines.append(f"Number of unique Paths: {layout.n_paths}")
+    lines.append(f"Closure error: {layout.max_closure_error:.2f} / "
+                 f"{closure_tolerance:.1f} studs")
+    lines.append(f"Angle error: {layout.max_angle_error:.2f} / {angle_tolerance:.1f}°")
+    if cv is not None:
+        lines.append(f"Constraint violation: {cv:.2f}")
+    return lines
+
+
+def _legend_handles(layout: MultiPathLayout, catalog: TrackCatalog,
+                    inventory: Optional[dict[str, int]], *, has_branch: bool,
+                    has_drift: bool, has_boundary: bool) -> list[Patch | plt.Line2D]:
+    """One row per catalog type (used/capacity, zero-usage rows included), then
+    Start/End and the overlays actually present on the figure."""
+    counts = count_pieces(layout)
+    capacity = catalog.inventory_by_index(inventory) if inventory else {}
+    # Name column sized from the catalog: a longer piece id must not silently
+    # push the count column out of alignment.
+    name_width = max(len(piece_id) for piece_id in catalog.index_to_id.values()) + 1
+    handles = []
+    for piece_idx in sorted(catalog.index_to_id):
+        name = catalog.index_to_id[piece_idx]
+        used = counts.get(piece_idx, 0)
+        cap = capacity.get(piece_idx)
+        label = f"{name:<{name_width}}{used:>4}" + (f"/{cap}" if cap is not None else "")
+        color = get_piece_color(piece_idx)
+        marker = _junction_marker(piece_idx)
+        if marker is None:
+            handles.append(Patch(facecolor=color, edgecolor="black", label=label))
+        else:
+            handles.append(plt.Line2D([0], [0], marker=marker, color=color,
+                                      linestyle="-", linewidth=3, markersize=6,
+                                      markeredgecolor="black", label=label))
+    handles += [
+        plt.Line2D([0], [0], marker="s", color="w", markerfacecolor="g",
+                   markersize=10, label="Start"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="r",
+                   markersize=10, label="End"),
+    ]
+    if has_branch:
+        handles.append(plt.Line2D([0], [0], color=BRANCH_COLOR, linewidth=2.5,
+                                  label="Branch"))
+    if has_drift:
+        handles.append(plt.Line2D([0], [0], color=DRIFT_COLOR, linestyle=":",
+                                  label="FK drift (failed merge)"))
+    if has_boundary:
+        handles.append(plt.Line2D([0], [0], color="k", linestyle="--", label="Boundary"))
+    return handles
+
+
+def _render_info_panel(fig, ax_panel, metrics: list[str],
+                       handles: list[Patch | plt.Line2D]) -> None:
+    """Metrics block at the panel top; legend anchored below the block's MEASURED
+    bottom edge, so adding a metrics row can never overlap the legend.
+
+    Measuring needs a renderer, not a rendered figure: axes positions are already
+    settled by tight_layout, so the text extent is final before anything is drawn.
+    """
+    text_x, text_y = PANEL_TEXT_XY
+    metrics_text = ax_panel.text(
+        text_x, text_y, "\n".join(metrics), transform=ax_panel.transAxes,
+        fontsize=PANEL_METRICS_FONTSIZE, verticalalignment="top", family="monospace",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
     )
-    _metrics_box(ax, metrics, fontsize=9)
+    bbox = metrics_text.get_window_extent(fig.canvas.get_renderer())
+    _, legend_top = ax_panel.transAxes.inverted().transform((bbox.x0, bbox.y0))
+    ax_panel.legend(handles=handles, loc="upper left",
+                    bbox_to_anchor=(text_x, legend_top - PANEL_LEGEND_GAP),
+                    frameon=False,
+                    prop={"family": "monospace", "size": PANEL_LEGEND_FONTSIZE})
 
 
-def _plot_single_path(ax, path, boundary, path_idx):
-    """Plot a single traversal path with switch markers."""
-    if len(path.states) <= 1:
-        ax.text(0.5, 0.5, "Empty Path", ha="center", va="center")
-        return
+def plot_layout(
+    layout: MultiPathLayout,
+    catalog: TrackCatalog,
+    boundary: Optional[BoundaryConfig] = None,
+    title: str = "Track Layout",
+    save_path: Optional[Union[str, Path]] = None,
+    *,
+    closure_tolerance: float,
+    angle_tolerance: float,
+    inventory: Optional[dict[str, int]] = None,
+    objectives: Optional[Sequence[float]] = None,
+    cv: Optional[float] = None,
+) -> Figure:
+    """Render one full-size track view with a metrics + legend panel beside it.
 
-    x = path.states[:, 0]
-    y = path.states[:, 1]
+    The closure/angle tolerances are keyword-only and required: the drift
+    overlay must be gated by the optimizer's own thresholds, never a renderer
+    default. F rows appear only when ``objectives`` is given, the constraint
+    row only when ``cv`` is given (pass it for infeasible individuals).
 
-    # Identify switch positions in this path
-    switch_positions = []
-    for i, piece_idx in enumerate(path.piece_sequence):
-        if piece_idx in SWITCH_INDICES:
-            switch_positions.append(i)
+    Args:
+        layout: Decoded multi-path layout.
+        catalog: Piece catalog; supplies ids, colors, and index order.
+        boundary: Optional boundary rectangle to draw.
+        title: Plot title; metrics live in the panel, not here.
+        save_path: Optional path to save the figure as PNG.
+        closure_tolerance: Position closure tolerance in studs, from config.
+        angle_tolerance: Angle closure tolerance in degrees, from config.
+        inventory: Optional {piece_id: count} capacities for panel and legend.
+        objectives: Optional raw pymoo F row (neg-utilization, time).
+        cv: Optional constraint violation of the rendered individual.
 
-    # Drift boundary: only show diagnostic dotted-gray drift trajectory when
-    # the path actually fails to close. A path that closes (small closure /
-    # angle error) has no meaningful drift — render the whole thing solid.
-    DRIFT_POS_THRESHOLD = 1.0  # studs
-    DRIFT_ANG_THRESHOLD = 1.0  # degrees
-    has_drift = (
-        path.closure_error > DRIFT_POS_THRESHOLD
-        or path.angle_error > DRIFT_ANG_THRESHOLD
-    )
-    drift_start = (
-        min(end for _, end in path.divergent_ranges.values()) + 1
-        if (has_drift and path.divergent_ranges)
-        else len(path.piece_sequence)
-    )
+    Returns:
+        Matplotlib figure.
+    """
+    fig = plt.figure(figsize=PANEL_FIGSIZE)
+    main_path = layout.paths[0] if layout.paths else None
 
-    # Plot solid pieces only up to the drift boundary. Switches in a path
-    # alternate IN, OUT, IN, OUT (one pair contributes its entry switch then
-    # its exit switch); the 2nd, 4th, ... switches are OUTs and were installed
-    # reversed, so the renderer flips their visual diverge direction.
-    switches_seen = 0
-    reversed_flags = []
-    for piece_idx in path.piece_sequence:
-        rev = False
-        if piece_idx in SWITCH_INDICES:
-            switches_seen += 1
-            rev = (switches_seen % 2 == 0)
-        reversed_flags.append(rev)
+    if main_path is None or len(main_path.states) <= 1:
+        ax = fig.add_subplot()
+        ax.text(0.5, 0.5, "Empty Layout", ha="center", va="center", fontsize=16)
+        ax.set_title(title)
+    else:
+        grid = fig.add_gridspec(1, 2, width_ratios=(TRACK_WIDTH_RATIO, PANEL_WIDTH_RATIO))
+        ax = fig.add_subplot(grid[0, 0])
+        ax_panel = fig.add_subplot(grid[0, 1])
+        ax_panel.set_axis_off()
 
-    n_solid = min(drift_start, len(path.piece_sequence))
-    _draw_piece_sequence(ax, path.piece_sequence, path.states,
-                         reversed_flags=reversed_flags, limit=n_solid)
-
-    # Overlay drift trajectory (if any) as a dotted gray polyline
-    if drift_start < len(x) - 1:
-        ax.plot(
-            x[drift_start:], y[drift_start:],
-            color='#888888', linewidth=1.0, linestyle=':',
-            alpha=0.6, zorder=3,
-            label='FK drift (failed merge)',
+        has_branch, has_drift = _draw_track_view(
+            ax, layout, main_path, boundary,
+            closure_tolerance=closure_tolerance, angle_tolerance=angle_tolerance,
         )
+        _setup_axes(ax)
+        ax.set_title(title, fontsize=TITLE_FONTSIZE)
 
-    # Mark switch positions with diamond markers — only for non-drifted switches
-    for sw_pos in switch_positions:
-        if sw_pos >= drift_start or sw_pos >= len(x) - 1:
-            continue
-        piece_idx = path.piece_sequence[sw_pos]
-        sw_color = get_piece_color(piece_idx)
-        mid_x = (x[sw_pos] + x[sw_pos + 1]) / 2
-        mid_y = (y[sw_pos] + y[sw_pos + 1]) / 2
-        ax.plot(mid_x, mid_y, "D", color=sw_color, markersize=8,
-                markeredgecolor="black", markeredgewidth=1, zorder=6)
+        metrics = _panel_metrics_lines(layout, inventory, objectives, cv,
+                                       closure_tolerance, angle_tolerance)
+        handles = _legend_handles(layout, catalog, inventory, has_branch=has_branch,
+                                  has_drift=has_drift, has_boundary=boundary is not None)
+        fig.tight_layout()
+        _render_info_panel(fig, ax_panel, metrics, handles)
 
-    # Mark start/end (end may be a drifted position — that's intentional, it
-    # visualizes closure-failure magnitude).
-    ax.plot(x[0], y[0], "gs", markersize=8, zorder=10)
-    ax.plot(x[-1], y[-1], "ro", markersize=8, zorder=10)
-
-    _draw_boundary(ax, boundary)
-    _setup_axes(ax)
-
-    closed_str = "CLOSED" if path.is_closed else "OPEN"
-    n_switches = len(switch_positions)
-    ax.set_title(f"Path {path_idx}: {path.describe_route()}\n"
-                 f"({path.n_pieces} pieces, {n_switches} switches, {closed_str})")
-
-    # Metrics
-    metrics = (
-        f"Closure: {path.closure_error:.2f}\n"
-        f"Angle: {path.angle_error:.2f}°"
-    )
-    _metrics_box(ax, metrics, fontsize=8)
+    if save_path is not None:
+        fig.savefig(save_path, format="png", dpi=150, bbox_inches="tight")
+    return fig
