@@ -140,6 +140,31 @@ class TestLayout:
 
         assert layout.total_angle == pytest.approx(90.0, abs=0.1)
 
+    def test_exact_zero_net_turning_is_closed(self):
+        """A loop whose turns cancel to exactly 0.0 closes; it is not 'no track'."""
+        states = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [20.0, 10.0, 180.0],
+                [40.0, 0.0, 360.0],
+                [20.0, -10.0, 180.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+        layout = Layout(indices=np.zeros(4, dtype=np.int32), states=states)
+
+        assert layout.angle_error == 0.0
+        assert layout.closure_error == 0.0
+        assert layout.is_closed()
+
+    def test_zero_turning_open_run_stays_open(self):
+        """Five straights: zero net turning but an 80-stud gap keeps it open."""
+        states = compute_fk_chain(np.tile([16.0, 0.0, 0.0], (5, 1)))
+        layout = Layout(indices=np.zeros(5, dtype=np.int32), states=states)
+
+        assert layout.closure_error == pytest.approx(80.0)
+        assert not layout.is_closed()
+
 
 class TestMixedLayout:
     """Tests for layouts with mixed piece types."""
@@ -169,3 +194,41 @@ class TestClosureMetrics:
         closure, angle = compute_closure_metrics(states)
 
         assert closure == pytest.approx(10.0)
+
+    def test_exact_zero_turn_sum_not_treated_as_open(self):
+        """Net turning of exactly 0.0 is a legal closure, same as 360 and 720."""
+        states = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [20.0, 10.0, 180.0],
+                [40.0, 0.0, 360.0],
+                [20.0, -10.0, 180.0],
+                [0.0, 0.0, 0.0],
+            ]
+        )
+        closure, angle = compute_closure_metrics(states)
+
+        assert closure == 0.0
+        assert angle == 0.0
+
+    def test_empty_trajectory_returns_neutral_sentinel(self):
+        """Single-state trajectory is the degenerate case: neutral (0, 0)."""
+        assert compute_closure_metrics(np.zeros((1, 3))) == (0.0, 0.0)
+
+    def test_closure_measured_from_start_not_world_origin(self):
+        """A closed square shifted to (100, 50) still measures zero error."""
+        square = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [10.0, 0.0, 90.0],
+                [10.0, 10.0, 180.0],
+                [0.0, 10.0, 270.0],
+                [0.0, 0.0, 360.0],
+            ]
+        )
+        square[:, 0] += 100.0
+        square[:, 1] += 50.0
+        closure, angle = compute_closure_metrics(square)
+
+        assert closure == 0.0
+        assert angle == 0.0
