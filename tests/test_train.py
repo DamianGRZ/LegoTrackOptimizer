@@ -88,12 +88,15 @@ class TestConsistFields:
 
 
 class TestFrictionCircle:
-    """available_accel implements friction ellipse + coupler correction."""
+    """available_accel implements the capped friction circle + coupler correction:
+    a_long = min(cap, sqrt((mu*g)^2 - a_lat^2))."""
 
-    def test_straight_full_accel(self):
-        """On a straight (R=inf), full max_accel is available."""
+    def test_straight_accel_capped_by_circle(self):
+        """On a straight (R=inf), the budget is min(max_accel, mu*g): the drive
+        cap when torque-limited, the circle when the cap exceeds grip."""
         tc = TrainConfig()
-        assert available_accel(tc, v=0.5, radius_m=math.inf) == pytest.approx(tc.max_accel)
+        expected = min(tc.max_accel, tc.mu_design * tc.g)
+        assert available_accel(tc, v=0.5, radius_m=math.inf) == pytest.approx(expected)
 
     def test_straight_full_brake(self):
         """On a straight (R=inf), full brake_decel is available."""
@@ -133,8 +136,11 @@ class TestFrictionCircle:
 
     def test_coupler_no_effect_on_straight(self):
         """Coupler has no effect on straights (coupler angle is zero)."""
-        tc = TrainConfig(mass_trailing=0.600)
-        assert available_accel(tc, v=0.5, radius_m=math.inf) == pytest.approx(tc.max_accel)
+        tc_bare = TrainConfig(mass_trailing=0.0)
+        tc_consist = TrainConfig(mass_trailing=0.600)
+        a_bare = available_accel(tc_bare, v=0.5, radius_m=math.inf)
+        a_consist = available_accel(tc_consist, v=0.5, radius_m=math.inf)
+        assert a_consist == pytest.approx(a_bare)
 
     def test_coupler_not_applied_during_braking(self):
         """Coupler correction skipped during braking (conservative)."""
@@ -144,7 +150,39 @@ class TestFrictionCircle:
         b_consist = available_accel(tc_consist, v=0.5, radius_m=0.320, is_braking=True)
         assert b_bare == pytest.approx(b_consist)
 
-    def test_zero_speed_full_accel_on_curve(self):
-        """At v=0 on any curve, no lateral demand — full max_accel available."""
+    def test_zero_speed_full_budget_on_curve(self):
+        """At v=0 on any curve, no lateral demand — the full min(cap, mu*g)
+        budget is available."""
         tc = TrainConfig()
-        assert available_accel(tc, v=0.0, radius_m=0.320) == pytest.approx(tc.max_accel)
+        expected = min(tc.max_accel, tc.mu_design * tc.g)
+        assert available_accel(tc, v=0.0, radius_m=0.320) == pytest.approx(expected)
+
+    def test_torque_limited_cap_not_derated_on_curve(self):
+        """A torque-limited consist (cap well under mu*g, like the measured
+        0.68) keeps its FULL cap on a curve until the circle binds — lateral
+        demand must not scale the motor torque down (the old ellipse did)."""
+        tc = TrainConfig(max_accel=0.68, mass_trailing=0.0)
+        v_half = tc.v_slide(0.320) / 2.0  # a_lat = mu*g/4, grip >> cap
+        assert available_accel(tc, v=v_half, radius_m=0.320) == pytest.approx(0.68)
+
+    def test_combined_demand_stays_inside_circle(self):
+        """Over a speed sweep on R40: sqrt(a_lat^2 + a_long^2) <= mu*g and
+        a_long <= cap — the invariant the old model violated both ways."""
+        tc = TrainConfig(mass_trailing=0.0)
+        a_lat_max = tc.mu_design * tc.g
+        v_slide = tc.v_slide(0.320)
+        for frac in (0.0, 0.3, 0.6, 0.9, 0.99):
+            v = frac * v_slide
+            a_long = available_accel(tc, v=v, radius_m=0.320)
+            a_lat = v * v / 0.320
+            assert math.hypot(a_lat, a_long) <= a_lat_max + 1e-9
+            assert a_long <= tc.max_accel + 1e-9
+
+    def test_grip_limited_equals_circle(self):
+        """With a cap far above grip, the answer is the circle itself."""
+        tc = TrainConfig(max_accel=100.0, mass_trailing=0.0)
+        a_lat_max = tc.mu_design * tc.g
+        v = 0.9 * tc.v_slide(0.320)
+        a_lat = v * v / 0.320
+        expected = math.sqrt(a_lat_max**2 - a_lat**2)
+        assert available_accel(tc, v=v, radius_m=0.320) == pytest.approx(expected)

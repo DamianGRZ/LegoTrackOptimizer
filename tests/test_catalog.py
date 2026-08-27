@@ -107,6 +107,27 @@ class TestVectorizedLookup:
         assert lengths[0] == pytest.approx(16.0)
         assert lengths[1] == pytest.approx(24.0)
 
+    def test_route_arc_lengths(self, catalog: TrackCatalog):
+        """Per-route path lengths derive from each route's own endpoint pose.
+
+        Through routes keep the body length; the switch diverging leg is the
+        circular arc through its ports (32.75, 13) turning 22.5 deg; the DC
+        diagonal is the symmetric R40 S-curve that fits its ports (48, 16)
+        exactly."""
+        assert catalog.get_arc_length_route(4, 0) == pytest.approx(32.0)       # through
+        assert catalog.get_arc_length_route(4, 1) == pytest.approx(35.463, abs=1e-3)
+        assert catalog.get_arc_length_route(6, 0) == pytest.approx(48.0)       # DC through
+        assert catalog.get_arc_length_route(6, 2) == pytest.approx(51.480, abs=1e-3)
+        assert catalog.get_arc_length_route(2, 0) == pytest.approx(15.708, abs=1e-3)
+
+        # Vectorized: overrides only where a non-default route is taken.
+        lengths = catalog.get_route_arc_lengths(
+            np.array([4, 4, 6]), np.array([0, 1, 2]),
+        )
+        assert lengths[0] == pytest.approx(32.0)
+        assert lengths[1] == pytest.approx(35.463, abs=1e-3)
+        assert lengths[2] == pytest.approx(51.480, abs=1e-3)
+
 
 class TestFKDeltas:
     """Tests for FKDeltas dataclass."""
@@ -219,3 +240,40 @@ class TestStudMm:
     def test_stud_mm_value_from_yaml(self, catalog):
         # data/track_pieces_v2.yaml -> metadata.stud_mm = 8.0
         assert catalog.stud_mm == pytest.approx(8.0)
+
+
+class TestLoadValidation:
+    """TrackCatalog loading fails loudly on YAML drift instead of silently
+    shrinking: unknown ids, missing canonical pieces, and stud/mm radius
+    disagreements are all load-time errors."""
+
+    def _full_spec(self):
+        from pathlib import Path
+        from src.catalog.loader import load_catalog_spec
+        return load_catalog_spec(Path("data") / "track_pieces_v2.yaml")
+
+    def test_unknown_piece_id_raises(self):
+        from pathlib import Path
+        from src.catalog.loader import load_catalog_spec
+        tiny = Path(__file__).parent / "fixtures" / "catalog_tiny.yaml"
+        spec = load_catalog_spec(tiny)
+        with pytest.raises(ValueError, match="canonical"):
+            TrackCatalog._from_spec(spec)
+
+    def test_missing_canonical_piece_raises(self):
+        spec = self._full_spec()
+        spec = spec.model_copy(update={
+            "pieces": [p for p in spec.pieces if p.piece_id != "DOUBLE_CROSSOVER"],
+        })
+        with pytest.raises(ValueError, match="DOUBLE_CROSSOVER"):
+            TrackCatalog._from_spec(spec)
+
+    def test_radius_drift_raises(self):
+        spec = self._full_spec()
+        pieces = [
+            p.model_copy(update={"radius_studs": 56.0}) if p.piece_id == "R40_CURVE" else p
+            for p in spec.pieces
+        ]
+        spec = spec.model_copy(update={"pieces": pieces})
+        with pytest.raises(ValueError, match="R40_CURVE"):
+            TrackCatalog._from_spec(spec)

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from src.config import BoundaryConfig
 from src.problem import TrackOptimizationProblem
 from src.encoding import (
     create_chromosome_from_pieces,
@@ -382,9 +383,13 @@ class TestF1WholeGraphTime:
             prof = compute_speed_profile(
                 view, catalog, train_config=problem._train_config,
                 safety_margin=SPEED_SAFETY_MARGIN,
+                closure_pos_tol=problem.closure_tolerance,
+                closure_angle_tol=problem.angle_tolerance,
             )
             route_times.append(prof.lap_time)
-            arc_m = catalog.get_arc_lengths(indices) * catalog.stud_mm / 1000.0
+            arc_m = catalog.get_route_arc_lengths(
+                indices, np.asarray(p.route_indices, dtype=np.int32),
+            ) * catalog.stud_mm / 1000.0
             seg_times = arc_m / np.where(prof.speeds > 0, prof.speeds, 0.001)
             for uid, seg_time in zip(p.piece_uids, seg_times, strict=True):
                 sums[uid] = sums.get(uid, 0.0) + float(seg_time)
@@ -537,6 +542,29 @@ class TestGShapeV2:
         G = np.asarray(out["G"])
         assert len(G) == 5 + catalog.n_pieces
         assert np.all(G == 1e6), f"Sentinel should fill all G entries with 1e6, got {G}"
+
+
+class TestG3BoundaryTolerance:
+    """G[3] = (violation - boundary_tolerance) / diagonal: for overshoots up to
+    the tolerance, the tolerance term (not the raw violation) decides the sign."""
+
+    def _g3(self, catalog, default_config, tolerance: float) -> float:
+        config = default_config.model_copy(deep=True)
+        # 70x70 box; a 16-R40 circle spans ~78 studs, so it overshoots by a few
+        # studs no matter how the decoder centers it.
+        config.boundary = BoundaryConfig(min_x=-35.0, max_x=35.0, min_y=-35.0, max_y=35.0)
+        config.boundary_tolerance = tolerance
+        problem = TrackOptimizationProblem(catalog, config)
+        x = create_chromosome_from_pieces(problem.dims, [PieceIndex.R40_CURVE] * 16)
+        out = {}
+        problem._evaluate(x, out)
+        return float(out["G"][3])
+
+    def test_overshoot_beyond_tolerance_violates(self, catalog, default_config):
+        assert self._g3(catalog, default_config, 0.0) > 0.0
+
+    def test_overshoot_within_tolerance_is_feasible(self, catalog, default_config):
+        assert self._g3(catalog, default_config, 20.0) <= 0.0
 
 
 class TestFeasibilityParity:

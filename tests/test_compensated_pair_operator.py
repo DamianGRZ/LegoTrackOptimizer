@@ -18,7 +18,7 @@ from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.decoder import decode_chromosome
 from src.encoding import INACTIVE, compute_dimensions, create_chromosome_from_pieces
-from src.operators import _compensated_pair_grow
+from src.operators import _active_view, _compensated_pair_grow
 
 
 @pytest.fixture(scope="module")
@@ -189,3 +189,113 @@ class TestPerTypeStraightBudget:
         assert _compensated_pair_grow(x, dims, cat)
         n16, n24 = self._straight_counts(x, dims)
         assert (n16, n24) == (10, 0)
+
+
+def _inject_holes(x, dims, hole_gaps=(1, 5, 9)):
+    """Respace the active main-loop genes so INACTIVE holes sit inside the loop."""
+    types, flips = _active_view(x, dims)
+    assert len(types) + len(hole_gaps) <= dims.n_main
+    x[:dims.n_main] = INACTIVE
+    x[dims.main_flips_start:dims.main_flips_end] = 0
+    slot = 0
+    for i, (piece, flip) in enumerate(zip(types, flips)):
+        if i in hole_gaps:
+            slot += 1
+        x[slot] = piece
+        x[dims.main_flips_start + slot] = flip
+        slot += 1
+
+
+class TestNoCatalogFallback:
+    def test_no_catalog_fallback_edit_reports_true(self, dims):
+        """Without a catalog the grow degrades to a piece-type mutation — an
+        edit — so it must report True, or fall-through callers double-edit."""
+        np.random.seed(41)
+        x = create_chromosome_from_pieces(dims, [2] * 16)
+        assert _compensated_pair_grow(x, dims, None)
+
+
+class TestGrowHoledGenomes:
+    """Descriptor positions are active-order (the decoder skips INACTIVE
+    slots), so a holed loop decodes and grows exactly like its compact twin —
+    the operator may not decline on holes alone."""
+
+    def test_holed_twin_decodes_identically(self, cfg, cat, dims, inv):
+        from src.sampling import _gen_figure_eight_cross
+        pieces, flips, _, cjs, _ = _gen_figure_eight_cross(inv, dims)[-1]
+        compact = create_chromosome_from_pieces(
+            dims, pieces, main_loop_flips=flips, cross_junctions=cjs,
+        )
+        holed = compact.copy()
+        _inject_holes(holed, dims)
+        lay_compact = _decode(compact, cfg, cat, dims)
+        lay_holed = _decode(holed, cfg, cat, dims)
+        assert lay_holed.main_loop_pieces == lay_compact.main_loop_pieces
+        assert lay_holed.n_cross_junctions == lay_compact.n_cross_junctions == 1
+        assert lay_holed.paths[0].closure_error == pytest.approx(
+            lay_compact.paths[0].closure_error)
+
+    def test_holed_racetrack_grows(self, cfg, cat, dims, inv):
+        from src.sampling import _gen_racetrack
+        np.random.seed(29)
+        pieces, flips, *_ = _gen_racetrack(inv, dims)[0]
+        x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
+        _inject_holes(x, dims)
+        before = _n_active(x, dims)
+        assert _compensated_pair_grow(x, dims, cat), "holes alone must not decline the grow"
+        assert _n_active(x, dims) == before + 2
+        lay = _decode(x, cfg, cat, dims)
+        assert lay.paths[0].closure_error < cfg.closure_tolerance
+
+    def test_holed_cross_genome_keeps_commit(self, cfg, cat, dims, inv):
+        from src.sampling import _gen_figure_eight_cross
+        np.random.seed(31)
+        pieces, flips, _, cjs, _ = _gen_figure_eight_cross(inv, dims)[-1]
+        x = create_chromosome_from_pieces(
+            dims, pieces, main_loop_flips=flips, cross_junctions=cjs,
+        )
+        _inject_holes(x, dims)
+        assert _compensated_pair_grow(x, dims, cat)
+        lay = _decode(x, cfg, cat, dims)
+        assert lay.n_cross_junctions == 1, "CROSS_90 must stay committed"
+        assert lay.paths[0].closure_error < cfg.closure_tolerance
+
+
+class TestSidingFallback:
+    """A siding-bearing genome whose grow declines still receives an edit: the
+    mutation falls back to a junction op instead of a silent no-op."""
+
+    def test_declined_grow_falls_back_to_junction_op(self, cat):
+        from src.operators import PartitionedMutation
+
+        cfg = OptimizationConfig(
+            inventory={"STRAIGHT_16": 9, "R40_CURVE": 20,
+                       "R40_SWITCH_LEFT": 1, "R40_SWITCH_RIGHT": 1},
+            boundary={"min_x": -250.0, "max_x": 250.0,
+                      "min_y": -250.0, "max_y": 250.0},
+        )
+        dims = compute_dimensions(cfg, cat)
+        # Racetrack uses 8 S16; the active junction claims 1 more, so the grow
+        # needs 11 > 9 S16 (and there are no S24) — it declines every time.
+        x = create_chromosome_from_pieces(
+            dims, ([2] * 4 + [0] * 2) * 4, junctions=[(1, 3, 0, 1)],
+        )
+        junc_block = slice(dims.junc_start, dims.junc_start + 4)
+        before = x[junc_block].copy()
+
+        class _P:
+            catalog = cat
+
+        np.random.seed(37)
+        mut = PartitionedMutation(dims, prob=1.0)
+        X = np.array([x.copy() for _ in range(40)])
+        mut._do(_P(), X)
+
+        untouched_main = sum(
+            1 for row in X if np.array_equal(row[:dims.n_main], x[:dims.n_main]))
+        assert untouched_main == 40, "a declined grow must leave the main loop alone"
+        edited = sum(1 for row in X if not np.array_equal(row[junc_block], before))
+        assert edited > 20, (
+            f"only {edited}/40 rows got a junction edit; a declined grow must "
+            f"fall back instead of no-opping"
+        )

@@ -38,15 +38,17 @@ class TestApplyCrossingRepair:
     def test_no_inventory_no_change(self, cat) -> None:
         pieces = list(STR_CROSS)
         tracker = _make_tracker(cat, {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 0}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
+        result, _flips, records = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
+        assert records == []
         assert tracker.used.get(int(CROSS_90), 0) == 0
 
     def test_no_crossings_no_change(self, cat) -> None:
         pieces = [int(R40_CURVE)] * 16  # closed circle, no self-intersection
         tracker = _make_tracker(cat, {"R40_CURVE": 20, "CROSS_90": 20}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
+        result, _flips, records = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
+        assert records == []
         assert tracker.used.get(int(CROSS_90), 0) == 0
 
     def test_perpendicular_str_crossing_converted_fk_preserved(self, cat) -> None:
@@ -55,12 +57,17 @@ class TestApplyCrossingRepair:
         before = compute_fk_chain(fk_array_with_flips(cat, pieces, flips))
         tracker = _make_tracker(cat, {"STRAIGHT_16": 60, "R40_CURVE": 20, "CROSS_90": 20}, pieces)
 
-        result, result_flips = _apply_crossing_repair(pieces, tracker, cat, flips=flips)
+        result, result_flips, records = _apply_crossing_repair(pieces, tracker, cat, flips=flips)
 
-        # Exactly one slot of the (1, 18) crossing becomes CROSS_90; the other stays.
+        # Both slots of the (1, 18) crossing become CROSS_90 — one physical piece
+        # traversed twice — mirroring the descriptor commit exactly.
         assert result[1] == int(CROSS_90)
-        assert result[18] == int(STRAIGHT_16)
+        assert result[18] == int(CROSS_90)
         assert tracker.used.get(int(CROSS_90), 0) == 1
+        assert tracker.used.get(int(STRAIGHT_16), 0) == 6, "both straights released (8 - 2)"
+        assert len(records) == 1
+        assert records[0].positions == (1, 18)
+        assert records[0].slot == -1, "emergent records carry no descriptor slot"
         # FK-neutral: STRAIGHT_16 and CROSS_90 share FK [16,0,0], so the chain is unchanged.
         after = compute_fk_chain(fk_array_with_flips(cat, result, result_flips))
         np.testing.assert_allclose(after, before, atol=1e-9)
@@ -69,7 +76,8 @@ class TestApplyCrossingRepair:
         """Curve-on-curve crossings must NOT be rewritten (would break closure)."""
         pieces = list(CURVE_CROSS)
         tracker = _make_tracker(cat, {"R40_CURVE": 40, "CROSS_90": 20}, pieces)
-        result, _flips = _apply_crossing_repair(pieces, tracker, cat)
+        result, _flips, records = _apply_crossing_repair(pieces, tracker, cat)
         assert result == pieces
+        assert records == []
         assert tracker.used.get(int(CROSS_90), 0) == 0
         assert all(p != int(CROSS_90) for p in result)

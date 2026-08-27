@@ -139,7 +139,7 @@ def decode_chromosome(
         main_flips=augmented_flips, drop_log=drop_log,
     )
 
-    augmented_pieces, augmented_flips = _apply_crossing_repair(
+    augmented_pieces, augmented_flips, emergent_crossings = _apply_crossing_repair(
         augmented_pieces, tracker, catalog, flips=augmented_flips,
     )
 
@@ -147,7 +147,7 @@ def decode_chromosome(
     multi_path = _build_multi_path_layout(
         augmented_pieces, augmented_flips, switch_pairs, catalog, dbl_route_map,
     )
-    multi_path.cross_junctions = cross_junctions
+    multi_path.cross_junctions = cross_junctions + emergent_crossings
     multi_path.dbl_crossovers = dbl_crossovers
     multi_path.main_loop_routes = dbl_route_map
     multi_path.drop_log = drop_log
@@ -608,16 +608,16 @@ def _find_out_position(
 ) -> Optional[int]:
     """Find the main-loop position to place the OUT switch.
 
-    Walks forward from ``in_pos + 1`` accumulating each piece's local-X
-    contribution (with the slot's flip applied so R40_CURVE flip=1 contributes
-    the same magnitude but opposite dtheta).
+    Walks forward from ``in_pos + 1`` accumulating each piece's X contribution
+    in the IN entry frame (heading 0 at the IN switch, so the measure is
+    distance along the siding's through direction; the slot's flip is applied
+    so R40_CURVE flip=1 contributes the same magnitude but opposite dtheta).
     """
     n = len(pieces)
     if in_pos + 2 >= n:
         return None
 
-    in_state = _state_at_position(pieces, flips, in_pos, catalog)
-    base_theta = in_state[2]
+    base_theta = 0.0
 
     cumulative_x = 0.0
     best_pos = None
@@ -669,32 +669,37 @@ def _apply_crossing_repair(
     tracker: InventoryTracker,
     catalog: TrackCatalog,
     flips: Optional[List[int]] = None,
-) -> Tuple[List[int], List[int]]:
-    """Mark emergent perpendicular STRAIGHT_16-on-STRAIGHT_16 self-crossings as CROSS_90.
+) -> Tuple[List[int], List[int], List[CrossJunction]]:
+    """Convert emergent perpendicular STRAIGHT_16-on-STRAIGHT_16 self-crossings to CROSS_90.
 
     The by-chance path (complements the deliberate ``_inject_cross_junctions``):
     when the evolved main loop happens to cross itself, a CROSS_90 is placed there.
 
     FK-neutral policy: a crossing is converted ONLY when both crossing segments are
-    STRAIGHT_16 (CROSS_90 FK == STRAIGHT_16 FK == [16, 0, 0], so rewriting one slot
+    STRAIGHT_16 (CROSS_90 FK == STRAIGHT_16 FK == [16, 0, 0], so the rewrite
     preserves the chain — closure is untouched) AND the crossing is ~perpendicular
-    (``cross_pair_perpendicular``, so the partner segment makes the placed cross
-    non-dangling). Crossings involving a curve, or not near 90 deg, are left
-    unconverted — they remain a mild ``g_collisions`` penalty rather than being
-    rewritten into a closure break or a dangling cross. One CROSS_90 is consumed per
-    converted crossing.
+    (``cross_pair_perpendicular``, so the placed cross is never dangling). Crossings
+    involving a curve, or not near 90 deg, are left unconverted — they remain a mild
+    ``g_collisions`` penalty rather than being rewritten into a closure break or a
+    dangling cross.
+
+    A conversion mirrors the descriptor commit exactly: BOTH slots become CROSS_90,
+    both straights return to inventory, ONE physical CROSS_90 is consumed, and a
+    ``CrossJunction`` record is emitted (``slot=-1`` — no descriptor slot) so scoring
+    treats emergent and descriptor crossings identically.
 
     Recomputes FK and re-detects pairs after each conversion so multi-intersection
-    layouts converge correctly (each converted slot is exempt from re-detection).
+    layouts converge correctly (converted slots are exempt from re-detection).
     """
     n = len(pieces)
     if flips is None:
         flips = [0] * n
     if n < 4:
-        return pieces, list(flips)
+        return pieces, list(flips), []
 
     result = list(pieces)
     result_flips = list(flips)
+    records: List[CrossJunction] = []
 
     while tracker.remaining(CROSS_90_INDEX) > 0:
         states = compute_fk_chain(fk_array_with_flips(catalog, result, result_flips))
@@ -710,13 +715,18 @@ def _apply_crossing_repair(
         if target is None:
             break
 
-        pos_i, _pos_j = target
+        pos_i, pos_j = min(target), max(target)
         tracker.release(result[pos_i])
+        tracker.release(result[pos_j])
         tracker.use(CROSS_90_INDEX)
         result[pos_i] = CROSS_90_INDEX
+        result[pos_j] = CROSS_90_INDEX
         result_flips[pos_i] = 0
+        result_flips[pos_j] = 0
+        origin = (float(states[pos_i][0]), float(states[pos_i][1]), float(states[pos_i][2]))
+        records.append(CrossJunction(slot=-1, positions=(pos_i, pos_j), origin=origin))
 
-    return result, result_flips
+    return result, result_flips, records
 
 
 # =============================================================================

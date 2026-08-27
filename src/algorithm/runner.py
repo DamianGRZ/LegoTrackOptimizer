@@ -499,11 +499,15 @@ def _build_termination(config: OptimizationConfig):
     n_max_gen = min(config.algorithm.n_gen, t.n_max_gen)
     if t.period <= 0:
         return MaximumGenerationTermination(n_max_gen)
+    # n_max_evals otherwise defaults to 100000 deep in DefaultTermination —
+    # generation 100 at pop 1000. This project budgets by generations only,
+    # so the evaluation cap must never bind.
     return DefaultMultiObjectiveTermination(
         xtol=t.xtol,
         ftol=t.ftol,
         period=t.period,
         n_max_gen=n_max_gen,
+        n_max_evals=float("inf"),
     )
 
 

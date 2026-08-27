@@ -263,7 +263,9 @@ def evaluate_layout(
         safety_factor_mean = float("inf")
 
     # ---- Dynamics ----
-    is_closed = layout.is_closed(pos_tol=1.0, angle_tol=10.0)
+    # Tolerances match OptimizationConfig closure defaults (4.0 studs, 5.0 deg)
+    # so a feasible loop is never treated as open track.
+    is_closed = layout.is_closed(pos_tol=4.0, angle_tol=5.0)
     (a_lat_per_segment,
      a_long_per_segment,
      grip_utilization_per_segment,

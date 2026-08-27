@@ -1,7 +1,8 @@
 """Speed profile computation for track layouts.
 
-Time-optimal speed profiling using a 3-pass algorithm with friction ellipse
-constraints. This is the physics scoring module — it turns geometry into speed.
+Time-optimal speed profiling using a 3-pass algorithm with capped
+friction-circle constraints. This is the physics scoring module — it turns
+geometry into speed.
 """
 
 from dataclasses import dataclass
@@ -31,6 +32,8 @@ def compute_speed_profile(
     catalog: TrackCatalog,
     train_config: TrainConfig = DEFAULT_TRAIN_CONFIG,
     safety_margin: float = 1.0,
+    closure_pos_tol: float = 4.0,
+    closure_angle_tol: float = 5.0,
 ) -> SpeedProfile:
     """Compute time-optimal speed profile using 3-pass algorithm.
 
@@ -38,7 +41,7 @@ def compute_speed_profile(
     1. Pass 1: Curvature limits via v_eff_array(R) at mu_design
     2. Pass 2: Forward acceleration - respect train_config.max_accel
     3. Pass 3: Backward braking - respect train_config.brake_decel
-    4. Double-unroll method for closed loops
+    4. Triple-unroll (middle window) for closed loops
 
     Args:
         layout: Track layout with geometry
@@ -47,6 +50,11 @@ def compute_speed_profile(
         safety_margin: Multiplier (in (0, 1]) applied to every Pass-1 cap so
             the operating speed stays strictly below the derailment cap.
             Default 1.0 applies no margin.
+        closure_pos_tol: Positional closure tolerance (studs) deciding
+            closed-loop vs open-track profiling; the default matches
+            OptimizationConfig.closure_tolerance.
+        closure_angle_tol: Angular closure tolerance (degrees); the default
+            matches OptimizationConfig.angle_tolerance.
 
     Returns:
         SpeedProfile with speeds, avg_speed, lap_time, etc.
@@ -61,13 +69,18 @@ def compute_speed_profile(
             min_speed=0.0,
         )
 
-    # Get piece properties and convert units
+    # Get piece properties and convert units. Route-aware radii AND arc
+    # lengths when the layout carries a traversed-route index per piece
+    # (branch/diagonal segments are curve-limited and longer than the through
+    # body); else default-route. A whole MultiPathLayout has no single route,
+    # so it falls back to per-piece.
     stud_to_m = catalog.stud_mm / 1000.0
-    arc_lengths = catalog.get_arc_lengths(layout.indices) * stud_to_m  # meters
-    # Route-aware radii when the layout carries a traversed-route index per
-    # piece (branch/diagonal segments are curve-limited); else default-route.
-    # A whole MultiPathLayout has no single route, so it falls back to per-piece.
     route_indices = getattr(layout, "route_indices", None)
+    arc_lengths = (
+        catalog.get_route_arc_lengths(layout.indices, route_indices)
+        if route_indices is not None
+        else catalog.get_arc_lengths(layout.indices)
+    ) * stud_to_m  # meters
     radii_m = (
         catalog.get_route_radii(layout.indices, route_indices)
         if route_indices is not None
@@ -80,10 +93,10 @@ def compute_speed_profile(
     # scales every cap so operating speed stays strictly below them.
     v_limit = v_eff_array(train_config, radii_m) * safety_margin
 
-    # Apply 3-pass algorithm (friction ellipse reduces accel/brake on curves)
-    is_closed = layout.is_closed(pos_tol=1.0, angle_tol=10.0)
+    # Apply 3-pass algorithm (the friction circle reduces accel/brake on curves)
+    is_closed = layout.is_closed(pos_tol=closure_pos_tol, angle_tol=closure_angle_tol)
     speeds = (
-        _compute_speeds_double_unroll(v_limit, arc_lengths, radii_m, train_config)
+        _compute_speeds_triple_unroll(v_limit, arc_lengths, radii_m, train_config)
         if is_closed
         else _compute_speeds_open(v_limit, arc_lengths, radii_m, train_config)
     )
@@ -103,20 +116,25 @@ def compute_speed_profile(
     )
 
 
-def _compute_speeds_double_unroll(
+def _compute_speeds_triple_unroll(
     v_limit: NDArray[np.float64],
     arc_lengths: NDArray[np.float64],
     radii_m: NDArray[np.float64],
     train_config: TrainConfig,
 ) -> NDArray[np.float64]:
-    """Compute speeds for closed loop using double-unroll method."""
-    n = len(v_limit)
-    v_limit_double = np.concatenate([v_limit, v_limit])
-    arc_lengths_double = np.concatenate([arc_lengths, arc_lengths])
-    radii_double = np.concatenate([radii_m, radii_m])
+    """Compute speeds for a closed loop: triple unroll, keep the middle copy.
 
-    v_fwd = _forward_pass(v_limit_double, arc_lengths_double, radii_double, train_config)
-    v_bwd = _backward_pass(v_fwd, arc_lengths_double, radii_double, train_config)
+    The forward pass's start transient stays in copy 1 and the backward
+    pass's missing wrap-braking stays in copy 3, so the returned lap sees a
+    full lap of history on each side and is rotation-invariant.
+    """
+    n = len(v_limit)
+    v_limit_triple = np.tile(v_limit, 3)
+    arc_lengths_triple = np.tile(arc_lengths, 3)
+    radii_triple = np.tile(radii_m, 3)
+
+    v_fwd = _forward_pass(v_limit_triple, arc_lengths_triple, radii_triple, train_config)
+    v_bwd = _backward_pass(v_fwd, arc_lengths_triple, radii_triple, train_config)
 
     return v_bwd[n : 2 * n]
 
@@ -138,7 +156,7 @@ def _forward_pass(
     radii_m: NDArray[np.float64],
     train_config: TrainConfig,
 ) -> NDArray[np.float64]:
-    """Forward pass: apply acceleration limits with friction ellipse."""
+    """Forward pass: apply acceleration limits with the friction circle."""
     n = len(v_limit)
     v_fwd = np.zeros(n)
     v_fwd[0] = v_limit[0]
@@ -157,7 +175,7 @@ def _backward_pass(
     radii_m: NDArray[np.float64],
     train_config: TrainConfig,
 ) -> NDArray[np.float64]:
-    """Backward pass: apply braking limits with friction ellipse."""
+    """Backward pass: apply braking limits with the friction circle."""
     n = len(v_fwd)
     v_bwd = np.zeros(n)
     v_bwd[-1] = v_fwd[-1]
