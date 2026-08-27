@@ -111,6 +111,27 @@ class TestTrackPieceSpec:
                 # diverging_radius_studs deliberately missing
             ))
 
+    def test_crossover_requires_diverging_radius(self):
+        """Its cross_* diagonals bend, and that radius is the only place the
+        train's speed cap on them comes from."""
+        from src.catalog.specs import TrackPieceSpec
+        with pytest.raises(ValidationError):
+            TrackPieceSpec.model_validate(dict(
+                piece_id="crossover_missing",
+                kind="crossover",
+                manufacturer="4dbrix",
+                ports={
+                    "A": {"dx": 0.0, "dy": 0.0, "dtheta": 0.0},
+                    "B": {"dx": 48.0, "dy": 0.0, "dtheta": 0.0},
+                    "C": {"dx": 0.0, "dy": 16.0, "dtheta": 0.0},
+                    "D": {"dx": 48.0, "dy": 16.0, "dtheta": 0.0},
+                },
+                routes={"track1_through": ("A", "B"), "track2_through": ("C", "D"),
+                        "cross_1_to_2": ("A", "D"), "cross_2_to_1": ("C", "B")},
+                length_studs=48.0,
+                # diverging_radius_studs deliberately missing
+            ))
+
     def test_on_angle_lattice_for_lego_r40(self):
         """R40 curve at 22.5° is on the π/32 lattice (k=4)."""
         from src.catalog.specs import TrackPieceSpec

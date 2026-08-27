@@ -19,9 +19,7 @@ from numpy.typing import NDArray
 # PIECE CLASSIFICATION AND ROUTING
 # =============================================================================
 
-# Catalog piece index of CROSS_90 (piece_index in data/track_pieces_v2.yaml);
-# same convention as the local constants in templates.py.
-CROSS_90_INDEX = 3
+from src.encoding import CROSS_90 as CROSS_90_INDEX
 
 
 class PieceClass(Enum):
@@ -29,9 +27,8 @@ class PieceClass(Enum):
 
     SIMPLE_2PORT = "simple_2port"
     SWITCH_3PORT = "switch_3port"
-    SWITCH_4PORT = "switch_4port"
-    CROSSING_4PORT = "crossing_4port"
-    BUMPER_1PORT = "bumper_1port"
+    CROSSING_4PORT = "crossing_4port"    # routes intersect, no way between them
+    CROSSOVER_4PORT = "crossover_4port"  # diagonals carry a train between tracks
 
 
 @dataclass(frozen=True)
@@ -68,13 +65,15 @@ class PieceTopology:
     port_headings: Tuple[float, ...] = ()
 
     def is_switch(self) -> bool:
-        return self.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
+        return self.piece_class == PieceClass.SWITCH_3PORT
 
     def is_crossing(self) -> bool:
+        """CROSS_90: two routes cross, a train cannot pass between them."""
         return self.piece_class == PieceClass.CROSSING_4PORT
 
-    def is_terminator(self) -> bool:
-        return self.piece_class == PieceClass.BUMPER_1PORT
+    def is_crossover(self) -> bool:
+        """DOUBLE_CROSSOVER: diagonal routes carry a train from track to track."""
+        return self.piece_class == PieceClass.CROSSOVER_4PORT
 
 
 # =============================================================================

@@ -66,11 +66,14 @@ DC_N_ROUTES = 4
 
 
 # =============================================================================
-# Piece Index Constants — must match _CANONICAL_PIECE_INDEX in src/catalog/catalog.py
+# Piece Index Constants
 # =============================================================================
 
 class PieceIndex(IntEnum):
-    """Track piece indices from catalog.
+    """The seven pieces and the chromosome index of each — defined once, here.
+
+    Member names are the catalog piece ids, so ``TrackCatalog`` derives its
+    canonical map straight from this enum instead of repeating it.
 
     R40 is ONE physical piece; handedness is selected per placement via the
     chromosome's parallel flip array (flip=0 → LEFT +22.5°, flip=1 → RIGHT -22.5°).
@@ -81,8 +84,8 @@ class PieceIndex(IntEnum):
     STRAIGHT_24 = 1
     R40_CURVE = 2
     CROSS_90 = 3
-    SWITCH_LEFT = 4
-    SWITCH_RIGHT = 5
+    R40_SWITCH_LEFT = 4
+    R40_SWITCH_RIGHT = 5
     DOUBLE_CROSSOVER = 6
 
 
@@ -91,12 +94,12 @@ STRAIGHT_16 = PieceIndex.STRAIGHT_16
 STRAIGHT_24 = PieceIndex.STRAIGHT_24
 R40_CURVE = PieceIndex.R40_CURVE
 CROSS_90 = PieceIndex.CROSS_90
-SWITCH_LEFT = PieceIndex.SWITCH_LEFT
-SWITCH_RIGHT = PieceIndex.SWITCH_RIGHT
+R40_SWITCH_LEFT = PieceIndex.R40_SWITCH_LEFT
+R40_SWITCH_RIGHT = PieceIndex.R40_SWITCH_RIGHT
 DOUBLE_CROSSOVER = PieceIndex.DOUBLE_CROSSOVER
 
 # Piece categories
-SWITCH_INDICES = {SWITCH_LEFT, SWITCH_RIGHT}
+SWITCH_INDICES = {R40_SWITCH_LEFT, R40_SWITCH_RIGHT}
 
 # Main loop piece types: simple pieces only (switches/crossings enter via descriptors).
 MAIN_LOOP_PIECE_INDICES = {STRAIGHT_16, STRAIGHT_24, R40_CURVE}

@@ -38,7 +38,7 @@ class TrackPiece:
 
     id: str
     name: str
-    piece_type: str  # 'straight', 'curve', 'crossing', 'switch', 'bumper'
+    piece_type: str  # 'straight', 'curve', 'crossing', 'switch'
     fk: FKDeltas
     ports: Tuple[Port, ...]
     index: int
@@ -47,7 +47,6 @@ class TrackPiece:
     angle: Optional[float] = None
     direction: Optional[str] = None  # 'left' or 'right'
     radius_mm: Optional[float] = None
-    is_terminator: bool = False
     routes_data: Optional[List[Dict[str, Any]]] = None
 
     @property

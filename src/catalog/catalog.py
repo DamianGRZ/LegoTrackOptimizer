@@ -11,6 +11,7 @@ import numpy as np
 import yaml
 from numpy.typing import NDArray
 
+from ..encoding import PieceIndex
 from ..types import FKRoute, PieceClass, PieceTopology
 from .loader import load_catalog_spec
 from .pieces import FKDeltas, Port, TrackPiece
@@ -19,48 +20,18 @@ from .specs import TrackCatalogSpec, TrackPieceSpec
 log = logging.getLogger(__name__)
 
 
-# Canonical piece_id -> chromosome index. The GA encoding is tied to these exact
-# indices, so the mapping is pinned here rather than read from YAML piece order;
-# sampling, operators and repair all rely on it staying stable.
-_CANONICAL_PIECE_INDEX: Dict[str, int] = {
-    "STRAIGHT_16": 0,
-    "STRAIGHT_24": 1,
-    "R40_CURVE": 2,
-    "CROSS_90": 3,
-    "R40_SWITCH_LEFT": 4,
-    "R40_SWITCH_RIGHT": 5,
-    "DOUBLE_CROSSOVER": 6,
-}
-
-# Default-route radius in mm; None (like any unlisted piece) means that route
-# runs straight. The runtime tables store one geometry row per piece — its
-# *default* route (see _default_route_name), whose exit port is the FK row. The
-# port-centric YAML carries no per-route radius, so these constants fill
-# radius_table.
+# Which routes bend, per piece kind; every other route of that piece runs
+# straight. Only the structure lives here — the radius VALUE comes from the
+# piece's own YAML (radius_studs / diverging_radius_studs), so one number
+# describes one piece.
 #
-# Speed deliberately does NOT live here. Every cap is derived per segment in
-# src/train/physics.py from radius and train parameters, so exactly one place
+# Speed deliberately does NOT live here either. Every cap is derived per segment
+# in src/train/physics.py from radius and train parameters, so exactly one place
 # decides how fast the train may go.
-_DEFAULT_RADIUS_MM: Dict[str, Optional[float]] = {
-    "R40_CURVE": 320.0,
-}
-
-# Per-route radius for multi-route pieces, used to build each piece's
-# routes_data list. Diverging switch legs and double-crossover diagonals hold
-# the R40 radius; through routes run straight.
-_ROUTE_RADIUS_MM: Dict[str, Dict[str, Optional[float]]] = {
-    "R40_SWITCH_LEFT":  {"through": None, "diverging": 320.0},
-    "R40_SWITCH_RIGHT": {"through": None, "diverging": 320.0},
-    "CROSS_90": {
-        "horizontal": None,
-        "vertical":   None,
-    },
-    "DOUBLE_CROSSOVER": {
-        "track1_through": None,
-        "track2_through": None,
-        "cross_1_to_2":   320.0,
-        "cross_2_to_1":   320.0,
-    },
+_CURVED_ROUTES: Dict[str, Tuple[str, ...]] = {
+    "curve": ("main",),
+    "switch": ("diverging",),
+    "crossover": ("cross_1_to_2", "cross_2_to_1"),
 }
 
 
@@ -71,8 +42,8 @@ class TrackCatalog:
         "straight": PieceClass.SIMPLE_2PORT,
         "curve": PieceClass.SIMPLE_2PORT,
         "crossing": PieceClass.CROSSING_4PORT,
+        "crossover": PieceClass.CROSSOVER_4PORT,
         "switch": PieceClass.SWITCH_3PORT,
-        "bumper": PieceClass.BUMPER_1PORT,
     }
 
     def __init__(self) -> None:
@@ -114,14 +85,13 @@ class TrackCatalog:
         catalog.stud_mm = spec.meta.stud_mm
 
         for ps in spec.pieces:
-            if ps.piece_id not in _CANONICAL_PIECE_INDEX:
+            if ps.piece_id not in PieceIndex.__members__:
                 raise ValueError(
                     f"unknown piece {ps.piece_id!r}: the chromosome encoding is tied "
-                    f"to the canonical map {sorted(_CANONICAL_PIECE_INDEX)}; extend "
-                    f"_CANONICAL_PIECE_INDEX and PieceIndex to add a piece"
+                    f"to {sorted(PieceIndex.__members__)}; extend PieceIndex "
+                    f"in src/encoding.py to add a piece"
                 )
-            _check_radius_consistency(ps, spec.meta.stud_mm)
-            index = _CANONICAL_PIECE_INDEX[ps.piece_id]
+            index = int(PieceIndex[ps.piece_id])
             catalog._max_index = max(catalog._max_index, index)
 
             main_route_name = _default_route_name(ps)
@@ -147,7 +117,7 @@ class TrackCatalog:
             )
 
             piece_type = ps.kind
-            radius_mm = _default_radius_for(ps)
+            radius_mm = _default_radius_for(ps, spec.meta.stud_mm)
 
             piece = TrackPiece(
                 id=ps.piece_id,
@@ -164,15 +134,14 @@ class TrackCatalog:
                        if ps.sector_angle_rad is not None else None),
                 direction=ps.hand,
                 radius_mm=radius_mm,
-                is_terminator=False,
-                routes_data=_build_routes_data(ps),
+                routes_data=_build_routes_data(ps, spec.meta.stud_mm),
             )
 
             catalog._pieces[ps.piece_id] = piece
             catalog._index_to_piece[index] = piece
             catalog._id_to_index[ps.piece_id] = index
 
-        missing = sorted(set(_CANONICAL_PIECE_INDEX) - set(catalog._id_to_index))
+        missing = sorted(set(PieceIndex.__members__) - set(catalog._id_to_index))
         if missing:
             raise ValueError(
                 f"catalog spec is missing canonical pieces {missing}; the chromosome "
@@ -388,10 +357,10 @@ class TrackCatalog:
         ]
 
     def get_switch_pieces(self) -> List[int]:
-        """Get switch piece indices (3-4 ports)."""
+        """Get switch piece indices (3 ports)."""
         return [
             idx for idx, t in self._topologies.items()
-            if t.piece_class in (PieceClass.SWITCH_3PORT, PieceClass.SWITCH_4PORT)
+            if t.piece_class == PieceClass.SWITCH_3PORT
         ]
 
     @property
@@ -412,10 +381,12 @@ class TrackCatalog:
 
     @property
     def id_to_index(self) -> Dict[str, int]:
+        """Catalog id -> piece index: ``id_to_index["STRAIGHT_16"] == 0``."""
         return self._id_to_index
 
     @property
     def index_to_id(self) -> Dict[int, str]:
+        """Piece index -> catalog id: ``index_to_id[0] == "STRAIGHT_16"``."""
         return {idx: piece.id for idx, piece in self._index_to_piece.items()}
 
     def inventory_by_index(self, inventory: Dict[str, int]) -> Dict[int, int]:
@@ -463,7 +434,7 @@ def _default_route_name(ps: TrackPieceSpec) -> str:
     Preference order:
       - simple 2-port pieces use "main"
       - switches use "through" (straight-through FK is the default)
-      - crossings use whichever of "horizontal"/"track1_through" exists first
+      - crossings use "horizontal", crossovers "track1_through"
     """
     preference = ("main", "through", "horizontal", "track1_through")
     for name in preference:
@@ -472,36 +443,33 @@ def _default_route_name(ps: TrackPieceSpec) -> str:
     return next(iter(ps.routes))
 
 
-def _check_radius_consistency(ps: TrackPieceSpec, stud_mm: float) -> None:
-    """The YAML stud radii and the hardcoded mm route radii describe one
-    quantity; loading fails when they drift apart."""
-    declared = (
-        ("radius_studs", ps.radius_studs, _DEFAULT_RADIUS_MM.get(ps.piece_id)),
-        ("diverging_radius_studs", ps.diverging_radius_studs,
-         (_ROUTE_RADIUS_MM.get(ps.piece_id) or {}).get("diverging")),
-    )
-    for field, studs, table_mm in declared:
-        if studs is None or table_mm is None:
-            continue
-        if abs(studs * stud_mm - table_mm) > 1e-6:
-            raise ValueError(
-                f"{ps.piece_id}.{field} = {studs} studs ({studs * stud_mm} mm) "
-                f"disagrees with the hardcoded radius table's {table_mm} mm; "
-                f"update both together"
-            )
+def _route_radii_mm(ps: TrackPieceSpec, stud_mm: float) -> Dict[str, Optional[float]]:
+    """Radius in mm per route name; None where that route runs straight.
 
-
-def _default_radius_for(ps: TrackPieceSpec) -> Optional[float]:
-    """Radius in mm of ps's default route; None when that route runs straight.
-
-    The port-centric YAML doesn't encode per-route radii, so known piece_ids
-    map to their value here.
+    Loading fails when a piece declares a radius but carries none of the curved
+    routes its kind bends along — a renamed route would otherwise be scored as a
+    straight and let the train take that curve at the motor cap.
     """
-    default_route = _default_route_name(ps)
-    per_route = _ROUTE_RADIUS_MM.get(ps.piece_id)
-    if per_route and default_route in per_route:
-        return per_route[default_route]
-    return _DEFAULT_RADIUS_MM.get(ps.piece_id)
+    radius_studs = (ps.radius_studs if ps.radius_studs is not None
+                    else ps.diverging_radius_studs)
+    if radius_studs is None:
+        return {name: None for name in ps.routes}
+
+    curved = _CURVED_ROUTES.get(ps.kind, ())
+    matched = {name for name in curved if name in ps.routes}
+    if not matched:
+        raise ValueError(
+            f"{ps.piece_id} declares a {radius_studs}-stud radius but has none of "
+            f"the curved routes {list(curved)} that kind={ps.kind!r} bends along; "
+            f"its routes are {sorted(ps.routes)}"
+        )
+    return {name: (radius_studs * stud_mm if name in matched else None)
+            for name in ps.routes}
+
+
+def _default_radius_for(ps: TrackPieceSpec, stud_mm: float) -> Optional[float]:
+    """Radius in mm of ps's default route; None when that route runs straight."""
+    return _route_radii_mm(ps, stud_mm)[_default_route_name(ps)]
 
 
 def _route_arc_length_studs(
@@ -527,7 +495,8 @@ def _route_arc_length_studs(
     return chord
 
 
-def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
+def _build_routes_data(ps: TrackPieceSpec,
+                       stud_mm: float) -> Optional[List[Dict[str, Any]]]:
     """Build the routes_data list the runtime parser consumes.
 
     Single-route 2-port pieces: return None (_parse_routes then synthesizes a
@@ -539,7 +508,7 @@ def _build_routes_data(ps: TrackPieceSpec) -> Optional[List[Dict[str, Any]]]:
         return None
 
     port_names = list(ps.ports)
-    per_route_radius = _ROUTE_RADIUS_MM.get(ps.piece_id, {})
+    per_route_radius = _route_radii_mm(ps, stud_mm)
 
     out: List[Dict[str, Any]] = []
     for name, port_seq in ps.routes.items():

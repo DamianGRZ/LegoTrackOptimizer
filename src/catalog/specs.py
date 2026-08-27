@@ -33,7 +33,7 @@ class TrackPieceSpec(BaseModel):
     model_config = _FROZEN
 
     piece_id: str = Field(min_length=1)
-    kind: Literal["straight", "curve", "switch", "wye", "crossing"]
+    kind: Literal["straight", "curve", "switch", "crossing", "crossover"]
     manufacturer: Literal["lego", "4dbrix", "fxbricks", "bricktracks", "trixbrix"]
     part_numbers: tuple[str, ...] = ()
 
@@ -77,8 +77,8 @@ class TrackPieceSpec(BaseModel):
             "straight": ["length_studs"],
             "curve": ["radius_studs", "sector_angle_rad"],
             "switch": ["body_length_studs", "diverging_radius_studs"],
-            "wye": [],
             "crossing": [],
+            "crossover": ["diverging_radius_studs"],
         }
         missing = [f for f in required.get(self.kind, [])
                    if getattr(self, f) is None]

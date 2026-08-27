@@ -13,6 +13,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from src.encoding import PieceIndex
+
 
 # =============================================================================
 # TEMPLATE DATA STRUCTURES
@@ -51,11 +53,10 @@ class PassingSidingTemplate:
 # STANDARD TEMPLATES
 # =============================================================================
 
-# Piece indices (must match src/encoding.py PieceIndex enum)
-STRAIGHT_16 = 0
-R40_CURVE = 2
-R40_SWITCH_LEFT = 4
-R40_SWITCH_RIGHT = 5
+STRAIGHT_16 = PieceIndex.STRAIGHT_16
+R40_CURVE = PieceIndex.R40_CURVE
+R40_SWITCH_LEFT = PieceIndex.R40_SWITCH_LEFT
+R40_SWITCH_RIGHT = PieceIndex.R40_SWITCH_RIGHT
 
 
 def _compute_reversed_out_merge_fk(
@@ -141,8 +142,8 @@ def switch_indices_for(template: PassingSidingTemplate) -> Tuple[int, int]:
 
     The entry switch matches the siding's handedness; the exit switch is
     the opposite handedness (installed reversed). For a LEFT siding this
-    yields (SWITCH_LEFT, SWITCH_RIGHT); for RIGHT it yields (SWITCH_RIGHT,
-    SWITCH_LEFT).
+    yields (R40_SWITCH_LEFT, R40_SWITCH_RIGHT); for RIGHT it yields
+    (R40_SWITCH_RIGHT, R40_SWITCH_LEFT).
     """
     if template.handedness == "LEFT":
         return (R40_SWITCH_LEFT, R40_SWITCH_RIGHT)
@@ -175,7 +176,7 @@ TEMPLATES = {
 #
 # Train-frame FK per route (heading preserved through every route):
 
-DC_PIECE_IDX = 6  # DOUBLE_CROSSOVER catalog index
+DC_PIECE_IDX = PieceIndex.DOUBLE_CROSSOVER
 DC_LENGTH_STUDS = 48.0
 DC_LATERAL_STUDS = 16.0
 

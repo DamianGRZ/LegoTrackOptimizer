@@ -22,8 +22,8 @@ from pymoo.core.repair import Repair
 
 from .encoding import (
     INACTIVE,
-    SWITCH_LEFT,
-    SWITCH_RIGHT,
+    R40_SWITCH_LEFT,
+    R40_SWITCH_RIGHT,
     PartitionedDimensions,
     PieceIndex,
     fk_rows_with_flips,
@@ -430,8 +430,8 @@ class JunctionValidityRepair(Repair):
         Each passing siding is opposite-handed: 1 LEFT + 1 RIGHT switch.
         Max pair count = min(LEFT_count, RIGHT_count).
         """
-        left_count = self.inventory_by_index.get(int(SWITCH_LEFT), 0)
-        right_count = self.inventory_by_index.get(int(SWITCH_RIGHT), 0)
+        left_count = self.inventory_by_index.get(int(R40_SWITCH_LEFT), 0)
+        right_count = self.inventory_by_index.get(int(R40_SWITCH_RIGHT), 0)
         max_pairs = min(left_count, right_count)
 
         if n_active <= max_pairs:
@@ -490,7 +490,7 @@ class InventoryRepair(Repair):
 
         # Each active junction is a passing siding consuming 1 LEFT + 1 RIGHT
         # switch (opposite-handed pair) regardless of which side it diverges to.
-        left_sw, right_sw = int(SWITCH_LEFT), int(SWITCH_RIGHT)
+        left_sw, right_sw = int(R40_SWITCH_LEFT), int(R40_SWITCH_RIGHT)
 
         for k in range(self.dims.max_junctions):
             active, pos, hand, n_str = get_junction(x, self.dims, k)

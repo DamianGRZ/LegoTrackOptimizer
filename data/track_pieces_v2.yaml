@@ -122,10 +122,11 @@ pieces:
       vertical:   [C, D]
 
   - piece_id: DOUBLE_CROSSOVER
-    kind: crossing
+    kind: crossover
     manufacturer: 4dbrix
     part_numbers: ["210.1"]
     length_studs: 48.0
+    diverging_radius_studs: 40.0
     ports:
       A: {dx: 0.0,  dy:  0.0,  dtheta: 0.0}    # entry_track1
       B: {dx: 48.0, dy:  0.0,  dtheta: 0.0}    # exit_track1
