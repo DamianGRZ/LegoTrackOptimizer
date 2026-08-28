@@ -18,8 +18,8 @@ ARC1_ANGLE = math.degrees(math.atan2(3, 4))  # 36.87° (3-4-5 triple)
 ARC2_ANGLE = ARC1_ANGLE - CURVE_ANGLE         # 14.37°
 
 COL_RAIL = '#95a5a6'                # gray
-# Full physical piece width in studs: adjacent parallel tracks at the
-# canonical 8-stud siding spacing touch with no false overlap.
+# Full physical piece width in studs. A siding runs 16 studs centre-to-centre
+# from the main line, so two 8-wide beds leave an 8-stud gap between their edges.
 BED_WIDTH_STUD = 8.0
 RAIL_LW = 1.8                      # rail line width
 N_ARC_PTS = 60                     # arc interpolation points

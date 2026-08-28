@@ -21,8 +21,11 @@ from src.templates import PassingSidingTemplate
 class DecoderConfig:
     """Configuration for the partitioned decoder."""
 
-    siding_position_tolerance: float = 8.0  # studs — siding alignment
-    siding_angle_tolerance: float = 10.0    # degrees — siding alignment
+    # How much track may be missing at a joint for it to still count as joined.
+    # Checked where a siding returns to its OUT switch, and where a double
+    # crossover's two slots must land on one physical piece.
+    siding_position_tolerance: float = 8.0  # studs
+    siding_angle_tolerance: float = 10.0    # degrees
     boundary_min_x: float = -100.0
     boundary_max_x: float = 100.0
     boundary_min_y: float = -100.0
@@ -38,9 +41,13 @@ class DecoderConfig:
         auto-centers layouts differently than the constraints judged them.
 
         ``config`` is an ``OptimizationConfig`` (duck-typed to avoid a
-        circular import): needs a ``boundary`` with min/max x/y.
+        circular import): needs a ``boundary`` with min/max x/y and the
+        closure tolerances. A branch joint and a loop seam are the same
+        physical gap, so both read the one tolerance the config states.
         """
         return cls(
+            siding_position_tolerance=config.closure_tolerance,
+            siding_angle_tolerance=config.angle_tolerance,
             boundary_min_x=config.boundary.min_x,
             boundary_max_x=config.boundary.max_x,
             boundary_min_y=config.boundary.min_y,

@@ -79,7 +79,7 @@ pieces:
     ports:
       A: {dx: 0.0,    dy: 0.0,    dtheta: 0.0}        # throat
       B: {dx: 32.0,   dy: 0.0,    dtheta: 0.0}        # straight through
-      C: {dx: 32.75,  dy: 13.0,   dtheta: 0.39269908} # diverging (left); dx 0.75 stud past port B; dy = 5 stud edge gap + 8 stud track width centerline-to-centerline
+      C: {dx: 32.75,  dy: 13.0,   dtheta: 0.39269908} # diverging (left); dx 0.75 stud past port B; dy is the offset at the diverge port, not the siding spacing — the approach curve adds 3.05, putting the parallel siding 16 studs centre-to-centre
     routes:
       through:   [A, B]   # straight-through main traversal
       diverging: [A, C]   # IN-position branch traversal (train enters main, exits to branch)
