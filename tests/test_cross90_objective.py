@@ -51,7 +51,7 @@ class TestPhysicalCensus:
         assert g[int(CROSS_90)] == 0.0
 
 
-class TestWeightedUtilization:
+class TestWeightedPieceScore:
     def test_crossing_layout_scores_higher_than_plain(self, prob) -> None:
         plain = MultiPathLayout(main_loop_pieces=[int(STRAIGHT_16)] * 10)
         crossed = MultiPathLayout(
@@ -60,7 +60,7 @@ class TestWeightedUtilization:
         )
         # plain: physical=10, n_special=0
         # crossed: physical=9, n_special=1 -> (9 + (3-1)*1) = 11 effective > 10
-        assert prob._weighted_utilization(crossed) > prob._weighted_utilization(plain)
+        assert prob._weighted_piece_score(crossed) > prob._weighted_piece_score(plain)
 
 
 class TestF1CrossingChargedOnce:

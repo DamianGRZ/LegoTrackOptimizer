@@ -42,7 +42,12 @@ from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
 from src.run_info import count_pieces
 from src.sampling import IntegerSampling
-from src.visualization import plot_layout, plot_pareto_front
+from src.visualization import (
+    load_score_progress,
+    plot_layout,
+    plot_pareto_front,
+    plot_score_progress,
+)
 
 # Headless pipeline: PNGs only. The interactive Tk backend crashes when its
 # objects are garbage-collected from a multiprocessing.Pool result-handler
@@ -85,7 +90,23 @@ def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
 
     idx = int(feasible_indices[compromise_index(normalize(F_feas, ideal, nadir))])
     logger.info(f"Compromise (equal-weight ASF): individual {idx}, "
-                f"score={-F[idx, 0]:.1%}, time={F[idx, 1]:.2f} s")
+                f"score={-F[idx, 0]:.3f}, time={F[idx, 1]:.2f} s")
+
+
+def piece_counts(pop) -> np.ndarray | None:
+    """Per-individual physical piece census from the ``n_pieces`` out-key.
+
+    Returns None when the population does not carry it. pymoo answers a
+    never-set key with an object array of ``None`` rather than with ``None``,
+    so the check has to look inside the array.
+    """
+    counts = pop.get("n_pieces")
+    if counts is None:
+        return None
+    counts = np.atleast_1d(counts)
+    if any(c is None for c in counts):
+        return None
+    return counts.astype(int)
 
 
 # =============================================================================
@@ -93,7 +114,12 @@ def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
 # =============================================================================
 
 class ProgressCallback(Callback):
-    """Log NSGA-II progress every N generations."""
+    """Log NSGA-II progress every N generations.
+
+    Utilization comes from the ``n_pieces`` out-key — the individual's own
+    physical census — never from F[0], which carries the special-piece premium
+    and is therefore not a fraction of the kit.
+    """
 
     def __init__(self, every_n_gen: int = 10, total_inventory: int = 0):
         super().__init__()
@@ -113,20 +139,24 @@ class ProgressCallback(Callback):
         if F is None:
             return
 
-        utils = -F[:, 0]
-        times = F[:, 1]
+        counts = piece_counts(pop)
         feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(F), dtype=bool)
         n_feasible = int(np.sum(feasible_mask))
 
-        feas_util = float(np.max(utils[feasible_mask])) if n_feasible else 0.0
-        feas_time = float(np.min(times[feasible_mask])) if n_feasible else 0.0
-        infeas_util = float(np.max(utils[~feasible_mask])) if n_feasible < len(F) else 0.0
+        def best_usage(mask) -> str:
+            """Pieces used by the best-scoring member of ``mask``."""
+            if counts is None or not np.any(mask):
+                return "n/a"
+            idx = np.where(mask)[0]
+            used = int(counts[idx[np.argmin(F[idx, 0])]])
+            return f"{used}/{self.total_inventory} pcs ({used / self.total_inventory:.1%})"
+
+        feas_time = float(np.min(F[feasible_mask, 1])) if n_feasible else 0.0
 
         logger.info(
             f"Gen {gen:4d} | "
-            f"best_feas={feas_util:.1%} ({int(feas_util * self.total_inventory)} pcs) "
-            f"{feas_time:.2f} s | "
-            f"best_infeas={infeas_util:.1%} ({int(infeas_util * self.total_inventory)} pcs) | "
+            f"best_feas={best_usage(feasible_mask)} {feas_time:.2f} s | "
+            f"best_infeas={best_usage(~feasible_mask)} | "
             f"feasible={n_feasible}/{len(pop)}"
         )
 
@@ -136,20 +166,20 @@ class ProgressCallback(Callback):
 # =============================================================================
 
 class FeasibleEliteCallback(Callback):
-    """Preserve the best-utilization feasible individual across generations.
+    """Preserve the best-scoring feasible individual across generations.
 
     Once the adaptive-epsilon schedule fully engages, small-loop feasibles
     reproduce easily and dominate the population, pushing out hard-won
-    high-utilization feasibles. This callback keeps a deep copy of the
-    best-ever-seen feasible individual and re-injects it (replacing the
-    worst-CV infeasible or lowest-util feasible) whenever a better-util
-    feasible is no longer present in the current population.
+    high-scoring feasibles. This callback keeps a deep copy of the
+    best-ever-seen feasible individual (by weighted F[0] score) and re-injects
+    it (replacing the worst-CV infeasible or lowest-scoring feasible) whenever
+    a better-scoring feasible is no longer present in the current population.
     """
 
     def __init__(self):
         super().__init__()
         self._elite = None
-        self._elite_util = -np.inf
+        self._elite_score = -np.inf
 
     def notify(self, algorithm):
         pop = algorithm.pop
@@ -164,21 +194,21 @@ class FeasibleEliteCallback(Callback):
         feasible_mask = np.all(G <= 0, axis=1)
 
         if np.any(feasible_mask):
-            utils = -F[feasible_mask, 0]
-            best_in_feas = int(np.argmax(utils))
-            best_util_now = float(utils[best_in_feas])
-            if best_util_now > self._elite_util:
+            scores = -F[feasible_mask, 0]
+            best_in_feas = int(np.argmax(scores))
+            best_score_now = float(scores[best_in_feas])
+            if best_score_now > self._elite_score:
                 global_idx = int(np.where(feasible_mask)[0][best_in_feas])
                 self._elite = copy.deepcopy(pop[global_idx])
-                self._elite_util = best_util_now
+                self._elite_score = best_score_now
 
         if self._elite is None:
             return
 
-        current_best_util = (
+        current_best_score = (
             float(np.max(-F[feasible_mask, 0])) if np.any(feasible_mask) else -np.inf
         )
-        if self._elite_util <= current_best_util:
+        if self._elite_score <= current_best_score:
             return
 
         if not np.all(feasible_mask):
@@ -202,13 +232,39 @@ CATEGORY_KEYS = {
     "dc": "n_dc_comm",
 }
 
+# The families that get their own elite, snapshot folder and report section.
+# "plain" is the complement of every special element, so the no-special baseline
+# is tracked beside the topology-bearing ones; the other three overlap by design
+# (one layout can hold both a siding and a crossing).
+PLAIN_CATEGORY = "plain"
+CATEGORIES = (PLAIN_CATEGORY, *CATEGORY_KEYS)
+
+
+def category_masks(pop) -> dict | None:
+    """Membership mask per category, or None if the census keys are missing.
+
+    pymoo answers a never-set key with an object array of ``None`` rather than
+    with ``None``, so the check has to look inside the array.
+    """
+    present: dict = {}
+    for category, key in CATEGORY_KEYS.items():
+        counts = pop.get(key)
+        if counts is None:
+            return None
+        counts = np.atleast_1d(counts)
+        if any(c is None for c in counts):
+            return None
+        present[category] = counts.astype(float) > 0
+    present[PLAIN_CATEGORY] = ~np.logical_or.reduce(list(present.values()))
+    return present
+
 
 class CategoryEliteArchive(Callback):
     """Preserve the best individual containing each special element.
 
     Generalizes :class:`FeasibleEliteCallback` to per-category elites: for each
     category (committed switch pair / CROSS_90 / DOUBLE_CROSSOVER) the archive
-    keeps the best-utilization FEASIBLE individual ever seen and re-injects it
+    keeps the best-scoring FEASIBLE individual ever seen and re-injects it
     (one per category, replacing the worst individual) whenever the population
     no longer holds a feasible member of that category at least as good.
     Best INFEASIBLE individuals are archived too, but only for reporting —
@@ -221,8 +277,10 @@ class CategoryEliteArchive(Callback):
     def __init__(self, inject: bool = True):
         super().__init__()
         self.inject = inject
-        self.feasible: dict = {}    # category -> {"util": float, "ind": Individual}
-        self.infeasible: dict = {}  # category -> {"util": float, "ind": Individual}
+        # category -> {"score": weighted F[0], "n_pieces": physical census,
+        #              "ind": Individual}
+        self.feasible: dict = {}
+        self.infeasible: dict = {}
 
     def notify(self, algorithm):
         pop = algorithm.pop
@@ -230,42 +288,48 @@ class CategoryEliteArchive(Callback):
             return
         used_slots: set = set()
 
-        for category, key in CATEGORY_KEYS.items():
-            counts = pop.get(key)
-            if counts is None:
-                return  # population evaluated without category keys
+        for category in CATEGORIES:
             # Re-fetched per category: an earlier category's injection has
             # already replaced individuals, and bookkeeping against a stale
-            # snapshot pins the wrong utilization to an archived individual.
+            # snapshot pins the wrong score to an archived individual.
+            masks = category_masks(pop)
             F = pop.get("F")
             G = pop.get("G")
-            if F is None or G is None:
-                return
+            if masks is None or F is None or G is None:
+                return  # population evaluated without category keys
             feas_mask = np.all(G <= 0, axis=1)
-            has_element = np.asarray(counts, dtype=float) > 0
+            member = masks[category]
 
-            self._update(self.feasible, category, pop, F, has_element & feas_mask)
-            self._update(self.infeasible, category, pop, F, has_element & ~feas_mask)
+            self._update(self.feasible, category, pop, F, member & feas_mask)
+            self._update(self.infeasible, category, pop, F, member & ~feas_mask)
 
-            if self.inject:
-                self._inject(category, pop, F, G, feas_mask, has_element, used_slots)
+            # Injection protects fragile special-element topologies from going
+            # extinct. Plain layouts are the easy majority, so they are archived
+            # for reporting but never injected.
+            if self.inject and category != PLAIN_CATEGORY:
+                self._inject(category, pop, F, G, feas_mask, member, used_slots)
 
     def _update(self, store, category, pop, F, mask):
         if not np.any(mask):
             return
         idx = np.where(mask)[0]
         best = int(idx[np.argmax(-F[idx, 0])])
-        util = float(-F[best, 0])
+        score = float(-F[best, 0])
         current = store.get(category)
-        if current is None or util > current["util"]:
-            store[category] = {"util": util, "ind": copy.deepcopy(pop[best])}
+        if current is None or score > current["score"]:
+            counts = piece_counts(pop)
+            store[category] = {
+                "score": score,
+                "n_pieces": 0 if counts is None else int(counts[best]),
+                "ind": copy.deepcopy(pop[best]),
+            }
 
     def _inject(self, category, pop, F, G, feas_mask, has_element, used_slots):
         elite = self.feasible.get(category)
         if elite is None:
             return
         member_mask = has_element & feas_mask
-        if np.any(member_mask) and float(np.max(-F[member_mask, 0])) >= elite["util"]:
+        if np.any(member_mask) and float(np.max(-F[member_mask, 0])) >= elite["score"]:
             return  # an equal-or-better feasible member is already present
 
         slot = self._worst_slot(F, G, feas_mask, used_slots)
@@ -276,7 +340,7 @@ class CategoryEliteArchive(Callback):
 
     @staticmethod
     def _worst_slot(F, G, feas_mask, used_slots):
-        """Worst-CV infeasible slot first, else lowest-utilization feasible."""
+        """Worst-CV infeasible slot first, else lowest-scoring feasible."""
         infeas = [i for i in np.where(~feas_mask)[0] if i not in used_slots]
         if infeas:
             cv = np.maximum(G[infeas], 0).sum(axis=1)
@@ -292,28 +356,33 @@ class CategoryEliteArchive(Callback):
 # =============================================================================
 
 def _compute_snapshot_targets(n_gen: int) -> list[int]:
-    """Return the 10 generation numbers at which to take snapshots.
+    """Every generation of the planned budget.
 
-    Positions are [stride, 2*stride, ..., 10*stride] with stride = n_gen // 10,
-    clamped to n_gen and deduped so small runs still produce a valid (shorter)
-    list.
+    Rendering happens inside ``notify``, so the snapshots directory fills as the
+    run proceeds and the layouts can be watched emerging generation by
+    generation. One PNG per category costs a fraction of a second, which is the
+    same order as a generation itself — the run is meaningfully slower for it.
     """
-    stride = max(1, n_gen // 10)
-    raw = [i * stride for i in range(1, 11)]
-    return sorted({min(g, n_gen) for g in raw})
+    return list(range(1, max(1, n_gen) + 1))
+
+
+SNAPSHOT_STATUSES = ("feasible", "infeasible")
 
 
 class SnapshotCallback(Callback):
-    """Render best feasible / infeasible individual to disk at target generations.
+    """Render the best feasible and infeasible layout of each category, per generation.
 
-    "Best" means lowest F[0] (highest utilization). Either side may be absent
-    at a given generation, in which case that PNG is simply not written.
+    Categories are ``CATEGORIES``; "best" means lowest F[0] — the weighted
+    piece score, not utilization. Any of the eight combinations may be
+    absent in a given generation (no DC-bearing individual, or none infeasible),
+    in which case that PNG is simply not written.
 
-    Rendering happens inside ``notify`` so the user can watch the
-    ``outputs/snapshots/`` directory update live as the optimization runs.
-    The directory is wiped of prior ``snapshot_*.png`` at construction time
-    (i.e., at the start of the run) so an in-progress run cannot be confused
-    with a stale previous one.
+    Rendering happens inside ``notify`` so the directory fills live as the run
+    proceeds. Each category gets its own subdirectory and files are named by
+    generation, zero-padded to the run's width, so one category's evolution can
+    be flipped through in run order. Every PNG under ``snapshots/`` is wiped at
+    construction time (i.e., at the start of the run) so an in-progress run
+    cannot be confused with a stale previous one.
     """
 
     def __init__(self, targets: list[int], output_dir: Path,
@@ -321,6 +390,7 @@ class SnapshotCallback(Callback):
         super().__init__()
         self.targets = list(targets)
         self._target_set = set(self.targets)
+        self._gen_width = len(str(max(self.targets, default=1)))
         self._taken: set[int] = set()
         self.snapshots: list[dict] = []
         self._snap_dir = Path(output_dir) / "snapshots"
@@ -332,11 +402,13 @@ class SnapshotCallback(Callback):
 
     def _clean_dir(self) -> None:
         self._snap_dir.mkdir(parents=True, exist_ok=True)
-        for f in self._snap_dir.glob("snapshot_*.png"):
+        for stale in self._snap_dir.rglob("*.png"):
             try:
-                f.unlink()
+                stale.unlink()
             except OSError:
                 pass
+        for category in CATEGORIES:
+            (self._snap_dir / category).mkdir(exist_ok=True)
 
     def notify(self, algorithm):
         gen = int(algorithm.n_gen)
@@ -371,45 +443,45 @@ class SnapshotCallback(Callback):
                 "cv": float(cv_per_row[best]),
             }
 
+        masks = category_masks(pop)
+        if masks is None:
+            return  # population evaluated without the category census keys
+
         self._taken.add(gen)
-        snap_idx = self.targets.index(gen) + 1
         total = len(self.targets)
-        snapshot = {
-            "snapshot_idx": snap_idx,
-            "gen": gen,
-            "total": total,
-            "feasible": _pick(feasible_mask),
-            "infeasible": _pick(~feasible_mask),
-        }
+        snapshot: dict = {"gen": gen, "total": total}
+        status_masks = {"feasible": feasible_mask, "infeasible": ~feasible_mask}
+
+        for category in CATEGORIES:
+            for status in SNAPSHOT_STATUSES:
+                entry = _pick(masks[category] & status_masks[status])
+                snapshot[f"{category}_{status}"] = entry
+                if entry is not None:
+                    self._render_one(gen, total, category, status, entry)
         self.snapshots.append(snapshot)
 
-        for category in ("feasible", "infeasible"):
-            entry = snapshot[category]
-            if entry is None:
-                continue
-            self._render_one(snap_idx, gen, total, category, entry)
-
-    def _render_one(self, snap_idx: int, gen: int, total: int,
-                    category: str, entry: dict) -> None:
+    def _render_one(self, gen: int, total: int, category: str, status: str,
+                    entry: dict) -> None:
         logger = logging.getLogger(__name__)
+        stem = f"gen{gen:0{self._gen_width}d}_{status}"
         try:
             layout = decode_chromosome(
                 entry["X"], self._catalog, self._config.inventory,
                 dims=self._dims, config=self._decoder_config,
             )
-            title = f"Snapshot {snap_idx}/{total} | Gen {gen} | {category}"
-            save_path = self._snap_dir / f"snapshot_{snap_idx:02d}_{category}.png"
             fig = plot_layout(
-                layout, self._catalog, self._config.boundary, title, save_path,
+                layout, self._catalog, self._config.boundary,
+                f"Gen {gen}/{total} | {category} | {status}",
+                self._snap_dir / category / f"{stem}.png",
                 closure_tolerance=self._config.closure_tolerance,
                 angle_tolerance=self._config.angle_tolerance,
                 inventory=self._config.inventory,
                 objectives=entry["F"],
-                cv=entry["cv"] if category == "infeasible" else None,
+                cv=entry["cv"] if status == "infeasible" else None,
             )
             plt.close(fig)
         except Exception as e:
-            logger.warning(f"Could not render snapshot {snap_idx:02d} {category}: {e}")
+            logger.warning(f"Could not render {category}/{stem}: {e}")
 
 
 class CallbackChain(Callback):
@@ -733,8 +805,8 @@ def run_optimization(
     gated by ``config.algorithm.components``; see ``_build_search_components``.
 
     If ``output_dir`` is given, progression snapshots are rendered live into
-    ``<output_dir>/snapshots/`` during the run. Otherwise snapshots are still
-    captured in memory on ``res.snapshots`` but no files are written.
+    ``<output_dir>/snapshots/`` during the run and captured on
+    ``res.snapshots``. Otherwise no snapshots are taken at all.
     """
     logger = logging.getLogger(__name__)
 
@@ -818,7 +890,7 @@ def run_optimization(
                 f"callbacks=[{', '.join(type(cb).__name__ for cb in chain)}]")
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info("Objectives: utilization + traversal time (bi-objective)")
+    logger.info("Objectives: weighted piece score + traversal time (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(
@@ -857,6 +929,9 @@ def run_optimization(
     res.monitor_data = monitor.data
     res.snapshots = snapshot_cb.snapshots if snapshot_cb is not None else []
     res.category_elites = category_archive
+    # Carried on the result because save_results has no problem instance, and
+    # the ceiling must come from the objective's own definition.
+    res.max_score = problem.max_weighted_piece_score()
 
     logger.info("Optimization complete!")
 
@@ -880,10 +955,12 @@ def run_optimization(
                     X[best_idx], catalog, config.inventory,
                     dims=dims, config=problem.decoder_config,
                 )
+                total_inv = sum(config.inventory.values())
+                used = best_layout.n_physical_pieces
                 logger.info(
-                    f"Best feasible: {best_layout.n_physical_pieces}/"
-                    f"{sum(config.inventory.values())} pieces, "
-                    f"score={-F[best_idx, 0]:.1%}, time={F[best_idx, 1]:.2f} s, "
+                    f"Best feasible: pieces={used}/{total_inv}, "
+                    f"utilization={used / max(1, total_inv):.1%}, "
+                    f"score={-F[best_idx, 0]:.3f}, time={F[best_idx, 1]:.2f} s, "
                     f"switch_pairs={best_layout.n_switch_pairs}"
                 )
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
@@ -897,6 +974,8 @@ def run_optimization(
 
 # General geometric context per category (rule-level facts, not run data).
 _CATEGORY_CONTEXT = {
+    "plain": "no switch, crossing or double-crossover — a single closed loop, "
+             "the baseline the special-element families are measured against",
     "switch": "a passing siding adds a parallel track segment inside the "
               "loop's existing bounding box",
     "cross": "a CROSS_90 needs the loop to cross itself perpendicular; the "
@@ -944,13 +1023,17 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
     if archive is None:
         return
 
-    best_util = (float(np.max(-F[feasible_mask][:, 0]))
-                 if np.any(feasible_mask) else None)
+    # Utilization is measured in physical pieces, so the "below global best"
+    # gap compares piece counts — not F[0], which carries the special-piece
+    # premium and would overstate every branching layout's share of the kit.
+    pop_counts = piece_counts(res.pop) if getattr(res, "pop", None) is not None else None
+    best_pieces = (int(pop_counts[feasible_mask].max())
+                   if pop_counts is not None and np.any(feasible_mask) else None)
     boundary = config.boundary
     total_inv = sum(config.inventory.values())
     lines = ["# Category report", ""]
 
-    for category in CATEGORY_KEYS:
+    for category in CATEGORIES:
         lines.append(f"## {category}")
         elite = archive.feasible.get(category)
         if elite is not None:
@@ -959,26 +1042,30 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                 np.asarray(ind.X, dtype=np.int16), catalog,
                 config.inventory, dims=dims, config=decoder_cfg,
             )
-            util = elite["util"]
+            # "plain" is defined by the absence of special elements, so it has
+            # no element to count.
             n_element = {
                 "switch": layout.n_switch_pairs,
                 "cross": layout.n_cross_pieces,
                 "dc": layout.n_dbl_crossovers,
-            }[category]
-            gap = (f"{(best_util - util) * 100:.1f}pp below global best"
-                   if best_util is not None else "n/a")
+            }.get(category)
             n_phys = layout.n_physical_pieces
+            gap = (f"{(best_pieces - n_phys) / total_inv * 100:.1f}pp below global best"
+                   if best_pieces is not None else "n/a")
             plot_fn(
                 layout,
-                f"Best with {category}",
+                ("Best without special pieces" if category == PLAIN_CATEGORY
+                 else f"Best with {category}"),
                 output_dir / f"best_with_{category}.png",
                 objectives=np.asarray(ind.F, dtype=float),
             )
             spans = [p.states for p in layout.paths if len(p.states) > 1]
+            element_note = "" if n_element is None else f", {category} count: {n_element}"
             lines += [
-                f"- utilization score: {util:.1%} ({gap})",
-                f"- pieces: {n_phys}/{total_inv} ({n_phys / total_inv:.1%} of inventory), "
-                f"time: {float(ind.F[1]):.2f} s, {category} count: {n_element}",
+                f"- pieces: {n_phys}/{total_inv}",
+                f"- utilization: {n_phys / total_inv:.1%} ({gap})",
+                f"- F[0] weighted score: {elite['score']:.3f}, "
+                f"time: {float(ind.F[1]):.2f} s{element_note}",
             ]
             if spans:  # all-degenerate paths must not abort the whole report
                 xs = np.concatenate([s[:, 0] for s in spans])
@@ -988,15 +1075,22 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                     f"in {boundary.width:.0f} x {boundary.height:.0f} box"
                 )
         else:
-            lines.append("- no feasible solution containing this element was seen")
+            lines.append(
+                "- no feasible solution free of special pieces was seen"
+                if category == PLAIN_CATEGORY
+                else "- no feasible solution containing this element was seen"
+            )
             infeas = archive.infeasible.get(category)
             if infeas is not None:
                 cv = float(np.sum(np.maximum(0, infeas["ind"].G)))
                 lines.append(
-                    f"- best infeasible: util {infeas['util']:.1%}, CV={cv:.2f}"
+                    f"- best infeasible: {infeas['n_pieces']}/{total_inv} pieces, "
+                    f"utilization {infeas['n_pieces'] / total_inv:.1%}, CV={cv:.2f}"
                 )
-            reasons = _collect_drop_reasons(category, X, catalog, config,
-                                            dims, decoder_cfg)
+            # Drop reasons come from descriptor blocks; "plain" has none.
+            reasons = ([] if category == PLAIN_CATEGORY else
+                       _collect_drop_reasons(category, X, catalog, config,
+                                             dims, decoder_cfg))
             if reasons:
                 lines.append("- decoder drop reasons (final-population sample):")
                 lines.extend(f"  - {r}" for r in reasons)
@@ -1032,7 +1126,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d",
                header=chromosome_csv_header(dims), comments="")
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header="neg_utilization,expected_traversal_time_s", comments="")
+               header="neg_weighted_piece_score,expected_traversal_time_s", comments="")
     if G is not None:
         # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
@@ -1052,16 +1146,29 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     archive_F = getattr(monitor, "best_front", None) if monitor is not None else None
     if archive_F is not None and len(archive_F) > 0:
         np.savetxt(output_dir / "pareto_archive.csv", archive_F, delimiter=",",
-                   header="f0_neg_utilization,f1_traversal_time_s", comments="")
+                   header="f0_neg_weighted_piece_score,f1_traversal_time_s", comments="")
 
     try:
-        fig = plot_pareto_front(F, G, title="Pareto Front: Utilization vs Traversal Time",
+        fig = plot_pareto_front(F, G, title="Pareto Front: Piece Score vs Traversal Time",
                                 save_path=output_dir / "pareto_front.png",
                                 archive_F=archive_F)
         plt.close(fig)
         logger.info("Pareto front saved to pareto_front.png")
     except Exception as e:
         logger.warning(f"Could not plot Pareto front: {e}")
+
+    try:
+        # convergence.csv is already on disk — the monitor appends it live.
+        generations, scores = load_score_progress(output_dir / "convergence.csv")
+        fig = plot_score_progress(
+            generations, scores, max_score=getattr(res, "max_score", None),
+            save_path=output_dir / "objective_progress.png",
+            n_gen_planned=config.algorithm.n_gen,
+        )
+        plt.close(fig)
+        logger.info("Objective progress saved to objective_progress.png")
+    except Exception as e:
+        logger.warning(f"Could not plot objective progress: {e}")
 
     def _render_layout(layout, title, path, objectives=None, cv=None):
         fig = plot_layout(
@@ -1082,17 +1189,19 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             X[best_overall_idx], catalog, config.inventory,
             dims=dims, config=decoder_cfg,
         )
-        best_overall_util = -F[best_overall_idx, 0]
+        best_overall_score = -F[best_overall_idx, 0]
         best_overall_time = F[best_overall_idx, 1]
         best_overall_cv = (
             float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
         )
         is_feasible = bool(feasible_mask[best_overall_idx])
 
+        total_inv = sum(config.inventory.values())
+        used = best_overall_layout.n_physical_pieces
         logger.info(
-            f"Best overall: {best_overall_layout.n_physical_pieces}/"
-            f"{sum(config.inventory.values())} pieces, "
-            f"score={best_overall_util:.1%}, time={best_overall_time:.2f} s, "
+            f"Best overall: pieces={used}/{total_inv}, "
+            f"utilization={used / max(1, total_inv):.1%}, "
+            f"score={best_overall_score:.3f}, time={best_overall_time:.2f} s, "
             f"switch_pairs={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
             f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
         )

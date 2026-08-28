@@ -201,11 +201,14 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
     return rows
 
 
-def _format_individual(label: str, layout, util: float, time_s: float,
-                       cv: float | None) -> list[str]:
-    """Summary line for one individual; the count is PHYSICAL pieces, matching
-    ``count_pieces`` and the category report rather than traversal slots."""
-    line = (f"- **{label}**: {layout.n_physical_pieces} pieces, util={util:.1%}, "
+def _format_individual(label: str, layout, score: float, time_s: float,
+                       cv: float | None, total_inventory: int) -> list[str]:
+    """Summary line for one individual: PHYSICAL pieces (matching ``count_pieces``
+    and the category report rather than traversal slots), that count as a share of
+    the kit, and the weighted F[0] search score — three separate quantities."""
+    used = layout.n_physical_pieces
+    line = (f"- **{label}**: pieces={used}/{total_inventory}, "
+            f"utilization={used / max(1, total_inventory):.1%}, score={score:.3f}, "
             f"time={time_s:.2f} s, switch_pairs={layout.n_switch_pairs}")
     if cv is not None:
         line += f", CV={cv:.2f}"
@@ -299,6 +302,7 @@ def append_run_summary(
         lines += _format_individual(
             "Best feasible", best_feas_layout,
             float(-F[best_feas, 0]), float(F[best_feas, 1]), cv=None,
+            total_inventory=sum(config.inventory.values()),
         )
 
     best_overall = int(np.argmin(F[:, 0]))
@@ -313,6 +317,7 @@ def append_run_summary(
     lines += _format_individual(
         overall_label, overall_layout,
         float(-F[best_overall, 0]), float(F[best_overall, 1]), cv=overall_cv,
+        total_inventory=sum(config.inventory.values()),
     )
 
     usage_layout = best_feas_layout or overall_layout
