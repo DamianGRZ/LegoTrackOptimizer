@@ -6,7 +6,7 @@ better on the second. The two conflict — more track means more time — which 
 Pareto front something to spread along.
 
 ```
-F₀ = − weighted utilization      (maximize piece usage, negated for minimization)
+F₀ = − weighted piece score      (maximize piece usage, negated for minimization)
 F₁ = expected traversal time     (seconds; minimized directly)
 ```
 
@@ -17,7 +17,7 @@ decoder has turned genes into a concrete layout.
 
 ---
 
-## 1. F₀ — weighted utilization
+## 1. F₀ — weighted piece score
 
 ```
               n_phys + (W − 1) · n_spec
@@ -36,8 +36,14 @@ The weight exists because a switch pair or a crossing costs geometry and closure
 occupying few slots. Counted plainly, the GA strips them as overhead; counted at `W = 3` each,
 branching topology raises the score and survives selection.
 
-`src/problem.py:290` — `_weighted_utilization`
-`src/types.py:235` — `n_physical_pieces`, where the two-slot correction is applied
+The premium makes F₀ a search score rather than a utilization ratio — it can exceed 1.0, and it
+is deliberately decoupled from how much of the kit a layout actually consumes. **Utilization is
+`n_phys / N_inv`**, every physical piece counted once no matter how many slots it spans; the
+problem publishes it per individual as the `n_pieces` out-key, and that is the only number
+reporting may print as a percentage of inventory.
+
+`src/problem.py` — `_weighted_piece_score`
+`src/types.py` — `n_physical_pieces`, where the two-slot correction is applied
 
 ---
 

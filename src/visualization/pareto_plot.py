@@ -88,7 +88,7 @@ def plot_pareto_front(
 
     plot = Scatter(
         title=title, legend=True, figsize=(10, 8), tight_layout=True,
-        labels=["Utilization (normalized, 1 = best)",
+        labels=["Weighted piece score (normalized, 1 = best)",
                 "Traversal time (normalized, 1 = best)"],
     )
     annotations: list = []

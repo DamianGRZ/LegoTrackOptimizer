@@ -608,8 +608,13 @@ def _panel_metrics_lines(layout: MultiPathLayout, inventory: Optional[dict[str, 
     used = layout.n_physical_pieces
     total = sum(inventory.values()) if inventory else None
     lines = [f"Pieces: {used}" if total is None else f"Pieces: {used}/{total}"]
+    if total is not None:
+        lines.append(f"Utilization: {used / total:.1%}")
     if objectives is not None:
-        lines.append(f"F[0] utilization: {-float(objectives[0]):.1%}")
+        # F[0] weights special pieces several times over, so it is a search
+        # score and not a share of the kit — shown as a bare number so it never
+        # reads as a rival utilization percentage.
+        lines.append(f"F[0] weighted score: {-float(objectives[0]):.3f}")
         lines.append(f"F[1] time: {float(objectives[1]):.2f} s")
     lines.append(f"Number of unique Paths: {layout.n_paths}")
     lines.append(f"Closure error: {layout.max_closure_error:.2f} / "
@@ -712,7 +717,7 @@ def plot_layout(
         closure_tolerance: Position closure tolerance in studs, from config.
         angle_tolerance: Angle closure tolerance in degrees, from config.
         inventory: Optional {piece_id: count} capacities for panel and legend.
-        objectives: Optional raw pymoo F row (neg-utilization, time).
+        objectives: Optional raw pymoo F row (neg weighted piece score, time).
         cv: Optional constraint violation of the rendered individual.
 
     Returns:

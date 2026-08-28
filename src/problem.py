@@ -1,7 +1,10 @@
 """pymoo optimization problem for multi-objective track layout optimization.
 
 Bi-objective NSGA-II with Deb's constraint handling:
-- F[0] = -utilization (maximize piece usage)
+- F[0] = -weighted piece score (maximize piece usage; special pieces carry a
+         premium so topology is not stripped as overhead). This is a search
+         score, NOT utilization — the honest count rides on the ``n_pieces``
+         out-key.
 - F[1] = expected time to cover every physical piece once, averaged over the
          2^J traversal routes at safety_margin=0.95 (minimize; see
          _expected_traversal_time)
@@ -102,7 +105,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
     """Bi-objective track layout optimization with NSGA-II.
 
     Objectives (both minimized for pymoo):
-        F[0] = -utilization            (maximize piece usage)
+        F[0] = -weighted_piece_score   (maximize piece usage, with a premium
+                                        per special piece; not a utilization
+                                        ratio — report ``n_pieces`` instead)
         F[1] = expected_traversal_time (minimize the expected time to cover
                                         every physical piece once at
                                         safety_margin=0.95)
@@ -177,13 +182,16 @@ class TrackOptimizationProblem(ElementwiseProblem):
         if layout.n_pieces == 0:
             out["F"] = np.array([np.inf, np.inf])
             out["G"] = np.full(self.n_ieq_constr, DEGENERATE_G)
+            out["n_pieces"] = 0
             out["n_sw_pairs"] = 0
             out["n_cross_comm"] = 0
             out["n_dc_comm"] = 0
             return
 
-        # F[0]: -utilization (special pieces weighted so topology is not overhead)
-        utilization = self._weighted_utilization(layout)
+        # F[0]: -weighted piece score (special pieces carry a premium so
+        # topology is not stripped as overhead). Deliberately not a ratio of
+        # inventory — `n_pieces` below is what reporting must call utilization.
+        piece_score = self._weighted_piece_score(layout)
 
         # F[1] = expected whole-network traversal time at SPEED_SAFETY_MARGIN:
         # every physical piece charged the mean of its traversal times across
@@ -195,13 +203,17 @@ class TrackOptimizationProblem(ElementwiseProblem):
             closure_angle_tol=self.angle_tolerance,
         )
 
-        out["F"] = [-utilization, traversal_time]
+        out["F"] = [-piece_score, traversal_time]
 
         # Committed-element census as custom out-keys: the Evaluator copies
         # them onto the Population, so the category-elite archive reads them
         # via pop.get() without an extra decode. n_cross_pieces counts
         # physical CROSS_90s, so emergent (self-intersection repair)
         # placements are included alongside descriptor commits.
+        # n_pieces is the honest physical census — a switch, a CROSS_90 and a
+        # DOUBLE_CROSSOVER each count once, however many slots they span — so
+        # reporting never has to invert the weighted F[0] to guess a count.
+        out["n_pieces"] = layout.n_physical_pieces
         out["n_sw_pairs"] = len(layout.switch_pairs)
         out["n_cross_comm"] = layout.n_cross_pieces
         out["n_dc_comm"] = len(getattr(layout, "dbl_crossovers", []))
@@ -282,12 +294,31 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
-    def _weighted_utilization(self, layout) -> float:
-        """Utilization with special pieces weighted by ``special_piece_weight``.
+    def max_weighted_piece_score(self) -> float:
+        """Ceiling on the F[0] score for this inventory, ignoring all geometry.
+
+        The whole kit placed, plus every special element it can form: siding
+        pairs are capped by the scarcer switch handedness, crossings and
+        double-crossovers by their own stock — all three already derived from
+        inventory in ``dims``. No closure, collision or boundary term, so this
+        is the score a layout would reach if the terrain imposed nothing.
+        """
+        n_special = (self.dims.max_junctions
+                     + self.dims.max_cross_junctions
+                     + self.dims.max_double_crossovers)
+        return (
+            self.total_inventory + (self.special_piece_weight - 1.0) * n_special
+        ) / self.total_inventory
+
+    def _weighted_piece_score(self, layout) -> float:
+        """Piece-usage score with special pieces weighted by ``special_piece_weight``.
 
         Each switch pair / crossing / double-crossover counts as W physical pieces
         toward the score (W>1), so folding multi-path topology into a layout raises
-        utilization rather than being pure overhead the GA would strip.
+        the score rather than being pure overhead the GA would strip.
+
+        The premium makes this a search score, not a utilization ratio: it can
+        exceed 1.0. Utilization is ``n_physical_pieces / total_inventory``.
         """
         n_special = (
             len(layout.switch_pairs)
