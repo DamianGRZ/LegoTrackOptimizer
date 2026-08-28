@@ -31,7 +31,7 @@ import csv, collections
 import numpy as np
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
-from src.decoder import decode_chromosome
+from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import compute_dimensions
 
 cat = TrackCatalog.load("data/track_pieces_v2.yaml")
@@ -48,7 +48,10 @@ with open(d + "chromosomes.csv") as f:
 # 2026-07-01 have NO header: drop the [1:] there or row 0 (the champion) is lost.
 
 row = np.where(feas)[0][np.argmin(F[feas, 0])]  # best feasible (or --row N)
-lay = decode_chromosome(X[row], cat, cfg.inventory, dims=dims)
+# config= is mandatory: a default DecoderConfig centers on a +/-100 box, so the
+# decode would place the layout where the optimizer never judged it.
+lay = decode_chromosome(X[row], cat, cfg.inventory, dims=dims,
+                        config=DecoderConfig.from_optimization_config(cfg))
 names = {v: k for k, v in cat._id_to_index.items()}  # print NAMES, not indices
 print("row", row, "| F", F[row], "| feasible", bool(feas[row]))
 print("slot census:", {names[t]: c

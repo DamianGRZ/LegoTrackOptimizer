@@ -161,12 +161,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self.special_piece_weight = config.special_piece_weight
         self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
-        self.decoder_config = DecoderConfig(
-            boundary_min_x=config.boundary.min_x,
-            boundary_max_x=config.boundary.max_x,
-            boundary_min_y=config.boundary.min_y,
-            boundary_max_y=config.boundary.max_y,
-        )
+        self.decoder_config = DecoderConfig.from_optimization_config(config)
 
     def _evaluate(self, x, out, *args, **kwargs):
         """Evaluate single chromosome for both objectives and constraints."""

@@ -57,6 +57,7 @@ def _base_figure_eight(dims, k=0):
 def _decode(x, cat, dims):
     inv = {"STRAIGHT_16": 120, "R40_CURVE": 80, "DOUBLE_CROSSOVER": 1}
     cfg = DecoderConfig(
+        siding_position_tolerance=4.0, siding_angle_tolerance=5.0,
         boundary_min_x=-250.0, boundary_max_x=250.0,
         boundary_min_y=-250.0, boundary_max_y=250.0,
     )
