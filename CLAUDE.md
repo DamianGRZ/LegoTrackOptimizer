@@ -11,7 +11,7 @@
 - **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
 - **Use `/verify-fix`** for the full run-edit-test-inspect loop.
 - **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
-- **Known baseline (2026-08-26): 0 failed, 478 passed, 0 skipped** (clean).
+- **Known baseline (2026-08-30): 0 failed, 563 passed, 0 skipped** (clean).
   - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
 
 ---
@@ -41,6 +41,8 @@ Recurring mistakes that must not repeat:
 - **No hardcoded dimensional or constraint limits.** Boundary, branch count, switch-pair count must all derive from inventory and config at runtime.
 - **Repair must be wired into the evaluation pipeline**, not called ad-hoc. Constraint metric for switches is orphan-switch count, not just `loose_port_count`.
 - **Fitness must reward branches.** If the objective does not credit multi-path topology, the GA eliminates switches as pure overhead.
+- **A configured value must reach the code that acts on it, and nothing may substitute for it in silence.** Two failure shapes, both found in shipped code: a value read by one subsystem and defaulted in another (`boundary_tolerance` — the constraint at 2.0, the repair at 0.0), and a name the loader drops without stopping (a misspelled key, or a piece id absent from the catalog, which still inflated the kit size and understated every utilization figure). Function signatures must not advertise a default the production path always overrides — the declaration is what the next reader believes. Where a value can only be checked against something the config does not know, gate it where the two meet: `TrackOptimizationProblem.__init__` rejects inventory names the catalog lacks.
+- **Guard wiring with its own test.** Ordinary tests compare a result against an oracle built from the *same* object, so both sides move together and a swapped input is invisible. A wiring test asserts the configured object is distinguishable from the alternative, then that it is the one in use.
 
 ---
 
@@ -159,6 +161,7 @@ Switches/crossings are **not** legal main-loop alleles — they enter only via d
 **4. Operators.** Custom `PartitionedCrossover(Crossover)` (`src/operators.py`) — one-point on the main loop with the cut mirrored on the flip array, uniform per-slot swap on descriptors; when either parent carries an active DC descriptor, the main loop + DC block stay parent-intact (**not** SBX). Custom `PartitionedMutation(Mutation)` — weighted sub-operator portfolio (**not** PM): piece-type change / activate / deactivate / swap / flip / crossing-aware straighten / compensated-pair grow. DC-bearing genomes receive ONLY closure-safe grows (`_compensated_pair_grow`, `_grow_dc_figure_eight`; a declined grow falls through to the other) — every other operator would break the FK-tuned figure-8; siding-bearing genomes get a junction op or the compensated-pair grow, with a declined grow falling back to a junction op. Both grows return True iff they edited the genome, and the compensated grow accepts holed loops (descriptor positions are active-order, matching the decoder). Selection: `NSGA2` default binary tournament (not set explicitly).
 
 **5. Repair pipeline.** `TrackRepairPipeline(Repair)` (`src/repair.py`) chains **4 stages** in `_do`: `JunctionValidityRepair` (clamp descriptor genes) → `InventoryRepair` (drop excess pieces) → `MainLoopClosureRepair` (Stage 1 angular: add/remove R40s toward 360°, or nearest of {0, 360, 720} for cross/DC genomes; Stage 2 translational: drop straights to shrink the dx/dy gap) → `BoundaryAwareRepair` (re-center, else shrink via anti-parallel straight pairs). **No `RoundingRepair`** (genome is already int16; clamping is manual). Closure + boundary stages are optional via `enable_closure_repair` / `enable_boundary_repair`.
+- **`BoundaryAwareRepair` judges each of the four box edges separately** against `boundary_tolerance`, the same per-edge overshoot allowance `G[3]` grants, so it never rewrites a layout the constraint accepts. `TrackRepairPipeline` takes that tolerance as a **required keyword** and forwards it — it went unpassed for the whole life of the class, leaving repair at 0.0 while the constraint ran at the configured 2.0. Overshoots are measured where the decoder will place the loop (centred, then the start-offset gene), so the siding margin stays a per-edge modelling reserve, not a tolerance.
 
 **6. Heuristic sampling.** Hybrid (`IntegerSampling._do`): `heuristic_ratio` (default 0.20) of the population is inventory/boundary-aware closed loops (`_gen_simple_loop` / `_oval` / `_racetrack` / `_oval_with_siding` / `_oval_two_sidings` / `_figure_eight` / `_figure_eight_cross` / `_figure_eight_dbl_crossover`); the remainder are random partial-fill chromosomes. All pattern dimensions derive from boundary + inventory.
 
@@ -267,13 +270,15 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - `operators.py` — `PartitionedCrossover`, `PartitionedMutation` + sub-operator portfolio (incl. `_compensated_pair_grow`, `_grow_dc_figure_eight`).
 - `repair.py` — `JunctionValidityRepair`, `InventoryRepair`, `MainLoopClosureRepair` (angular + translational), `BoundaryAwareRepair`, chained by `TrackRepairPipeline`.
 - `types.py` — pure dataclasses: `SwitchPair`, `CrossJunction`, `DblCrossover`, `TraversalPath` (incl. `piece_uids` physical-piece identity), `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology`.
-- `config.py` — Pydantic models `OptimizationConfig` / `BoundaryConfig` / `AlgorithmConfig` / `TerminationConfig`.
-- `run_info.py` — per-run provenance writer (`run_info.md`: git state, verbatim config, run summary).
+- `config.py` — Pydantic models `OptimizationConfig` / `BoundaryConfig` / `AlgorithmConfig` / `TerminationConfig` / `SearchComponentsConfig`, all deriving from `_StrictModel` (`extra="forbid"`), so a misspelled key at any nesting level raises instead of silently keeping the default. `train_config_path` is **required**; `train_config_file` resolves it against the config's own directory, and `load_train_config()` is the single reader.
+- `run_info.py` — per-run provenance writer (`run_info.md`: git state, verbatim config, train physics, run summary). The **Train Physics** section embeds the train YAML verbatim *and* the values it resolved to, flagging each field no file stated — a train YAML is partial by design, so its text alone does not say what the run used.
 - `lego_track_models.py` — R40 / rail geometry constants for the renderer.
 
 **`src/catalog/`** — `catalog.py` (`TrackCatalog.load()`, vectorized FK/radius/topology tables — no speed data, v2 port-centric schema only; raises on non-v2, on piece ids outside the canonical map, on missing canonical pieces, and on stud-vs-mm radius drift; per-route arc lengths derived from each route's endpoint pose); `loader.py` (ruamel + Pydantic with file:line error UX); `pieces.py` (`FKDeltas`, `Port`, `TrackPiece`); `specs.py` (Pydantic v2 schema).
 
 **`src/train/`** — `physics.py` (`TrainConfig`, derailment caps, capped friction-circle `available_accel` = `min(cap, sqrt((mu*g)^2 - a_lat^2))`); `scoring.py` (`compute_speed_profile`, 3-pass profiler — route-aware radii AND arc lengths, triple unroll for closed loops); `evaluation.py` (`PhysicalEvaluation`, `evaluate_layout()` — full physical evaluation; scoring is the building block, evaluation the orchestrator).
+
+**There is no locomotive in the code.** `TrainConfig` is a strict Pydantic model (`extra="forbid"`, `frozen`). Its five vehicle fields — `v_motor_max`, `max_accel`, `mass_loco`, `mass_trailing`, `coupler_offset` — have no defaults, so a train YAML must state them; the eight shared constants and assumptions (`g`, `gauge_b`, both friction coefficients, `cog_height_h`, `flange_angle_deg`, `brake_decel`, `mu_roll`) keep tagged defaults a file may restate. `from_yaml` rejects unknown keys, bad values and empty files with `TrainConfigError` naming file and field; `derive()` builds test variants through revalidation, because pydantic's `model_copy(update=...)` bypasses `extra="forbid"` and `frozen` alike. `DEFAULT_TRAIN_CONFIG` is gone: `compute_speed_profile` and `evaluate_layout` take `train_config` as a required argument. Presets are `configs/trains/measured_consist.yaml` (named by every shipped config; states only what was measured, with comments saying why each absent field is absent) and `configs/trains/only_loco.yaml` (the assumed bare-loco baseline, field-for-field the former code defaults).
 
 **`src/algorithm/`** — `runner.py` (`run_optimization()`, `save_results()`, callbacks: `ProgressCallback`, `FeasibleEliteCallback`, `CategoryEliteArchive`, `SnapshotCallback`, `CallbackChain`, `LegoAdaptiveEpsilon`, category report writer); `monitoring.py` (`ConvergenceMonitorCallback`: HV/IGD/feasibility + cumulative feasible front).
 
@@ -285,9 +290,10 @@ Use the `config-test-runner` agent — runs ALL configs with full optimization, 
 - **`Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
 - **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
 
-### Test Suite Notes (2026-08-18)
+### Test Suite Notes (2026-08-30)
 
-- 41 `tests/test_*.py` files, 442 `def test_` functions, 478 collected tests. Baseline: **0 failed, 478 passed, 0 skipped** (clean).
+- 45 `tests/test_*.py` files, 498 `def test_` functions, 563 collected tests. Baseline: **0 failed, 563 passed, 0 skipped** (clean).
+- **Wiring tests** guard that a configured value reaches the object that uses it, which ordinary tests cannot: `test_train_config_plumbing.py` (every shipped config names the measured consist, and the problem holds it) and `test_decoder_config_plumbing.py` (post-run decodes match evaluation geometry). Both prove the configured object is *distinguishable* from the alternative first, then that it is the one used. A physics-swap test must run on a layout **with straights** — an all-R40 loop is capped by lateral slide, identical under either preset, so it cannot tell them apart.
 - The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
 - All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
 

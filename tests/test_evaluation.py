@@ -7,7 +7,6 @@ import pytest
 
 from src.catalog import TrackCatalog
 from src.geometry import Layout, build_layout
-from src.train import TrainConfig
 from src.train.evaluation import PhysicalEvaluation, evaluate_layout
 
 # Piece indices from src/encoding.py
@@ -145,14 +144,15 @@ class TestDynamicsDomain:
         assert np.all(phys.grip_utilization_per_segment <= 1.0 + 1e-6)
         assert np.all(phys.grip_utilization_per_segment >= 0.0)
 
-    def test_coupler_force_lat_zero_with_no_trailing(self, catalog):
+    def test_coupler_force_lat_zero_with_no_trailing(self, catalog, measured_train_config):
         """With mass_trailing=0, lateral coupler force is 0 everywhere."""
-        bare_loco = TrainConfig(mass_trailing=0.0, coupler_offset=0.106)
+        bare_loco = measured_train_config.derive(mass_trailing=0.0)
         layout = _make_layout([R40_CURVE] * 16, catalog)
         phys = evaluate_layout(layout, catalog, bare_loco, safety_margin=0.95)
         assert np.allclose(phys.coupler_force_lat_per_segment, 0.0, atol=1e-9)
 
-    def test_coupler_force_lat_proportional_to_trailing_mass(self, catalog):
+    def test_coupler_force_lat_proportional_to_trailing_mass(self, catalog,
+                                                             measured_train_config):
         """Doubling mass_trailing doubles the lateral coupler force (when a_long != 0).
 
         F_coup_lat = m_trailing * a_long * sin(phi), so proportionality needs
@@ -161,8 +161,8 @@ class TestDynamicsDomain:
         the on-curve budget differently per mass."""
         # Pick a layout with brake transitions (so a_long is non-zero)
         layout = _make_layout([R40_CURVE, STRAIGHT_16, R40_CURVE, STRAIGHT_16] * 2, catalog)
-        tc1 = TrainConfig(mass_trailing=0.327, coupler_offset=0.106, max_accel=0.68)
-        tc2 = TrainConfig(mass_trailing=0.654, coupler_offset=0.106, max_accel=0.68)
+        tc1 = measured_train_config                                  # 0.327 kg trailing
+        tc2 = measured_train_config.derive(mass_trailing=0.654)      # twice that
         phys1 = evaluate_layout(layout, catalog, tc1, safety_margin=0.7)
         phys2 = evaluate_layout(layout, catalog, tc2, safety_margin=0.7)
         # Where coupler_force_lat is non-trivial, ratio should be ~2

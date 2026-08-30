@@ -42,9 +42,10 @@ def inv(cfg, cat):
             if k in cat._id_to_index}
 
 
-def _pipeline(dims, inv, cat):
+def _pipeline(cfg, dims, inv, cat):
     return TrackRepairPipeline(
         dims=dims, inventory_by_index=inv, catalog_fk_table=cat._fk_table,
+        boundary_tolerance=cfg.boundary_tolerance,
     )
 
 
@@ -62,7 +63,7 @@ class TestCrossingGenomesKeepTurningZero:
         )
         before = _n_active(x, dims)
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
         after = _n_active(X[0], dims)
 
         assert after == before, "repair must not add/remove pieces on a closed figure-8"
@@ -78,7 +79,7 @@ class TestCrossingGenomesKeepTurningZero:
         )
         before = _n_active(x, dims)
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
         after = _n_active(X[0], dims)
 
         assert after == before
@@ -98,7 +99,7 @@ class TestPlainGenomesKeep360Target:
         x[curve_slots[0]] = INACTIVE
         before = _n_active(x, dims)
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
         after = _n_active(X[0], dims)
 
         assert after == before + 1, "plain loop must still be repaired toward 360"
@@ -127,7 +128,7 @@ class TestClosedLoopIsLeftIntact:
             x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
             before = _n_active(x, dims)
 
-            X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+            X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
 
             assert _n_active(X[0], dims) == before, f"{gen_name} seed mutilated by repair"
             layout = decode_chromosome(X[0], cat, cfg.inventory, dims=dims)
@@ -137,25 +138,25 @@ class TestClosedLoopIsLeftIntact:
         assert seen_chirality == {0, 1}, \
             f"{gen_name} must exercise both chiralities, saw {seen_chirality}"
 
-    def test_right_handed_loop_is_idempotent(self, cat, dims, inv):
+    def test_right_handed_loop_is_idempotent(self, cfg, cat, dims, inv):
         # Minimal explicit anchor for the core bug: a right-handed circle (-360).
         x = create_chromosome_from_pieces(
             dims, [int(R40_CURVE)] * 16, main_loop_flips=[1] * 16,
         )
         before = _n_active(x, dims)
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
 
         assert _n_active(X[0], dims) == before
         assert self._active_curve_flips(X[0], dims) == {1}
 
-    def test_partial_right_loop_closes_toward_minus_360(self, cat, dims, inv):
+    def test_partial_right_loop_closes_toward_minus_360(self, cfg, cat, dims, inv):
         # 15 right curves = -337.5; repair adds ONE right curve, not a left one.
         x = create_chromosome_from_pieces(
             dims, [int(R40_CURVE)] * 15, main_loop_flips=[1] * 15,
         )
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
 
         assert _n_active(X[0], dims) == 16
         assert self._active_curve_flips(X[0], dims) == {1}, \
@@ -171,7 +172,7 @@ class TestClosedLoopIsLeftIntact:
         x = create_chromosome_from_pieces(dims, pieces, main_loop_flips=flips)
         before = _n_active(x, dims)
 
-        X = _pipeline(dims, inv, cat)._do(None, np.array([x.copy()]))
+        X = _pipeline(cfg, dims, inv, cat)._do(None, np.array([x.copy()]))
 
         assert _n_active(X[0], dims) == before
         layout = decode_chromosome(X[0], cat, cfg.inventory, dims=dims)

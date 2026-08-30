@@ -760,6 +760,7 @@ def _build_search_components(config, problem, catalog):
             dims=dims,
             inventory_by_index=problem.inventory_by_index,
             catalog_fk_table=catalog._fk_table,
+            boundary_tolerance=config.boundary_tolerance,
             enable_closure_repair=True,
             enable_boundary_repair=True,
         )
@@ -897,6 +898,10 @@ def run_optimization(
         f"Chromosome: {dims.n_var} genes (main={dims.n_main}, junctions={dims.max_junctions})"
     )
     logger.info(f"Total inventory: {config.total_inventory} pieces")
+    train = problem._train_config
+    logger.info(f"Train physics: {config.train_config_file} "
+                f"(v_motor_max={train.v_motor_max} m/s, max_accel={train.max_accel} m/s^2, "
+                f"mu_design={train.mu_design}, mass_total={train.mass_total:.3f} kg)")
     if comp.heuristic_sampling:
         logger.info(f"Heuristic seeding: {config.algorithm.heuristic_ratio:.0%}")
 

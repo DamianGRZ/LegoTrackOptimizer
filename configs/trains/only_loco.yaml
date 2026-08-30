@@ -1,0 +1,38 @@
+# configs/trains/only_loco.yaml
+# The locomotive on its own, no trailing cars, at literature values.
+#
+# Nothing here is measured. Every value is either a physical standard or an
+# assumption, tagged per line. For the kit actually being optimised, use
+# measured_consist.yaml — this preset exists so the assumed baseline lives in a
+# file like every other configuration, rather than as defaults inside the code.
+
+# --- Friction (nominal = reference, design = the value used by formulas) ---
+mu_nominal: 0.30                 # assumed; central estimate, no formula reads it
+mu_design: 0.25                  # assumed; pessimistic value every cap formula reads
+
+# --- Environment ---
+g: 9.81                          # standard; gravitational acceleration (m/s^2)
+
+# --- Motor ---
+v_motor_max: 1.10                # assumed; drive-train top speed (m/s)
+
+# --- Bogie / wheel geometry ---
+gauge_b: 0.0375                  # standard; LEGO L-gauge inner rail-to-rail (m)
+cog_height_h: 0.030              # assumed; CoG above rail head (m)
+flange_angle_deg: 50.0           # assumed; effective flange contact angle (deg)
+
+# --- Speed-profile dynamics ---
+max_accel: 3.92                  # assumed; mu_traction * g at mu_traction = 0.4, for a
+                                 # bare loco (m_loco / m_total = 1). Note this exceeds
+                                 # the friction circle it is used inside: available_accel
+                                 # clamps to mu_design * g = 2.45 m/s^2, so the cap never
+                                 # binds and this consist is grip-limited throughout.
+brake_decel: 2.45                # assumed; mu_design * g (m/s^2)
+
+# --- Rolling resistance ---
+mu_roll: 0.05                    # assumed; rolling-friction coefficient (literature)
+
+# --- Consist mass and coupler geometry ---
+mass_loco: 0.370                 # assumed; locomotive mass (kg)
+mass_trailing: 0.0               # no trailing vehicles
+coupler_offset: 0.100            # assumed; vehicle length for coupler angle (m)

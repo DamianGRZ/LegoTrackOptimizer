@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from .physics import DEFAULT_TRAIN_CONFIG, TrainConfig, available_accel, v_eff_array
+from .physics import TrainConfig, available_accel, v_eff_array
 from ..catalog import TrackCatalog
 from ..geometry import Layout
 
@@ -30,7 +30,7 @@ class SpeedProfile:
 def compute_speed_profile(
     layout: Layout,
     catalog: TrackCatalog,
-    train_config: TrainConfig = DEFAULT_TRAIN_CONFIG,
+    train_config: TrainConfig,
     safety_margin: float = 1.0,
     closure_pos_tol: float = 4.0,
     closure_angle_tol: float = 5.0,
@@ -46,7 +46,7 @@ def compute_speed_profile(
     Args:
         layout: Track layout with geometry
         catalog: Track catalog for piece properties (also provides stud_mm)
-        train_config: Portable locomotive physics (default: DEFAULT_TRAIN_CONFIG)
+        train_config: Locomotive physics, loaded from the config's train YAML
         safety_margin: Multiplier (in (0, 1]) applied to every Pass-1 cap so
             the operating speed stays strictly below the derailment cap.
             Default 1.0 applies no margin.

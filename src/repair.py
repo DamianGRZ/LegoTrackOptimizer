@@ -76,6 +76,33 @@ def _main_loop_states(x: NDArray, dims: PartitionedDimensions,
     return compute_fk_chain(fk_rows_with_flips(fk_table, types[mask], flips[mask]))
 
 
+def _midpoint(lo: float, hi: float) -> float:
+    """Centre of a range, matching the decoder's own centring rule."""
+    return (lo + hi) / 2.0
+
+
+def _inset(lo: float, hi: float, margin: float) -> Tuple[float, float]:
+    """Pull both edges inward by ``margin``, collapsing to the midpoint if they cross."""
+    inner_lo, inner_hi = lo + margin, hi - margin
+    if inner_lo > inner_hi:
+        centre = _midpoint(lo, hi)
+        return centre, centre
+    return inner_lo, inner_hi
+
+
+def _edge_overshoots(local: Tuple[float, float], edge: Tuple[float, float],
+                     start: float) -> Tuple[float, float]:
+    """How far the placed loop reaches past each end of one axis, edge by edge.
+
+    Mirrors the decoder's placement: the loop is centred between the edges, then
+    shifted by the chromosome's start-offset gene. Negative means that edge is clear.
+    """
+    local_lo, local_hi = local
+    edge_lo, edge_hi = edge
+    shift = _midpoint(edge_lo, edge_hi) - _midpoint(local_lo, local_hi) + start
+    return edge_lo - (local_lo + shift), (local_hi + shift) - edge_hi
+
+
 _STRAIGHT_TYPES = (STRAIGHT_16, STRAIGHT_24)
 # Axis -> the two anti-parallel headings (degrees) we shrink along.
 _AXIS_HEADINGS = {"x": (0.0, 180.0), "y": (90.0, 270.0)}
@@ -537,9 +564,12 @@ class InventoryRepair(Repair):
 class BoundaryAwareRepair(Repair):
     """Rescue out-of-bounds layouts: re-center if they fit, else symmetric shrink.
 
-    Branch 1 (translate): if the main-loop span fits the box, zero start_x/start_y
-        so the decoder's _auto_center places the loop at box center (max margin).
-    Branch 2 (shrink): if an axis is genuinely too big, deactivate same-type
+    Judged edge by edge against ``boundary_tolerance``, the same per-edge overshoot
+    allowance the boundary constraint grants, so this never rewrites a layout the
+    constraint accepts.
+    Branch 1 (translate): the loop clears every edge once centred, so zero
+        start_x/start_y and let the decoder's _auto_center place it.
+    Branch 2 (shrink): an axis overshoots even when centred, so deactivate same-type
         anti-parallel straight pairs (closure- and angle-preserving), then translate.
     """
 
@@ -548,8 +578,8 @@ class BoundaryAwareRepair(Repair):
         dims: PartitionedDimensions,
         catalog_fk_table: NDArray,
         *,
+        boundary_tolerance: float,
         siding_margin: float = SIDING_MARGIN,
-        boundary_tolerance: float = 0.0,
         junction_repair: Optional["JunctionValidityRepair"] = None,
         **kwargs,
     ):
@@ -565,49 +595,56 @@ class BoundaryAwareRepair(Repair):
             self._repair_chromosome(X[i])
         return X
 
-    def _box_dims(self) -> Tuple[float, float]:
-        return (self.dims.boundary_max_x - self.dims.boundary_min_x,
-                self.dims.boundary_max_y - self.dims.boundary_min_y)
+    def _box_bounds(self) -> Tuple[float, float, float, float]:
+        return (self.dims.boundary_min_x, self.dims.boundary_max_x,
+                self.dims.boundary_min_y, self.dims.boundary_max_y)
 
-    def _effective_box(self, x: NDArray) -> Tuple[float, float]:
-        box_w, box_h = self._box_dims()
+    def _effective_bounds(self, x: NDArray) -> Tuple[float, float, float, float]:
+        """Box edges the loop must respect, each pulled in by the siding margin.
+
+        The margin covers the gap between the main-loop extents measured here and
+        the all-paths extents the decoder centres on. It is a modelling reserve,
+        not a tolerance, and does not move with ``boundary_tolerance``.
+        """
+        min_x, max_x, min_y, max_y = self._box_bounds()
         # If any siding junction is active, reserve a conservative margin.
         margin = 0.0
         for k in range(self.dims.max_junctions):
             if int(get_junction(x, self.dims, k)[0]) == 1:
                 margin = self.siding_margin
                 break
-        return max(0.0, box_w - 2 * margin), max(0.0, box_h - 2 * margin)
+        return (*_inset(min_x, max_x, margin), *_inset(min_y, max_y, margin))
 
     def _repair_chromosome(self, x: NDArray) -> None:
-        # An active DC descriptor reroutes two slots at decode time, so the
-        # raw main-loop span measured below is an artifact — decline
-        # gracefully and leave boundary enforcement to the G[3] penalty.
+        # An active DC descriptor makes the decoder swap two main-loop slots and route
+        # the track through the crossover, so the shape measured below is not the shape
+        # that gets built. Decline, and leave boundary enforcement to the G[3] penalty.
         if get_active_double_crossovers(x, self.dims):
             return
         states = _main_loop_states(x, self.dims, self.fk_table)
         if states.shape[0] <= 1:
             return
-        w = float(states[:, 0].max() - states[:, 0].min())
-        h = float(states[:, 1].max() - states[:, 1].min())
-        box_w_eff, box_h_eff = self._effective_box(x)
-
-        start_x = float(x[self.dims.start_pos_start])
-        start_y = float(x[self.dims.start_pos_start + 1])
-        slack_x = (box_w_eff - w) / 2.0
-        slack_y = (box_h_eff - h) / 2.0
+        min_x, max_x, min_y, max_y = self._effective_bounds(x)
+        edges = ((min_x, max_x), (min_y, max_y))
+        extents = tuple((float(states[:, i].min()), float(states[:, i].max()))
+                        for i in (0, 1))
+        starts = (float(x[self.dims.start_pos_start]),
+                  float(x[self.dims.start_pos_start + 1]))
         tol = self.boundary_tolerance
 
-        x_too_big = w > box_w_eff
-        y_too_big = h > box_h_eff
-        x_offset_out = abs(start_x) > slack_x + tol
-        y_offset_out = abs(start_y) > slack_y + tol
+        # G[3] allows `tol` of overshoot past each edge, so ask its question per edge:
+        # placed where the decoder will place it, how far does the loop reach past one?
+        placed = [_edge_overshoots(extent, edge, start)
+                  for extent, edge, start in zip(extents, edges, starts)]
+        if all(over <= tol for per_axis in placed for over in per_axis):
+            return  # inside every edge
 
-        if not (x_too_big or y_too_big or x_offset_out or y_offset_out):
-            return  # already in bounds
-
-        # A genuinely-too-big axis must shrink; a fitting loop only needs centering.
-        shrank = (x_too_big or y_too_big) and self._shrink(x, w, h, box_w_eff, box_h_eff)
+        # Zeroing the start offset answers the other question: does the loop clear the
+        # edges when merely centred? Whatever still hangs off is track that must go.
+        centred = [_edge_overshoots(extent, edge, 0.0)
+                   for extent, edge in zip(extents, edges)]
+        excess = [max(0.0, lo - tol) + max(0.0, hi - tol) for lo, hi in centred]
+        shrank = any(need > 0.0 for need in excess) and self._shrink(x, excess)
 
         # Translate: zero the fine-tuning offset so _auto_center fully centers.
         x[self.dims.start_pos_start] = 0
@@ -617,13 +654,12 @@ class BoundaryAwareRepair(Repair):
             # Deactivating straights shifted active-piece indices: re-clamp junctions.
             self.junction_repair.repair_chromosome(x)
 
-    def _shrink(self, x: NDArray, w: float, h: float,
-                box_w_eff: float, box_h_eff: float) -> bool:
+    def _shrink(self, x: NDArray, excess: List[float]) -> bool:
+        """Drop anti-parallel straight pairs until each axis sheds ``excess`` studs."""
         headings = _active_straight_headings(x, self.dims, self.fk_table)
         removed_any = False
-        for axis, span, box in (("x", w, box_w_eff), ("y", h, box_h_eff)):
-            deficit = span - box
-            if deficit <= 0:
+        for axis, axis_excess in zip(("x", "y"), excess):
+            if axis_excess <= 0:
                 continue
             pairs = _find_antiparallel_pairs(headings, axis)
             if not pairs:
@@ -632,7 +668,7 @@ class BoundaryAwareRepair(Repair):
             a, b = pairs[0]
             ptype = int(x[a])
             length = float(self.fk_table[ptype, 0])
-            n_pairs = min(len(pairs), math.ceil(deficit / max(length, 1e-6)))
+            n_pairs = min(len(pairs), math.ceil(axis_excess / max(length, 1e-6)))
             for a, b in pairs[:n_pairs]:
                 set_main_loop_type(x, self.dims, a, INACTIVE)
                 set_flip(x, self.dims, a, 0)
@@ -663,6 +699,8 @@ class TrackRepairPipeline(Repair):
         dims: PartitionedDimensions,
         inventory_by_index: Dict[int, int],
         catalog_fk_table: NDArray,
+        *,
+        boundary_tolerance: float,
         enable_closure_repair: bool = True,
         enable_boundary_repair: bool = True,
         **kwargs,
@@ -676,6 +714,7 @@ class TrackRepairPipeline(Repair):
         )
         self.boundary_repair = (
             BoundaryAwareRepair(dims, catalog_fk_table,
+                                boundary_tolerance=boundary_tolerance,
                                 junction_repair=self.junction_repair)
             if enable_boundary_repair else None
         )

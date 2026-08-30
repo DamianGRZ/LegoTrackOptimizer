@@ -25,9 +25,14 @@ from src.algorithm.runner import (
 )
 from src.config import OptimizationConfig
 
+# Every shipped config names this file; these hand-built ones never resolve it
+# (nothing here loads physics), but the field is required, so state it honestly.
+TRAIN_CONFIG_PATH = "trains/measured_consist.yaml"
+
 
 def _config(n_gen=200, n_max_gen=1000, ftol=0.005, period=100, xtol=1e-6):
     return OptimizationConfig(
+        train_config_path=TRAIN_CONFIG_PATH,
         inventory={"STRAIGHT_16": 8, "R40_CURVE": 16},
         algorithm={
             "n_gen": n_gen,
@@ -82,7 +87,7 @@ class TestBuildTermination:
         assert term.n_max_gen == 200
 
     def test_period_zero_is_the_config_default(self):
-        cfg = OptimizationConfig(inventory={"STRAIGHT_16": 8})
+        cfg = OptimizationConfig(train_config_path=TRAIN_CONFIG_PATH, inventory={"STRAIGHT_16": 8})
         assert cfg.algorithm.termination.period == 0
 
     def test_period_zero_still_capped_by_termination_n_max_gen(self):
@@ -193,6 +198,7 @@ class TestBuildElementwiseRunner:
 
 def _survival_config(crowding_func="cd", constr_survival=True):
     return OptimizationConfig(
+        train_config_path=TRAIN_CONFIG_PATH,
         inventory={"STRAIGHT_16": 8, "R40_CURVE": 16},
         algorithm={"crowding_func": crowding_func,
                    "components": {"constr_survival": constr_survival}},
@@ -203,13 +209,34 @@ class TestCrowdingFuncConfig:
     """An unknown metric must fail at load time — pymoo raises KeyError mid-run."""
 
     def test_defaults_to_cd(self):
-        config = OptimizationConfig(inventory={"STRAIGHT_16": 8})
+        config = OptimizationConfig(train_config_path=TRAIN_CONFIG_PATH,
+                                    inventory={"STRAIGHT_16": 8})
         assert config.algorithm.crowding_func == "cd"
 
     def test_unknown_metric_rejected(self):
-        with pytest.raises(ValidationError):
-            OptimizationConfig(inventory={"STRAIGHT_16": 8},
+        # Every other field must be valid, or this passes on the wrong error.
+        with pytest.raises(ValidationError, match="crowding_func"):
+            OptimizationConfig(train_config_path=TRAIN_CONFIG_PATH,
+                               inventory={"STRAIGHT_16": 8},
                                algorithm={"crowding_func": "nope"})
+
+
+class TestMisspelledKeysAreRejected:
+    """A dropped key leaves its field on the default, so the run would not be the
+    one the file describes. Every nesting level must refuse unknown names."""
+
+    BASE = {"train_config_path": TRAIN_CONFIG_PATH, "inventory": {"STRAIGHT_16": 8}}
+
+    @pytest.mark.parametrize("typo, patch", [
+        ("train_confg_path", {"train_confg_path": "x.yaml"}),
+        ("bogus", {"boundary": {"min_x": -1.0, "bogus": 2}}),
+        ("pop_sizee", {"algorithm": {"pop_sizee": 10}}),
+        ("perido", {"algorithm": {"termination": {"perido": 5}}}),
+        ("repare", {"algorithm": {"components": {"repare": False}}}),
+    ])
+    def test_unknown_key_is_rejected(self, typo, patch):
+        with pytest.raises(ValidationError, match=typo):
+            OptimizationConfig.model_validate({**self.BASE, **patch})
 
 
 class TestBuildSurvival:

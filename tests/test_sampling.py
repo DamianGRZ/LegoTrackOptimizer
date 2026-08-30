@@ -80,10 +80,12 @@ class TestIntegerSampling:
         """Larger boundary -> larger seeded layouts. Proves hardcoded caps are gone."""
         inventory = {"STRAIGHT_16": 80, "R40_CURVE": 20}
         small = OptimizationConfig(
+            train_config_path="trains/measured_consist.yaml",
             inventory=inventory,
             boundary=BoundaryConfig(min_x=-100, max_x=100, min_y=-100, max_y=100),
         )
         large = OptimizationConfig(
+            train_config_path="trains/measured_consist.yaml",
             inventory=inventory,
             boundary=BoundaryConfig(min_x=-250, max_x=250, min_y=-250, max_y=250),
         )
@@ -189,7 +191,7 @@ class TestCrossJunctionSeeder:
         boundary large enough to host the seeded oval."""
         from src.config import AlgorithmConfig
         cfg = OptimizationConfig(
-            train_config_path="trains/default.yaml",
+            train_config_path="trains/measured_consist.yaml",
             inventory={
                 "STRAIGHT_16": 80,
                 "R40_CURVE": 40,
@@ -223,7 +225,7 @@ class TestCrossJunctionSeeder:
         """No cross-junction patterns when CROSS_90 (or switches) absent."""
         from src.config import AlgorithmConfig
         cfg = OptimizationConfig(
-            train_config_path="trains/default.yaml",
+            train_config_path="trains/measured_consist.yaml",
             inventory={
                 "STRAIGHT_16": 80,
                 "R40_CURVE": 40,

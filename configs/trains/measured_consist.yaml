@@ -13,9 +13,10 @@
 # Raw video archive: b990558a-...mp4 (bare loco, 3 trials),
 #                    47f52d36-...mp4 (full consist, 3 trials)
 
-# --- Friction (V2 conservative defaults; pull-test deferred) ---
-mu_design: 0.25
-mu_nominal: 0.30
+# --- Friction ---
+# mu_design and mu_nominal are absent: the pull test was never run, so this consist has
+# no friction measurement to record. mu_design is the one that matters most — it sets
+# the speed cap on every curve — so measuring it is the highest-value test still open.
 
 # --- Environment ---
 g: 9.81
@@ -33,13 +34,13 @@ v_motor_max: 1.26                # full consist steady-state on 1.26 m / 1.00 s 
                                  # Recommendation: open loco at end of thesis, read motor
                                  # part number, document for reviewer.
 
-# --- Bogie / wheel geometry (LEGO L-gauge confirmed) ---
-gauge_b: 0.0375
-cog_height_h: 0.030              # default - tilt-test optional, deferred to appendix
-flange_angle_deg: 50.0
+# --- Bogie / wheel geometry ---
+gauge_b: 0.0375                  # verified: LEGO L-gauge 37.5 mm, AFM track compatible
+# cog_height_h is absent: the tilt test was never run.
+# flange_angle_deg is absent: taken from the rail profile, never measured on this stock.
 
 # --- Speed-profile dynamics ---
-brake_decel: 2.45                # default (passive coasting unmeasured)
+# brake_decel is absent: passive coasting was never timed.
 max_accel: 0.68                  # MEASURED: 1.35 m / 2.0 s starting from 0
                                  # (uniform-accel-then-coast model with v_max = 1.26 cap).
                                  # 95% CI [0.61, 0.77] m/s^2 for +/-5cm position,
@@ -56,6 +57,10 @@ max_accel: 0.68                  # MEASURED: 1.35 m / 2.0 s starting from 0
                                  # 0.9997+ (216-layout sweep, 2026-08-01).
                                  # Rolling resistance ~0.03-0.10 m/s^2 not deducted.
                                  # Pre-thesis: redo with Tracker software for tighter bounds.
+
+# --- Rolling resistance ---
+# mu_roll is deliberately absent: it was never measured for this consist, so there is
+# no measurement to record here. A coast-down test would supply it.
 
 # --- Consist (measured) ---
 mass_loco: 0.493                 # 493 g WITH 5xAAA inside (~378 g loco + ~115 g batteries)

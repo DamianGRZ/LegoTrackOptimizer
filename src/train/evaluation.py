@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 
 from ..catalog import TrackCatalog
 from ..geometry import Layout
-from .physics import DEFAULT_TRAIN_CONFIG, TrainConfig, derailment_caps
+from .physics import TrainConfig, derailment_caps
 from .scoring import SpeedProfile, compute_speed_profile
 
 
@@ -201,7 +201,7 @@ def _compute_energy(
 def evaluate_layout(
     layout: Layout,
     catalog: TrackCatalog,
-    train_config: TrainConfig = DEFAULT_TRAIN_CONFIG,
+    train_config: TrainConfig,
     safety_margin: float = 0.95,
 ) -> PhysicalEvaluation:
     """Comprehensive physical evaluation. Pure function, no side effects."""

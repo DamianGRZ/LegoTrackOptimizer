@@ -130,7 +130,11 @@ def test_cross_seed_respects_small_boundary(inv_crossing, cfg_crossing, cat):
     small = OptimizationConfig(
         inventory=dict(cfg_crossing.inventory),
         boundary={"min_x": -100.0, "max_x": 100.0, "min_y": -100.0, "max_y": 100.0},
+        train_config_path=cfg_crossing.train_config_path,
     )
+    # Same physics as the loaded config, only the box differs; the train path is
+    # relative to the config file, so carry its base directory across too.
+    small._base_dir = cfg_crossing._base_dir
     dims_small = compute_dimensions(small, cat)
     prob_small = TrackOptimizationProblem(cat, small)
     variants = _gen_figure_eight_cross(

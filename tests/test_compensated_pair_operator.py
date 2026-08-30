@@ -155,6 +155,7 @@ class TestPerTypeStraightBudget:
 
     def _setup(self, cat, s16, s24):
         cfg = OptimizationConfig(
+            train_config_path="trains/measured_consist.yaml",
             inventory={"STRAIGHT_16": s16, "STRAIGHT_24": s24,
                        "R40_CURVE": 16},
             boundary=dict(self.BOUNDARY),
@@ -269,6 +270,7 @@ class TestSidingFallback:
         from src.operators import PartitionedMutation
 
         cfg = OptimizationConfig(
+            train_config_path="trains/measured_consist.yaml",
             inventory={"STRAIGHT_16": 9, "R40_CURVE": 20,
                        "R40_SWITCH_LEFT": 1, "R40_SWITCH_RIGHT": 1},
             boundary={"min_x": -250.0, "max_x": 250.0,

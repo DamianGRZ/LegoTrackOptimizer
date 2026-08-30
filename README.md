@@ -290,7 +290,7 @@ knobs** — the boundary box and inventory describe a real, fixed kit and space;
 optimizer works *within* them.
 
 ```yaml
-train_config_path: trains/default.yaml   # locomotive physics (defaults if absent)
+train_config_path: trains/measured_consist.yaml   # locomotive physics
 
 inventory:                # available pieces (by piece_id)
   STRAIGHT_24: 8

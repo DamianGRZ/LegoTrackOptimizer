@@ -1,9 +1,10 @@
-"""Tests for the run_info physical-piece census."""
+"""Tests for the run_info physical-piece census and provenance sections."""
 
 from types import SimpleNamespace
 
+from src.config import OptimizationConfig
 from src.intersection import CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX
-from src.run_info import _format_individual, count_pieces
+from src.run_info import _format_individual, count_pieces, write_run_info_header
 from src.types import CrossJunction, DblCrossover, MultiPathLayout, SwitchPair
 
 S16 = 0
@@ -70,3 +71,36 @@ class TestFormatIndividual:
         assert "pieces=4" not in line
         # Utilization is that physical count over the kit, never the F[0] score.
         assert "utilization=30.0%" in line
+
+
+class TestTrainPhysicsSection:
+    """A finished run must record which locomotive produced its numbers."""
+
+    def _header(self, tmp_path, config):
+        write_run_info_header(tmp_path, "configs/default.yaml", config)
+        return (tmp_path / "run_info.md").read_text(encoding="utf-8")
+
+    def test_names_and_embeds_the_train_file(self, tmp_path, default_config):
+        text = self._header(tmp_path, default_config)
+        assert "## Train Physics" in text
+        assert "measured_consist.yaml" in text
+        # A value the file states, so the verbatim copy really is the file.
+        assert "v_motor_max: 1.26" in text
+
+    def test_reports_fields_the_file_does_not_state(self, tmp_path, default_config):
+        """The train YAML is partial, so its text alone does not say what ran.
+        Every field must appear with its effective value and its provenance."""
+        text = self._header(tmp_path, default_config)
+        effective = text[text.index("**Effective physics**"):]
+        assert "`mu_roll`: 0.05" in effective
+        assert "`mu_design`: 0.25" in effective
+        assert effective.count("the file does not state it") == 6
+
+    def test_unreadable_train_file_still_writes_the_run_info(self, tmp_path):
+        """Provenance must never abort a run."""
+        config = OptimizationConfig(train_config_path="trains/no_such_train.yaml",
+                                    inventory={"STRAIGHT_16": 8})
+        text = self._header(tmp_path, config)
+        assert "## Code State" in text
+        assert "Could not read" in text
+        assert "could not be loaded" in text
