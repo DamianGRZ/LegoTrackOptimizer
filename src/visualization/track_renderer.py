@@ -1,5 +1,6 @@
 """Visualization functions for track layouts and optimization results."""
 
+import math
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -22,22 +23,6 @@ from src.encoding import (
     DOUBLE_CROSSOVER as PIECE_IDX_DBL_CROSSOVER,
 )
 from src.run_info import count_pieces
-
-# Geometry helpers (arc/offset paths, rail constants) from the track model.
-from src.lego_track_models import (
-    R40,
-    RAIL_OFFSET,
-    CURVE_ANGLE,
-    SWITCH_LEN,
-    ARC1_ANGLE,
-    ARC2_ANGLE,
-    COL_RAIL,
-    BED_WIDTH_STUD,
-    RAIL_LW,
-    N_ARC_PTS,
-    arc_points,
-    offset_path,
-)
 
 # Headless pipeline: PNGs only (Tk + Pool result-handler threads crash Tcl).
 matplotlib.use("Agg", force=True)
@@ -62,6 +47,24 @@ FALLBACK_COLORS = [
 
 # Piece index constants for rendering are imported from src.encoding (single
 # source of truth: the canonical 0..6 chromosome mapping).
+
+# Track-piece geometry (studs/degrees). Exact geometry from community
+# research (MacFreek, L-Gauge, Transponderings, Fx Bricks).
+R40 = 40.0                          # curve radius in studs
+RAIL_OFFSET = 2.5                   # half gauge (5 studs / 2)
+CURVE_ANGLE = 22.5                  # degrees per R40 piece
+SWITCH_LEN = 32.0                   # switch straight path length
+ARC1_ANGLE = math.degrees(math.atan2(3, 4))  # 36.87° (3-4-5 triple)
+ARC2_ANGLE = ARC1_ANGLE - CURVE_ANGLE         # 14.37°
+
+# Full physical piece width in studs. A siding runs 16 studs centre-to-centre
+# from the main line, so two 8-wide beds leave an 8-stud gap between their edges.
+BED_WIDTH_STUD = 8.0
+
+# Rail style.
+COL_RAIL = '#95a5a6'               # gray
+RAIL_LW = 1.8                      # rail line width
+N_ARC_PTS = 60                     # arc interpolation points
 
 # DOUBLE_CROSSOVER body dimensions (studs): 48 long x 16 wide, port A at
 # piece-local (0, 0) and port C at (0, 16). Mirrors src.templates.DC_*.
@@ -88,6 +91,24 @@ def get_piece_color(piece_idx: int) -> str:
     if piece_idx in PIECE_COLORS:
         return PIECE_COLORS[piece_idx]
     return FALLBACK_COLORS[piece_idx % len(FALLBACK_COLORS)]
+
+
+def arc_points(cx, cy, r, start_deg, sweep_deg, n=N_ARC_PTS):
+    """Generate (x, y) arrays along a circular arc."""
+    angles = np.linspace(np.radians(start_deg),
+                         np.radians(start_deg + sweep_deg), n)
+    return cx + r * np.cos(angles), cy + r * np.sin(angles)
+
+
+def offset_path(x, y, offset):
+    """Offset a polyline by +/-offset studs perpendicular to path direction."""
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    length = np.sqrt(dx**2 + dy**2)
+    length[length == 0] = 1e-9
+    nx = -dy / length  # perpendicular normal
+    ny = dx / length
+    return x + offset * nx, y + offset * ny
 
 
 def _draw_track_bed(ax, x, y, color, alpha=0.88, zorder=2, width_stud=None):
