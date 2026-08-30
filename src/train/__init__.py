@@ -1,8 +1,8 @@
 """Train physics package — lateral stability, speed profiling, scoring.
 
 Public API:
-    TrainConfig — immutable locomotive physics parameters
-    DEFAULT_TRAIN_CONFIG — default TrainConfig instance
+    TrainConfig — immutable locomotive physics parameters, loaded from a train YAML
+    TrainConfigError — raised when that YAML is unreadable or invalid
     v_eff_array — vectorized speed cap over radius array
     available_accel — capped friction-circle longitudinal acceleration
     SpeedProfile — time-optimal speed profile result
@@ -10,8 +10,8 @@ Public API:
 """
 
 from .physics import (
-    DEFAULT_TRAIN_CONFIG,
     TrainConfig,
+    TrainConfigError,
     available_accel,
     v_eff_array,
 )
@@ -19,8 +19,8 @@ from .scoring import SpeedProfile, compute_speed_profile
 from .evaluation import PhysicalEvaluation, evaluate_layout
 
 __all__ = [
-    "DEFAULT_TRAIN_CONFIG",
     "TrainConfig",
+    "TrainConfigError",
     "available_accel",
     "v_eff_array",
     "SpeedProfile",

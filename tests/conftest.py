@@ -15,18 +15,19 @@ def catalog() -> TrackCatalog:
     return TrackCatalog.load("data/track_pieces_v2.yaml")
 
 
+TRAIN_CONFIG_DIR = Path(__file__).parent.parent / "configs/trains"
+
+
 @pytest.fixture
 def train_config() -> TrainConfig:
-    """Default train physics configuration."""
-    return TrainConfig()
+    """Bare locomotive at literature values — the assumed baseline, from its file."""
+    return TrainConfig.from_yaml(TRAIN_CONFIG_DIR / "only_loco.yaml")
 
 
 @pytest.fixture
 def measured_train_config() -> TrainConfig:
     """Train physics from measured AFM SL+Cargo M0015TW consist (2026-05-06)."""
-    return TrainConfig.from_yaml(
-        Path(__file__).parent.parent / "configs/trains/measured_consist.yaml"
-    )
+    return TrainConfig.from_yaml(TRAIN_CONFIG_DIR / "measured_consist.yaml")
 
 
 @pytest.fixture

@@ -7,7 +7,10 @@ The file records, for every run:
 2. **Configuration** — which config YAML was loaded, and a verbatim copy of
    the file contents (configs with the same name can change between runs, so
    the on-disk text at run time is captured here).
-3. **Run Summary** — feasibility counts, best feasible, best overall, piece
+3. **Train Physics** — the train YAML the config named, verbatim, plus the
+   values it actually resolved to (a train file states only what was measured,
+   so the text alone does not say what the run used).
+4. **Run Summary** — feasibility counts, best feasible, best overall, piece
    usage. Appended *after* the optimizer finishes.
 """
 
@@ -25,6 +28,7 @@ from src.config import OptimizationConfig
 from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import compute_dimensions
 from src.intersection import CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX
+from src.train import TrainConfigError
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOG = logging.getLogger(__name__)
@@ -129,6 +133,52 @@ def _config_section(config_path: str | Path, config: OptimizationConfig,
     return "\n".join(lines)
 
 
+def _train_fields(config: OptimizationConfig) -> list[str]:
+    """One bullet per physics field, marking the ones no file stated."""
+    try:
+        train = config.load_train_config()
+    except TrainConfigError as exc:
+        return [f"_Train physics could not be loaded: {exc}_"]
+    stated = train.model_fields_set
+    return [
+        f"- `{name}`: {getattr(train, name)}"
+        + ("" if name in stated else "  _(default — the file does not state it)_")
+        for name in type(train).model_fields
+    ]
+
+
+def _train_section(config: OptimizationConfig) -> str:
+    """Render the **Train Physics** section: the file verbatim, plus what it resolved to.
+
+    Both are needed. A train YAML states only what was measured of that vehicle, so its
+    text alone does not say what the run used — the rest comes from TrainConfig defaults.
+    """
+    path = config.train_config_file
+    try:
+        raw_yaml = path.read_text(encoding="utf-8").rstrip()
+    except OSError as exc:
+        raw_yaml = f"# Could not read {path}: {exc}"
+
+    lines = [
+        "## Train Physics",
+        "",
+        f"- **Train config file**: `{path}`",
+        f"- **Named by the config as**: `{config.train_config_path}`",
+        "",
+        f"**Verbatim contents of `{path}` at run time:**",
+        "",
+        "```yaml",
+        raw_yaml,
+        "```",
+        "",
+        "**Effective physics** (file values, plus defaults for the fields it omits):",
+        "",
+        *_train_fields(config),
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def write_run_info_header(
     output_dir: Path,
     config_path: str | Path,
@@ -150,6 +200,7 @@ def write_run_info_header(
         "",
         _git_state_section(),
         _config_section(config_path, config, quick_test),
+        _train_section(config),
     ])
     path.write_text(body, encoding="utf-8")
     return path

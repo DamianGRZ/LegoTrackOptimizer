@@ -586,3 +586,31 @@ class TestFeasibilityParity:
             f"stdout (last 500):\n{result.stdout[-500:]}\n"
             f"stderr (last 300):\n{result.stderr[-300:]}"
         )
+
+
+class TestInventoryNamesMustBeInTheCatalog:
+    """A misspelled piece id cannot be built, but would still enlarge the kit, so
+    every utilization figure for the whole run would be understated."""
+
+    def _with_extra_piece(self, default_config, piece_id, count=20):
+        from src.config import OptimizationConfig
+        inventory = {**default_config.inventory, piece_id: count}
+        config = OptimizationConfig.model_validate(
+            {**default_config.model_dump(exclude={"inventory"}), "inventory": inventory}
+        )
+        config._base_dir = default_config._base_dir
+        return config
+
+    def test_unknown_piece_id_is_rejected(self, catalog, default_config):
+        config = self._with_extra_piece(default_config, "STRAIGHT_25")
+        with pytest.raises(ValueError, match="STRAIGHT_25"):
+            TrackOptimizationProblem(catalog, config)
+
+    def test_message_lists_the_known_pieces(self, catalog, default_config):
+        config = self._with_extra_piece(default_config, "STRAIGHT_25")
+        with pytest.raises(ValueError, match="R40_SWITCH_LEFT"):
+            TrackOptimizationProblem(catalog, config)
+
+    def test_kit_size_counts_only_placeable_pieces(self, catalog, default_config):
+        problem = TrackOptimizationProblem(catalog, default_config)
+        assert problem.total_inventory == sum(problem.inventory_by_index.values())

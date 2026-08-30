@@ -129,6 +129,17 @@ class TrackOptimizationProblem(ElementwiseProblem):
         angle_tolerance: float | None = None,
         **kwargs,
     ):
+        # An inventory name the catalog does not know cannot be placed, yet it still
+        # counts toward total_inventory below — so the kit would look larger than it is
+        # and every utilization figure would be understated for the whole run.
+        unknown = sorted(set(config.inventory) - set(catalog.id_to_index))
+        if unknown:
+            raise ValueError(
+                f"Inventory names not in the catalog: {unknown}. Nothing can be built "
+                f"from them, but they would still inflate the kit size. "
+                f"Known pieces: {sorted(catalog.id_to_index)}."
+            )
+
         self.closure_tolerance = (
             closure_tolerance if closure_tolerance is not None
             else config.closure_tolerance

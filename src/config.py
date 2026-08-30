@@ -7,12 +7,23 @@ from pathlib import Path
 from typing import Dict, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
 from .train import TrainConfig
 
 
-class BoundaryConfig(BaseModel):
+class _StrictModel(BaseModel):
+    """Base for every config model: an unknown key is an error, not a silent drop.
+
+    Pydantic would otherwise discard a misspelled key and leave the field on its
+    default, so the run would not be the one the file describes. Mutability stays:
+    the loader sets _base_dir, and the ablation driver toggles component flags.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BoundaryConfig(_StrictModel):
     """Spatial boundary constraints for the track layout."""
 
     min_x: float = Field(default=-100.0, description="Minimum X coordinate in studs")
@@ -36,7 +47,7 @@ class BoundaryConfig(BaseModel):
         return math.sqrt(self.width**2 + self.height**2)
 
 
-class TerminationConfig(BaseModel):
+class TerminationConfig(_StrictModel):
     """pymoo termination criteria."""
 
     n_max_gen: int = Field(default=1000, ge=1, description="Maximum generations")
@@ -50,7 +61,7 @@ class TerminationConfig(BaseModel):
     )
 
 
-class SearchComponentsConfig(BaseModel):
+class SearchComponentsConfig(_StrictModel):
     """Ablation toggles for the search components added on top of pymoo.
 
     All-on is the production system. All-off is the ablation baseline: the same
@@ -81,7 +92,7 @@ class SearchComponentsConfig(BaseModel):
     )
 
 
-class AlgorithmConfig(BaseModel):
+class AlgorithmConfig(_StrictModel):
     """NSGA-II algorithm parameters."""
 
     name: Literal["NSGA2"] = Field(
@@ -107,7 +118,7 @@ class AlgorithmConfig(BaseModel):
     components: SearchComponentsConfig = Field(default_factory=SearchComponentsConfig)
 
 
-class OptimizationConfig(BaseModel):
+class OptimizationConfig(_StrictModel):
     """Complete optimization configuration."""
 
     inventory: Dict[str, int] = Field(
@@ -130,9 +141,9 @@ class OptimizationConfig(BaseModel):
                     "not strip it as overhead.",
     )
     algorithm: AlgorithmConfig = Field(default_factory=AlgorithmConfig)
-    train_config_path: Optional[str] = Field(
-        default=None,
-        description="Path to TrainConfig YAML, relative to this config file.",
+    train_config_path: str = Field(
+        description="Path to the train physics YAML, relative to this config file. "
+                    "Required: locomotive physics has no code-level fallback.",
     )
     n_workers: int = Field(default=1, ge=1, description="Parallelization workers")
 
@@ -164,8 +175,11 @@ class OptimizationConfig(BaseModel):
         config._base_dir = path.parent
         return config
 
+    @property
+    def train_config_file(self) -> Path:
+        """Resolved path of the train physics YAML, relative to this config's own file."""
+        return self._base_dir / self.train_config_path
+
     def load_train_config(self) -> TrainConfig:
-        """Load the TrainConfig referenced by train_config_path, or defaults."""
-        if self.train_config_path is None:
-            return TrainConfig()
-        return TrainConfig.from_yaml(self._base_dir / self.train_config_path)
+        """Load the train physics YAML named by train_config_path."""
+        return TrainConfig.from_yaml(self.train_config_file)

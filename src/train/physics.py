@@ -1,54 +1,57 @@
-"""Portable LEGO train physics module.
+"""LEGO train physics: derailment speed caps and the friction-circle budget.
 
-Self-contained: imports only stdlib, numpy, yaml. Lift this file into
-another project unchanged. All quantities in SI units (m, m/s, deg).
+A train YAML under ``configs/trains/`` must state what makes one vehicle differ
+from another — motor, masses, coupler geometry. Those fields have no defaults, so
+omitting one is an error rather than a silent substitution. The shared physical
+constants and the friction/geometry assumptions do carry defaults, each tagged
+below; a file may restate them, and ``measured_consist.yaml`` deliberately omits
+the ones nobody measured.
+
+All quantities in SI units (m, m/s, deg).
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, fields
 from pathlib import Path
 
 import numpy as np
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
-@dataclass(frozen=True)
-class TrainConfig:
-    """Immutable lateral-stability physical parameters for a LEGO train.
+class TrainConfigError(ValueError):
+    """Raised when a train YAML is unreadable or fails schema validation."""
+
+
+class TrainConfig(BaseModel):
+    """Immutable physical parameters of one locomotive plus its trailing cars.
 
     The friction coefficient is expressed as a (nominal, design) pair:
     mu_nominal is the central estimate for diagnostics; mu_design is the
     pessimistic value that every speed cap formula actually reads. This
     keeps the friction-uncertainty band explicit in the data model while
     making the optimiser design for the worst plausible friction.
-
-    No default below is a measurement; each is tagged assumed or standard.
-    Real values come from the file a config names in train_config_path, which
-    for every shipped config is configs/trains/measured_consist.yaml.
     """
 
-    # --- Friction (nominal = reference, design = the value used by formulas) ---
-    mu_nominal: float = 0.30         # assumed; central estimate, no formula reads it
-    mu_design: float = 0.25          # assumed; pessimistic value every cap formula reads
-    # --- Environment ---
-    g: float = 9.81                  # standard; gravitational acceleration (m/s^2)
-    # --- Motor ---
-    v_motor_max: float = 1.10        # assumed; drive-train top speed (m/s)
-    # --- Bogie / wheel geometry ---
-    gauge_b: float = 0.0375          # standard; LEGO L-gauge inner rail-to-rail (m)
-    cog_height_h: float = 0.030      # assumed; CoG above rail head (m), tilt test pending
-    flange_angle_deg: float = 50.0   # assumed; effective flange contact angle (deg)
-    # --- Speed-profile dynamics ---
-    max_accel: float = 3.92          # assumed; maximum acceleration (m/s^2)
-    brake_decel: float = 2.45        # assumed; braking deceleration (m/s^2)
-    # --- Rolling resistance ---
-    mu_roll: float = 0.05            # assumed; rolling-friction coefficient (literature)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # --- Consist mass and coupler geometry ---
-    mass_loco: float = 0.370         # assumed; locomotive mass (kg)
-    mass_trailing: float = 0.0       # assumed; trailing vehicle mass (kg), 0.0 = bare loco
-    coupler_offset: float = 0.100    # assumed; vehicle length for coupler angle (m)
+    # --- The vehicle itself: required, no defaults ---
+    v_motor_max: float = Field(gt=0, description="Drive-train top speed (m/s)")
+    max_accel: float = Field(gt=0, description="Maximum acceleration (m/s^2)")
+    mass_loco: float = Field(gt=0, description="Locomotive mass (kg)")
+    mass_trailing: float = Field(ge=0, description="Trailing vehicle mass (kg); 0 = bare loco")
+    coupler_offset: float = Field(gt=0, description="Vehicle length for coupler angle (m)")
+
+    # --- Shared constants and assumptions: defaulted, a file may restate them ---
+    mu_nominal: float = Field(default=0.30, gt=0, description="assumed; no formula reads it")
+    mu_design: float = Field(default=0.25, gt=0, description="assumed; every cap formula reads it")
+    g: float = Field(default=9.81, gt=0, description="standard; gravity (m/s^2)")
+    gauge_b: float = Field(default=0.0375, gt=0, description="standard; L-gauge spacing (m)")
+    cog_height_h: float = Field(default=0.030, gt=0, description="assumed; CoG above rail (m)")
+    flange_angle_deg: float = Field(default=50.0, gt=0, lt=90,
+                                    description="assumed; flange contact angle (deg)")
+    brake_decel: float = Field(default=2.45, gt=0, description="assumed; braking (m/s^2)")
+    mu_roll: float = Field(default=0.05, ge=0, description="assumed; rolling friction")
 
     @property
     def mass_total(self) -> float:
@@ -87,10 +90,40 @@ class TrainConfig:
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "TrainConfig":
-        """Load from YAML; missing fields keep defaults; empty file allowed."""
-        data = yaml.safe_load(Path(path).read_text()) or {}
-        valid = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in valid})
+        """Load a train YAML. Unknown keys, bad values and empty files all raise."""
+        path = Path(path)
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise TrainConfigError(f"{path}: cannot read train config — {exc}") from exc
+        if not isinstance(data, dict):
+            raise TrainConfigError(
+                f"{path}: train config must be a mapping of field -> value, "
+                f"got {type(data).__name__}"
+            )
+        try:
+            return cls.model_validate(data)
+        except ValidationError as exc:
+            raise TrainConfigError(f"{path}:\n{_format_errors(exc)}") from exc
+
+    def derive(self, **overrides: float) -> "TrainConfig":
+        """Revalidated copy with fields replaced.
+
+        Pydantic's own ``model_copy(update=...)`` skips validation and would accept
+        an undeclared field, so this round-trips through the schema instead.
+        """
+        try:
+            return type(self).model_validate({**self.model_dump(), **overrides})
+        except ValidationError as exc:
+            raise TrainConfigError(f"invalid override:\n{_format_errors(exc)}") from exc
+
+
+def _format_errors(exc: ValidationError) -> str:
+    """One indented ``field: message`` line per validation error."""
+    return "\n".join(
+        f"  {'.'.join(str(part) for part in err['loc']) or '<root>'}: {err['msg']}"
+        for err in exc.errors()
+    )
 
 
 def derailment_caps(
@@ -193,6 +226,3 @@ def available_accel(
         a_long = min(cap, math.sqrt(a_lat_max * a_lat_max - a_lat_total * a_lat_total))
 
     return a_long
-
-
-DEFAULT_TRAIN_CONFIG = TrainConfig()
