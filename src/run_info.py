@@ -159,11 +159,18 @@ def _train_section(config: OptimizationConfig) -> str:
     except OSError as exc:
         raw_yaml = f"# Could not read {path}: {exc}"
 
+    f1_model = (
+        f"constant {config.f1_constant_speed} m/s — this physics is loaded for "
+        "provenance but does not enter F[1]"
+        if config.f1_speed_model == "constant"
+        else "train physics (3-pass profiler)"
+    )
     lines = [
         "## Train Physics",
         "",
         f"- **Train config file**: `{path}`",
         f"- **Named by the config as**: `{config.train_config_path}`",
+        f"- **F[1] speed model**: {f1_model}",
         "",
         f"**Verbatim contents of `{path}` at run time:**",
         "",

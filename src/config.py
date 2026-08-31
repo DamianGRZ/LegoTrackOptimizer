@@ -146,6 +146,17 @@ class OptimizationConfig(_StrictModel):
                     "'route_length' maximizes the summed length in studs of every "
                     "unique circuit, so special pieces earn the routes they open.",
     )
+    f1_speed_model: Literal["physics", "constant"] = Field(
+        default="physics",
+        description="F[1] speed model: 'physics' profiles the train over every circuit "
+                    "(3-pass profiler); 'constant' charges every segment at "
+                    "f1_constant_speed instead.",
+    )
+    f1_constant_speed: float = Field(
+        default=0.8, gt=0.0,
+        description="Speed in m/s charged to every segment when "
+                    "f1_speed_model='constant'. Unused under 'physics'.",
+    )
     algorithm: AlgorithmConfig = Field(default_factory=AlgorithmConfig)
     train_config_path: str = Field(
         description="Path to the train physics YAML, relative to this config file. "

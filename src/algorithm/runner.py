@@ -899,7 +899,7 @@ def run_optimization(
                 f"callbacks=[{', '.join(type(cb).__name__ for cb in chain)}]")
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info(f"Objectives: {problem.f0_label} + traversal time (bi-objective)")
+    logger.info(f"Objectives: {problem.f0_label} + {problem.f1_label} (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(

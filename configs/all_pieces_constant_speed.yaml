@@ -1,0 +1,43 @@
+# all_pieces with the constant-speed F[1]: every segment charged at a flat
+# 0.8 m/s instead of the 3-pass train-physics profiler.
+
+train_config_path: trains/measured_consist.yaml
+
+f1_speed_model: constant
+f1_constant_speed: 0.8
+
+inventory:
+  # Straights
+  STRAIGHT_24: 8
+  STRAIGHT_16: 120
+  # R40 curves
+  R40_CURVE: 80
+  # R40 Switches: each passing siding consumes 1 LEFT + 1 RIGHT (opposite-handed pair).
+  R40_SWITCH_LEFT: 3
+  R40_SWITCH_RIGHT: 3
+  # 90-degree crossing (allows track to cross itself)
+  CROSS_90: 2
+  DOUBLE_CROSSOVER: 2
+boundary:
+  min_x: -250.0
+  max_x: 250.0
+  min_y: -250.0
+  max_y: 250.0
+
+algorithm:
+  name: NSGA2
+  pop_size: 2000
+  n_gen: 200
+  heuristic_ratio: 0.2
+  crossover_prob: 0.8
+  mutation_prob: 0.3
+  eliminate_duplicates: true
+  seed: null
+  termination:
+    n_max_gen: 1000
+    period: 0  # 0 = no improvement-based early stop; run the full generation budget
+
+closure_tolerance: 4.0
+angle_tolerance: 5.0
+boundary_tolerance: 2.0
+n_workers: 16  # Enable parallel evaluation
