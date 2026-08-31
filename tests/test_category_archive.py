@@ -187,7 +187,7 @@ class TestCategoryReport:
         # quantities; each gets its own name so no percent is ambiguous.
         assert "- pieces:" in report
         assert "- utilization:" in report
-        assert "F[0] weighted score:" in report
+        assert "F[0] weighted piece score:" in report
 
 
 class TestDecoderDropLog:

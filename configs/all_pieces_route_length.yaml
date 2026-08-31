@@ -1,7 +1,9 @@
-# LEGO Track Optimizer - Configuration with Switches
-# Includes R40 switch tracks for layouts with turnout points
+# all_pieces with the route_length F[0]: maximize the summed length in studs
+# of every unique circuit, so special pieces earn the routes they open.
 
 train_config_path: trains/measured_consist.yaml
+
+f0_objective: route_length
 
 inventory:
   # Straights
@@ -20,12 +22,6 @@ boundary:
   max_x: 250.0
   min_y: -250.0
   max_y: 250.0
-
-#boundary:
-#  min_x: -100.0
-#  max_x: 100.0
-#  min_y: -100.0
-#  max_y: 100.0
 
 algorithm:
   name: NSGA2

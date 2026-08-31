@@ -12,7 +12,7 @@ Pipeline:
 """
 
 from itertools import product
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -52,7 +52,14 @@ from src.templates import (
     is_valid_siding,
     switch_indices_for,
 )
-from src.types import CrossJunction, DblCrossover, MultiPathLayout, SwitchPair, TraversalPath
+from src.types import (
+    CrossJunction,
+    DblCrossover,
+    MultiPathLayout,
+    PieceTopology,
+    SwitchPair,
+    TraversalPath,
+)
 
 
 # =============================================================================
@@ -144,13 +151,13 @@ def decode_chromosome(
         augmented_pieces, tracker, catalog, flips=augmented_flips,
     )
 
-    # Build multi-path layout with FK and 2^J paths
+    # Build multi-path layout: 2^J switch-choice paths + port-graph extras
     multi_path = _build_multi_path_layout(
-        augmented_pieces, augmented_flips, switch_pairs, catalog, dbl_route_map,
+        augmented_pieces, augmented_flips, switch_pairs, catalog,
+        main_loop_routes=dbl_route_map,
+        cross_junctions=cross_junctions + emergent_crossings,
+        dbl_crossovers=dbl_crossovers,
     )
-    multi_path.cross_junctions = cross_junctions + emergent_crossings
-    multi_path.dbl_crossovers = dbl_crossovers
-    multi_path.main_loop_routes = dbl_route_map
     multi_path.drop_log = drop_log
 
     start_x, start_y = get_start_position(x, dims)
@@ -740,33 +747,40 @@ def _build_multi_path_layout(
     switch_pairs: List[SwitchPair],
     catalog: TrackCatalog,
     main_loop_routes: Optional[Dict[int, int]] = None,
+    cross_junctions: Optional[List[CrossJunction]] = None,
+    dbl_crossovers: Optional[List[DblCrossover]] = None,
 ) -> MultiPathLayout:
-    """Build MultiPathLayout with all 2^J traversal paths."""
-    n_pairs = len(switch_pairs)
+    """Build every drivable traversal path: the 2^J switch choices first
+    (main path at id 0), then the extra circuits a DOUBLE_CROSSOVER's spare
+    routes close, found on the port graph."""
     routes = main_loop_routes or {}
-
-    if n_pairs == 0:
-        main_path = _compute_single_path(main_pieces, main_flips, [], tuple(), catalog, routes)
-        return MultiPathLayout(
-            main_loop_pieces=main_pieces,
-            switch_pairs=[],
-            paths=[main_path],
-            loose_port_count=0,
-        )
-
-    sorted_pairs = sorted(switch_pairs, key=lambda p: p.in_position)
+    crosses = cross_junctions or []
+    crossovers = dbl_crossovers or []
+    sorted_pairs = sorted(switch_pairs, key=lambda pair: pair.in_position)
 
     paths: List[TraversalPath] = []
-    for path_id, choices in enumerate(product([0, 1], repeat=n_pairs)):
+    for path_id, choices in enumerate(product([0, 1], repeat=len(sorted_pairs))):
         path = _compute_single_path(
             main_pieces, main_flips, sorted_pairs, choices, catalog, routes,
         )
         path.path_id = path_id
         paths.append(path)
 
+    if crossovers and main_pieces:
+        extras = _extra_circuits(
+            main_pieces, main_flips, sorted_pairs, crosses, crossovers,
+            catalog, paths[0].states,
+        )
+        for extra in extras:
+            extra.path_id = len(paths)
+            paths.append(extra)
+
     return MultiPathLayout(
         main_loop_pieces=main_pieces,
         switch_pairs=sorted_pairs,
+        cross_junctions=crosses,
+        dbl_crossovers=crossovers,
+        main_loop_routes=routes,
         paths=paths,
         loose_port_count=0,
     )
@@ -951,6 +965,359 @@ def _compute_path_fk(
         deltas[i] = (dx, dy, dtheta)
 
     return compute_fk_chain(deltas)
+
+
+# =============================================================================
+# Port-Graph Circuit Enumeration
+# =============================================================================
+#
+# The 2^J product enumerates switch choices only. A CROSS_90 has a single
+# port configuration and a switch's alternatives are exactly those choices,
+# but a DOUBLE_CROSSOVER's two spare routes close circuits of their own, so
+# DC-bearing layouts get a port-graph pass. Nodes are the special pieces'
+# half-ports; edges are catalog routes inside a piece (both driving
+# directions) and the plain-slot segments between special slots (construction
+# direction). Every simple cycle alternates the two kinds and is a circuit a
+# train can drive.
+
+_IN, _OUT = 0, 1
+
+
+class _SpecialSlot(NamedTuple):
+    """One main-loop slot of a switch / CROSS_90 / DOUBLE_CROSSOVER.
+
+    Both slots of a paired record share ``piece_key`` (one physical piece).
+    ``entry_port``/``exit_port`` are the catalog ports of the traversal the
+    constructed loop makes at this slot; the exit switch of a siding is
+    installed reversed, so its through traversal runs heel to throat.
+    """
+
+    piece_key: Tuple[str, int]
+    slot: int
+    piece: int
+    entry_port: int
+    exit_port: int
+
+
+def _topology_of(catalog: TrackCatalog, piece: int) -> PieceTopology:
+    topology = catalog.get_topology(piece)
+    if topology is None:
+        raise ValueError(f"piece index {piece} has no port topology")
+    return topology
+
+
+def _branch_port(catalog: TrackCatalog, piece: int) -> int:
+    """The switch port its through route leaves unused."""
+    topology = _topology_of(catalog, piece)
+    used = {topology.routes[0].entry_port, topology.routes[0].exit_port}
+    return next(port for port in range(topology.num_ports) if port not in used)
+
+
+def _special_slots(
+    main_pieces: List[int],
+    switch_pairs: List[SwitchPair],
+    cross_junctions: List[CrossJunction],
+    dbl_crossovers: List[DblCrossover],
+    catalog: TrackCatalog,
+) -> List[_SpecialSlot]:
+    """Every special-piece slot with the ports its constructed traversal uses."""
+    slots: List[_SpecialSlot] = []
+
+    def add_paired(kind, records, record_routes):
+        for index, record in enumerate(records):
+            for slot, route_index in zip(record.positions, record_routes(record)):
+                piece = main_pieces[slot]
+                route = _topology_of(catalog, piece).routes[route_index]
+                slots.append(_SpecialSlot(
+                    (kind, index), slot, piece, route.entry_port, route.exit_port,
+                ))
+
+    add_paired("cross", cross_junctions, lambda record: (0, 1))
+    add_paired("dc", dbl_crossovers, lambda record: record.routes)
+
+    for index, pair in enumerate(switch_pairs):
+        entry_piece = main_pieces[pair.in_position]
+        through = _topology_of(catalog, entry_piece).routes[0]
+        slots.append(_SpecialSlot(
+            ("sw_in", index), pair.in_position, entry_piece,
+            through.entry_port, through.exit_port,
+        ))
+        exit_piece = main_pieces[pair.out_position]
+        reversed_through = _topology_of(catalog, exit_piece).routes[0]
+        slots.append(_SpecialSlot(
+            ("sw_out", index), pair.out_position, exit_piece,
+            reversed_through.exit_port, reversed_through.entry_port,
+        ))
+
+    return sorted(slots, key=lambda special: special.slot)
+
+
+def _circuit_graph(
+    main_pieces: List[int],
+    specials: List[_SpecialSlot],
+    switch_pairs: List[SwitchPair],
+    catalog: TrackCatalog,
+) -> Dict[Tuple, List[Tuple[Tuple, Tuple]]]:
+    """Half-port digraph: route edges inside pieces, segment/branch edges
+    between them. Outgoing edges at a node are all of one kind, so every
+    simple cycle alternates the two."""
+    adjacency: Dict[Tuple, List[Tuple[Tuple, Tuple]]] = {}
+
+    def add(tail, head, label):
+        adjacency.setdefault(tail, []).append((head, label))
+        adjacency.setdefault(head, [])
+
+    seen: Set[Tuple[str, int]] = set()
+    for special in specials:
+        if special.piece_key in seen:
+            continue
+        seen.add(special.piece_key)
+        for route in _topology_of(catalog, special.piece).routes:
+            ports = ((route.entry_port, route.exit_port),
+                     (route.exit_port, route.entry_port))
+            for entry, exit_ in ports:
+                add((special.piece_key, entry, _IN),
+                    (special.piece_key, exit_, _OUT),
+                    ("run", special.piece_key, entry, exit_))
+
+    n_slots = len(main_pieces)
+    for index, special in enumerate(specials):
+        following = specials[(index + 1) % len(specials)]
+        if index + 1 < len(specials):
+            segment = tuple(range(special.slot + 1, following.slot))
+        else:
+            segment = (tuple(range(special.slot + 1, n_slots))
+                       + tuple(range(0, following.slot)))
+        add((special.piece_key, special.exit_port, _OUT),
+            (following.piece_key, following.entry_port, _IN),
+            ("seg", segment))
+
+    for index, pair in enumerate(switch_pairs):
+        entry_branch = _branch_port(catalog, main_pieces[pair.in_position])
+        exit_branch = _branch_port(catalog, main_pieces[pair.out_position])
+        add((("sw_in", index), entry_branch, _OUT),
+            (("sw_out", index), exit_branch, _IN),
+            ("branch", index))
+
+    return adjacency
+
+
+def _switch_choice_runs(
+    specials: List[_SpecialSlot],
+    switch_pairs: List[SwitchPair],
+    main_pieces: List[int],
+    catalog: TrackCatalog,
+) -> Set[Tuple]:
+    """Run labels the 2^J enumeration already covers: every constructed slot
+    traversal plus each pair's diverge and reversed merge."""
+    allowed = {
+        ("run", special.piece_key, special.entry_port, special.exit_port)
+        for special in specials
+    }
+    for index, pair in enumerate(switch_pairs):
+        entry_piece = main_pieces[pair.in_position]
+        exit_piece = main_pieces[pair.out_position]
+        throat_in = _topology_of(catalog, entry_piece).routes[0].entry_port
+        throat_out = _topology_of(catalog, exit_piece).routes[0].entry_port
+        allowed.add(
+            ("run", ("sw_in", index), throat_in, _branch_port(catalog, entry_piece)))
+        allowed.add(
+            ("run", ("sw_out", index), _branch_port(catalog, exit_piece), throat_out))
+    return allowed
+
+
+def _simple_cycles(
+    adjacency: Dict[Tuple, List[Tuple[Tuple, Tuple]]],
+) -> Iterator[List[Tuple]]:
+    """Every simple directed cycle's label sequence, found once from its
+    lowest-ranked node. Iterative so long circuits cannot exhaust the
+    recursion limit."""
+    rank = {node: index for index, node in enumerate(sorted(adjacency))}
+    for start in sorted(adjacency):
+        stack = [(start, iter(adjacency[start]), [])]
+        visited = {start}
+        while stack:
+            node, edges, labels = stack[-1]
+            descended = False
+            for following, label in edges:
+                if following == start:
+                    yield labels + [label]
+                elif following not in visited and rank[following] > rank[start]:
+                    visited.add(following)
+                    stack.append(
+                        (following, iter(adjacency[following]), labels + [label]))
+                    descended = True
+                    break
+            if not descended:
+                stack.pop()
+                visited.discard(node)
+
+
+def _run_uid_slot(
+    slots_of_key: List[_SpecialSlot], entry: int, exit_: int,
+) -> _SpecialSlot:
+    """The slot a run is attributed to: entry-port match, then exit, then first."""
+    for special in slots_of_key:
+        if special.entry_port == entry:
+            return special
+    for special in slots_of_key:
+        if special.exit_port == exit_:
+            return special
+    return slots_of_key[0]
+
+
+def _route_for_ports(topology: PieceTopology, entry: int, exit_: int) -> int:
+    """Catalog route joining ``entry`` to ``exit_``. A reversed match covers
+    the reversed-installed exit switch, whose through FK is a symmetric
+    straight."""
+    for index, route in enumerate(topology.routes):
+        if (route.entry_port, route.exit_port) == (entry, exit_):
+            return index
+    for index, route in enumerate(topology.routes):
+        if (route.entry_port, route.exit_port) == (exit_, entry):
+            return index
+    raise ValueError(f"no catalog route joins port {entry} to port {exit_}")
+
+
+def _anchor_states(
+    states: NDArray[np.float64], anchor: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Rigid-transform origin-based FK states onto the anchor world pose."""
+    theta = np.radians(anchor[2])
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    out = np.empty_like(states)
+    out[:, 0] = anchor[0] + states[:, 0] * cos_t - states[:, 1] * sin_t
+    out[:, 1] = anchor[1] + states[:, 0] * sin_t + states[:, 1] * cos_t
+    out[:, 2] = anchor[2] + states[:, 2]
+    return out
+
+
+def _expand_circuit(
+    labels: List[Tuple],
+    main_pieces: List[int],
+    main_flips: List[int],
+    switch_pairs: List[SwitchPair],
+    by_key: Dict[Tuple[str, int], List[_SpecialSlot]],
+    catalog: TrackCatalog,
+    main_states: NDArray[np.float64],
+) -> TraversalPath:
+    """Materialize one extra circuit as a TraversalPath with real FK states.
+
+    Deltas mirror _compute_path_fk: R40 flips from the flip array, the
+    reversed exit switch's branch merge from the pair's merge_fk, every other
+    route from flip-independent catalog FK. States are anchored at the main
+    path's pose of the first slot the circuit enters the way the main path
+    does, so the circuit overlays the constructed loop.
+    """
+    pieces: List[int] = []
+    route_indices: List[int] = []
+    uids: List[Tuple[str, int, int]] = []
+    deltas: List[Tuple[float, float, float]] = []
+    anchors: List[Optional[int]] = []
+
+    def add(piece, route_index, uid, delta, anchor=None):
+        pieces.append(piece)
+        route_indices.append(route_index)
+        uids.append(uid)
+        deltas.append(delta)
+        anchors.append(anchor)
+
+    for label in labels:
+        if label[0] == "seg":
+            _, segment = label
+            for slot in segment:
+                piece = main_pieces[slot]
+                flip = main_flips[slot] if slot < len(main_flips) else 0
+                fk = get_fk_with_flip(catalog, piece, flip)
+                add(piece, 0, ("main", slot, 0),
+                    (float(fk[0]), float(fk[1]), float(fk[2])), anchor=slot)
+        elif label[0] == "branch":
+            _, pair_index = label
+            pair = switch_pairs[pair_index]
+            flips = list(pair.branch_flips) + [0] * len(pair.branch_pieces)
+            for offset, piece in enumerate(pair.branch_pieces):
+                fk = get_fk_with_flip(catalog, piece, flips[offset])
+                add(piece, 0, ("branch", pair_index, offset),
+                    (float(fk[0]), float(fk[1]), float(fk[2])))
+        else:
+            _, piece_key, entry, exit_ = label
+            special = _run_uid_slot(by_key[piece_key], entry, exit_)
+            is_merge = (piece_key[0] == "sw_out"
+                        and entry == _branch_port(catalog, special.piece))
+            if is_merge:
+                pair = switch_pairs[piece_key[1]]
+                add(special.piece, 1, ("main", special.slot, 0), pair.merge_fk)
+                continue
+            route_index = _route_for_ports(
+                _topology_of(catalog, special.piece), entry, exit_)
+            fk = catalog.get_fk_route(special.piece, route_index)
+            add(special.piece, route_index, ("main", special.slot, 0),
+                (float(fk[0]), float(fk[1]), float(fk[2])),
+                anchor=special.slot if special.entry_port == entry else None)
+
+    start = next(
+        (index for index, anchor in enumerate(anchors) if anchor is not None), 0)
+    order = list(range(start, len(pieces))) + list(range(start))
+    states = compute_fk_chain(
+        np.array([deltas[index] for index in order], dtype=np.float64))
+    if anchors[start] is not None:
+        states = _anchor_states(states, main_states[anchors[start]])
+    closure_error, angle_error = compute_closure_metrics(states)
+
+    return TraversalPath(
+        path_id=0,
+        route_choices=tuple(),
+        piece_sequence=[pieces[index] for index in order],
+        states=states,
+        closure_error=closure_error,
+        angle_error=angle_error,
+        route_indices=[route_indices[index] for index in order],
+        piece_uids=[uids[index] for index in order],
+    )
+
+
+def _extra_circuits(
+    main_pieces: List[int],
+    main_flips: List[int],
+    switch_pairs: List[SwitchPair],
+    cross_junctions: List[CrossJunction],
+    dbl_crossovers: List[DblCrossover],
+    catalog: TrackCatalog,
+    main_states: NDArray[np.float64],
+) -> List[TraversalPath]:
+    """Drivable circuits beyond the 2^J switch choices (the DC sub-loops)."""
+    specials = _special_slots(
+        main_pieces, switch_pairs, cross_junctions, dbl_crossovers, catalog)
+    if not specials:
+        return []
+
+    adjacency = _circuit_graph(main_pieces, specials, switch_pairs, catalog)
+    allowed = _switch_choice_runs(specials, switch_pairs, main_pieces, catalog)
+    all_keys = {special.piece_key for special in specials}
+    by_key: Dict[Tuple[str, int], List[_SpecialSlot]] = {}
+    for special in specials:
+        by_key.setdefault(special.piece_key, []).append(special)
+
+    extras: List[TraversalPath] = []
+    seen: Set[Tuple] = set()
+    for labels in _simple_cycles(adjacency):
+        runs = [label for label in labels if label[0] == "run"]
+        if not runs:
+            continue
+        covers_all = {label[1] for label in runs} == all_keys
+        if covers_all and all(label in allowed for label in runs):
+            continue  # a switch-choice combination the 2^J product already built
+        key = min(tuple(labels[i:] + labels[:i]) for i in range(len(labels)))
+        if key in seen:
+            continue
+        seen.add(key)
+        extras.append(_expand_circuit(
+            labels, main_pieces, main_flips, switch_pairs, by_key, catalog,
+            main_states,
+        ))
+
+    extras.sort(key=lambda path: (-len(path.piece_sequence), repr(path.piece_uids)))
+    return extras
 
 
 # =============================================================================

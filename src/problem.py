@@ -1,10 +1,13 @@
 """pymoo optimization problem for multi-objective track layout optimization.
 
 Bi-objective NSGA-II with Deb's constraint handling:
-- F[0] = -weighted piece score (maximize piece usage; special pieces carry a
-         premium so topology is not stripped as overhead). This is a search
-         score, NOT utilization — the honest count rides on the ``n_pieces``
-         out-key.
+- F[0], per config.f0_objective:
+  - piece_score (default): -weighted piece score (maximize piece usage;
+    special pieces carry a premium so topology is not stripped as overhead)
+  - route_length: -summed length in studs of every unique circuit, so
+    special pieces earn the routes they open
+  Both are search scores, NOT utilization — the honest count rides on the
+  ``n_pieces`` out-key.
 - F[1] = expected time to cover every physical piece once, averaged over the
          2^J traversal routes at safety_margin=0.95 (minimize; see
          _expected_traversal_time)
@@ -105,9 +108,13 @@ class TrackOptimizationProblem(ElementwiseProblem):
     """Bi-objective track layout optimization with NSGA-II.
 
     Objectives (both minimized for pymoo):
-        F[0] = -weighted_piece_score   (maximize piece usage, with a premium
-                                        per special piece; not a utilization
-                                        ratio — report ``n_pieces`` instead)
+        F[0] = -weighted_piece_score   (default; maximize piece usage, with a
+                                        premium per special piece; not a
+                                        utilization ratio — report
+                                        ``n_pieces`` instead)
+             = -route_length_studs     (f0_objective=route_length; maximize
+                                        the summed length of every unique
+                                        circuit in studs)
         F[1] = expected_traversal_time (minimize the expected time to cover
                                         every physical piece once at
                                         safety_margin=0.95)
@@ -175,6 +182,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self._train_config = config.load_train_config()
         self.total_inventory = sum(config.inventory.values())
         self.special_piece_weight = config.special_piece_weight
+        self.f0_objective = config.f0_objective
         self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
         self.decoder_config = DecoderConfig.from_optimization_config(config)
@@ -199,10 +207,13 @@ class TrackOptimizationProblem(ElementwiseProblem):
             out["n_dc_comm"] = 0
             return
 
-        # F[0]: -weighted piece score (special pieces carry a premium so
-        # topology is not stripped as overhead). Deliberately not a ratio of
-        # inventory — `n_pieces` below is what reporting must call utilization.
-        piece_score = self._weighted_piece_score(layout)
+        # F[0], per the configured variant: the weighted piece score, or the
+        # summed studs of every unique circuit ('route_length' premiums
+        # special pieces by the routes they open). Maximized via negation.
+        if self.f0_objective == "route_length":
+            f0_value = self._route_length_studs(layout)
+        else:
+            f0_value = self._weighted_piece_score(layout)
 
         # F[1] = expected whole-network traversal time at SPEED_SAFETY_MARGIN:
         # every physical piece charged the mean of its traversal times across
@@ -214,7 +225,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
             closure_angle_tol=self.angle_tolerance,
         )
 
-        out["F"] = [-piece_score, traversal_time]
+        out["F"] = [-f0_value, traversal_time]
 
         # Committed-element census as custom out-keys: the Evaluator copies
         # them onto the Population, so the category-elite archive reads them
@@ -305,6 +316,20 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
+    @property
+    def f0_label(self) -> str:
+        """Human label of the configured F[0] variant, for reports and plots."""
+        if self.f0_objective == "route_length":
+            return "route length (studs)"
+        return "weighted piece score"
+
+    @property
+    def f0_csv_name(self) -> str:
+        """fitness.csv column name of the configured F[0] variant (negated)."""
+        if self.f0_objective == "route_length":
+            return "neg_route_length_studs"
+        return "neg_weighted_piece_score"
+
     def max_weighted_piece_score(self) -> float:
         """Ceiling on the F[0] score for this inventory, ignoring all geometry.
 
@@ -338,6 +363,25 @@ class TrackOptimizationProblem(ElementwiseProblem):
         )
         effective = layout.n_physical_pieces + (self.special_piece_weight - 1.0) * n_special
         return effective / self.total_inventory
+
+    def _route_length_studs(self, layout) -> float:
+        """Summed driven length in studs of every unique circuit.
+
+        Each circuit's length honors the route taken at each piece (diverging
+        and diagonal arcs, not their through lengths). A piece shared by
+        several circuits contributes to each of them, so special pieces earn
+        exactly the routes they open.
+        """
+        total = 0.0
+        for path in layout.paths:
+            if not path.piece_sequence:
+                continue
+            lengths = self.catalog.get_route_arc_lengths(
+                np.asarray(path.piece_sequence, dtype=np.int32),
+                np.asarray(path.route_indices, dtype=np.int32),
+            )
+            total += float(lengths.sum())
+        return total
 
     def _compute_per_type_inventory_violation(self, layout) -> np.ndarray:
         """Per-catalog-index inventory excess, normalized by max_occ[t].

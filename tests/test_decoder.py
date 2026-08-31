@@ -209,3 +209,93 @@ class TestSidingRotationInvariance:
         assert not dropped, (
             f"the same siding must commit at every rotation; dropped at {dropped}"
         )
+
+
+class TestPortGraphCircuits:
+    """Circuits beyond the 2^J switch choices: a DOUBLE_CROSSOVER's spare
+    routes close sub-loops the choice enumeration cannot express."""
+
+    def test_dc_figure_eight_has_full_loop_plus_both_lobes(self, catalog):
+        import numpy as np
+
+        from src.config import OptimizationConfig
+        from src.sampling import _gen_figure_eight_dbl_crossover
+        from src.templates import DC_R_CROSS_1_TO_2, DC_R_TRACK1_THROUGH
+
+        config = OptimizationConfig.load("configs/all_pieces.yaml")
+        dims = compute_dimensions(config, catalog)
+        inv = catalog.inventory_by_index(config.inventory)
+        patterns = _gen_figure_eight_dbl_crossover(inv, dims)
+        assert patterns, "seeder produced no DC figure-8 pattern"
+        pieces, flips, _junctions, _cross, dcs = patterns[0]
+        x = create_chromosome_from_pieces(
+            dims, pieces, main_loop_flips=flips, double_crossovers=dcs,
+        )
+        layout = decode_chromosome(
+            x, catalog, config.inventory, dims=dims,
+            config=DecoderConfig.from_optimization_config(config),
+        )
+        assert layout.n_dbl_crossovers == 1
+        assert layout.n_paths == 3
+
+        main, lobe_a, lobe_b = layout.paths
+        assert main.path_id == 0 and layout.get_main_path() is main
+
+        crossover = int(PieceIndex.DOUBLE_CROSSOVER)
+        assert main.piece_sequence.count(crossover) == 2
+        for lobe in (lobe_a, lobe_b):
+            assert lobe.is_closed
+            assert lobe.piece_sequence.count(crossover) == 1
+        assert lobe_a.n_pieces + lobe_b.n_pieces == main.n_pieces
+
+        def length(path):
+            return float(catalog.get_route_arc_lengths(
+                np.asarray(path.piece_sequence, dtype=np.int32),
+                np.asarray(path.route_indices, dtype=np.int32),
+            ).sum())
+
+        through = catalog.get_arc_length_route(crossover, DC_R_TRACK1_THROUGH)
+        diagonal = catalog.get_arc_length_route(crossover, DC_R_CROSS_1_TO_2)
+        expected = length(lobe_a) + length(lobe_b) - 2 * through + 2 * diagonal
+        assert length(main) == pytest.approx(expected)
+
+    def test_dc_with_sidings_counts_sum_over_circuits(self, catalog):
+        """1 DC + siding on one lobe -> 5 paths; a siding on each lobe -> 8.
+
+        The count is a sum over circuits of 2^(sidings on that circuit), not
+        a global 2^J product. Geometry is irrelevant to the count, so the
+        layout is assembled record-by-record at the builder seam -- the
+        genotype cannot express a siding on a DC figure-8 yet.
+        """
+        from src.decoder.construction import _build_multi_path_layout
+        from src.templates import DC_R_CROSS_1_TO_2, DC_R_CROSS_2_TO_1
+        from src.types import DblCrossover, SwitchPair
+
+        straight = int(PieceIndex.STRAIGHT_16)
+        sw_left = int(PieceIndex.R40_SWITCH_LEFT)
+        sw_right = int(PieceIndex.R40_SWITCH_RIGHT)
+        crossover = int(PieceIndex.DOUBLE_CROSSOVER)
+
+        def build(pairs):
+            pieces = [crossover] + [straight] * 5 + [crossover] + [straight] * 5
+            for pair in pairs:
+                pieces[pair.in_position] = sw_left
+                pieces[pair.out_position] = sw_right
+            record = DblCrossover(
+                slot=0, positions=(0, 6),
+                routes=(DC_R_CROSS_1_TO_2, DC_R_CROSS_2_TO_1),
+                origin=(0.0, 0.0, 0.0),
+            )
+            return _build_multi_path_layout(
+                pieces, [0] * len(pieces), pairs, catalog,
+                main_loop_routes={0: DC_R_CROSS_1_TO_2, 6: DC_R_CROSS_2_TO_1},
+                dbl_crossovers=[record],
+            )
+
+        siding_1 = SwitchPair(pair_id=0, in_position=2, out_position=4,
+                              branch_pieces=[straight], branch_flips=[0])
+        siding_2 = SwitchPair(pair_id=1, in_position=8, out_position=10,
+                              branch_pieces=[straight], branch_flips=[0])
+
+        assert build([siding_1]).n_paths == 5
+        assert build([siding_1, siding_2]).n_paths == 8

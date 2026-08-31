@@ -256,7 +256,8 @@ def _format_individual(label: str, layout, score: float, time_s: float,
                        cv: float | None, total_inventory: int) -> list[str]:
     """Summary line for one individual: PHYSICAL pieces (matching ``count_pieces``
     and the category report rather than traversal slots), that count as a share of
-    the kit, and the weighted F[0] search score — three separate quantities."""
+    the kit, and the F[0] search score (weighted piece score, or route length
+    under f0_objective=route_length) — three separate quantities."""
     used = layout.n_physical_pieces
     line = (f"- **{label}**: pieces={used}/{total_inventory}, "
             f"utilization={used / max(1, total_inventory):.1%}, score={score:.3f}, "

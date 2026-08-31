@@ -623,7 +623,8 @@ def _draw_track_view(ax, layout: MultiPathLayout, main_path: TraversalPath, boun
 
 def _panel_metrics_lines(layout: MultiPathLayout, inventory: Optional[dict[str, int]],
                          objectives: Optional[Sequence[float]], cv: Optional[float],
-                         closure_tolerance: float, angle_tolerance: float) -> list[str]:
+                         closure_tolerance: float, angle_tolerance: float,
+                         f0_label: str = "weighted piece score") -> list[str]:
     """Metric rows for the info panel. F rows require objectives, the constraint
     row requires cv; errors are shown against their tolerances."""
     used = layout.n_physical_pieces
@@ -632,10 +633,9 @@ def _panel_metrics_lines(layout: MultiPathLayout, inventory: Optional[dict[str, 
     if total is not None:
         lines.append(f"Utilization: {used / total:.1%}")
     if objectives is not None:
-        # F[0] weights special pieces several times over, so it is a search
-        # score and not a share of the kit — shown as a bare number so it never
-        # reads as a rival utilization percentage.
-        lines.append(f"F[0] weighted score: {-float(objectives[0]):.3f}")
+        # F[0] is a search score, not a share of the kit — shown as a bare
+        # number so it never reads as a rival utilization percentage.
+        lines.append(f"F[0] {f0_label}: {-float(objectives[0]):.3f}")
         lines.append(f"F[1] time: {float(objectives[1]):.2f} s")
     lines.append(f"Number of unique Paths: {layout.n_paths}")
     lines.append(f"Closure error: {layout.max_closure_error:.2f} / "
@@ -721,6 +721,7 @@ def plot_layout(
     inventory: Optional[dict[str, int]] = None,
     objectives: Optional[Sequence[float]] = None,
     cv: Optional[float] = None,
+    f0_label: str = "weighted piece score",
 ) -> Figure:
     """Render one full-size track view with a metrics + legend panel beside it.
 
@@ -738,7 +739,8 @@ def plot_layout(
         closure_tolerance: Position closure tolerance in studs, from config.
         angle_tolerance: Angle closure tolerance in degrees, from config.
         inventory: Optional {piece_id: count} capacities for panel and legend.
-        objectives: Optional raw pymoo F row (neg weighted piece score, time).
+        objectives: Optional raw pymoo F row (negated F[0] — weighted piece
+            score or route length in studs — and time).
         cv: Optional constraint violation of the rendered individual.
 
     Returns:
@@ -765,7 +767,8 @@ def plot_layout(
         ax.set_title(title, fontsize=TITLE_FONTSIZE)
 
         metrics = _panel_metrics_lines(layout, inventory, objectives, cv,
-                                       closure_tolerance, angle_tolerance)
+                                       closure_tolerance, angle_tolerance,
+                                       f0_label=f0_label)
         handles = _legend_handles(layout, catalog, inventory, has_branch=has_branch,
                                   has_drift=has_drift, has_boundary=boundary is not None)
         fig.tight_layout()

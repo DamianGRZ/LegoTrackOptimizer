@@ -140,6 +140,12 @@ class OptimizationConfig(_StrictModel):
                     "double-crossover). >1 rewards multi-path topology so the GA does "
                     "not strip it as overhead.",
     )
+    f0_objective: Literal["piece_score", "route_length"] = Field(
+        default="piece_score",
+        description="F[0] variant: 'piece_score' maximizes the weighted piece score; "
+                    "'route_length' maximizes the summed length in studs of every "
+                    "unique circuit, so special pieces earn the routes they open.",
+    )
     algorithm: AlgorithmConfig = Field(default_factory=AlgorithmConfig)
     train_config_path: str = Field(
         description="Path to the train physics YAML, relative to this config file. "

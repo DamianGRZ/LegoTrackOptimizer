@@ -134,3 +134,71 @@ class TestEmergentDescriptorParity:
         assert out_emergent["F"][1] == pytest.approx(out_descriptor["F"][1]), (
             "emergent crossing must be charged once in F[1], like the descriptor"
         )
+
+
+class TestF0Variant:
+    """f0_objective selects what F[0] measures; the default stays piece_score."""
+
+    def test_config_defaults(self) -> None:
+        assert OptimizationConfig.load("configs/all_pieces.yaml").f0_objective == "piece_score"
+        cfg = OptimizationConfig.load("configs/all_pieces_route_length.yaml")
+        assert cfg.f0_objective == "route_length"
+
+    def test_configured_variant_is_in_use(self, cat) -> None:
+        """Same DC figure-8 genome, both variants: F[0] differs, F[1] does not,
+        and the route_length value equals an independent sum over circuits."""
+        from src.sampling import _gen_figure_eight_dbl_crossover
+
+        by_variant = {}
+        for path in ("configs/all_pieces.yaml", "configs/all_pieces_route_length.yaml"):
+            cfg = OptimizationConfig.load(path)
+            problem = TrackOptimizationProblem(catalog=cat, config=cfg)
+            inv = cat.inventory_by_index(cfg.inventory)
+            pieces, flips, _j, _c, dcs = _gen_figure_eight_dbl_crossover(inv, problem.dims)[0]
+            x = create_chromosome_from_pieces(
+                problem.dims, pieces, main_loop_flips=flips, double_crossovers=dcs,
+            )
+            out = {}
+            problem._evaluate(x, out)
+            by_variant[cfg.f0_objective] = (problem, x, out)
+
+        _, _, out_score = by_variant["piece_score"]
+        problem_len, x_len, out_len = by_variant["route_length"]
+        assert out_len["F"][0] != pytest.approx(out_score["F"][0])
+        assert out_len["F"][1] == pytest.approx(out_score["F"][1])
+        assert problem_len.f0_csv_name == "neg_route_length_studs"
+
+        layout = decode_chromosome(
+            x_len, cat, problem_len.config.inventory,
+            dims=problem_len.dims, config=problem_len.decoder_config,
+        )
+        assert layout.n_paths == 3
+        expected = sum(
+            float(cat.get_route_arc_lengths(
+                np.asarray(p.piece_sequence, dtype=np.int32),
+                np.asarray(p.route_indices, dtype=np.int32),
+            ).sum())
+            for p in layout.paths
+        )
+        assert -out_len["F"][0] == pytest.approx(expected)
+
+    def test_route_length_premiums_the_crossover(self, cat) -> None:
+        """A DC figure-8's summed circuits reach nearly twice its full lap."""
+        from src.sampling import _gen_figure_eight_dbl_crossover
+
+        cfg = OptimizationConfig.load("configs/all_pieces_route_length.yaml")
+        problem = TrackOptimizationProblem(catalog=cat, config=cfg)
+        inv = cat.inventory_by_index(cfg.inventory)
+        pieces, flips, _j, _c, dcs = _gen_figure_eight_dbl_crossover(inv, problem.dims)[0]
+        x = create_chromosome_from_pieces(
+            problem.dims, pieces, main_loop_flips=flips, double_crossovers=dcs,
+        )
+        layout = decode_chromosome(
+            x, cat, cfg.inventory, dims=problem.dims, config=problem.decoder_config,
+        )
+        full = layout.get_main_path()
+        full_length = float(cat.get_route_arc_lengths(
+            np.asarray(full.piece_sequence, dtype=np.int32),
+            np.asarray(full.route_indices, dtype=np.int32),
+        ).sum())
+        assert problem._route_length_studs(layout) > 1.9 * full_length
