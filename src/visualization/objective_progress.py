@@ -1,4 +1,5 @@
-"""F[0] weighted-piece-score trajectory over generations.
+"""F[0] trajectory over generations — weighted piece score, or route length
+in studs under f0_objective=route_length.
 
 Not a convergence plot: convergence in multi-objective search means approaching
 the true Pareto front and is measured by HV/IGD. This is the value of one
@@ -34,7 +35,7 @@ AXIS_RULE = "#c3c2b7"
 
 
 def load_score_progress(csv_path: Path) -> tuple[NDArray, NDArray]:
-    """(generations, weighted score) from a run's ``convergence.csv``.
+    """(generations, F[0] score) from a run's ``convergence.csv``.
 
     The monitor stores ``best_f0``, the minimum F[0] over feasible individuals,
     so the score is its negation. Generations with no feasible individual carry
@@ -52,16 +53,20 @@ def plot_score_progress(
     scores: Sequence[float],
     max_score: float | None = None,
     save_path: Path | None = None,
-    title: str = "F[0] weighted piece score by generation",
+    title: str | None = None,
     n_gen_planned: int | None = None,
+    f0_label: str = "weighted piece score",
 ) -> Figure:
-    """Best feasible weighted score against generation, rising toward its ceiling.
+    """Best feasible F[0] against generation, labelled for the configured variant.
 
     ``max_score`` draws the inventory ceiling as a dashed reference line — the
-    score with the whole kit placed and no terrain limits. ``n_gen_planned``
-    extends the x-axis to the full budget, so a chart drawn mid-run shows how
-    much of the run is still ahead.
+    score with the whole kit placed and no terrain limits; pass None when the
+    variant has no computable ceiling (route_length) to plot the bare curve.
+    ``n_gen_planned`` extends the x-axis to the full budget, so a chart drawn
+    mid-run shows how much of the run is still ahead.
     """
+    if title is None:
+        title = f"F[0] {f0_label} by generation"
     generations = np.asarray(generations, dtype=float)
     scores = np.asarray(scores, dtype=float)
 
@@ -87,7 +92,7 @@ def plot_score_progress(
     _set_y_range(ax, scores, max_score)
 
     ax.set_xlabel("Generation", color=INK_SECONDARY, fontsize=11)
-    ax.set_ylabel("Weighted piece score (higher is better)",
+    ax.set_ylabel(f"{f0_label[:1].upper()}{f0_label[1:]} (higher is better)",
                   color=INK_SECONDARY, fontsize=11)
     _strip_chrome(ax)
     return _finish(fig, save_path)

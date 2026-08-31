@@ -53,6 +53,7 @@ def plot_pareto_front(
     title: str = "Pareto Front",
     save_path: Optional[Union[str, Path]] = None,
     archive_F: Optional[NDArray[np.float64]] = None,
+    f0_label: str = "weighted piece score",
 ) -> Figure:
     """Objective-space scatter built on pymoo's ``Scatter`` (maximized view).
 
@@ -88,7 +89,7 @@ def plot_pareto_front(
 
     plot = Scatter(
         title=title, legend=True, figsize=(10, 8), tight_layout=True,
-        labels=["Weighted piece score (normalized, 1 = best)",
+        labels=[f"{f0_label[:1].upper()}{f0_label[1:]} (normalized, 1 = best)",
                 "Traversal time (normalized, 1 = best)"],
     )
     annotations: list = []

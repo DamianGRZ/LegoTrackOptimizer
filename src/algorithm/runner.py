@@ -171,7 +171,8 @@ class FeasibleEliteCallback(Callback):
     Once the adaptive-epsilon schedule fully engages, small-loop feasibles
     reproduce easily and dominate the population, pushing out hard-won
     high-scoring feasibles. This callback keeps a deep copy of the
-    best-ever-seen feasible individual (by weighted F[0] score) and re-injects
+    best-ever-seen feasible individual (by F[0]: weighted piece score, or
+    route length under f0_objective=route_length) and re-injects
     it (replacing the worst-CV infeasible or lowest-scoring feasible) whenever
     a better-scoring feasible is no longer present in the current population.
     """
@@ -277,7 +278,8 @@ class CategoryEliteArchive(Callback):
     def __init__(self, inject: bool = True):
         super().__init__()
         self.inject = inject
-        # category -> {"score": weighted F[0], "n_pieces": physical census,
+        # category -> {"score": F[0] (weighted piece score or route length),
+        #              "n_pieces": physical census,
         #              "ind": Individual}
         self.feasible: dict = {}
         self.infeasible: dict = {}
@@ -373,7 +375,9 @@ class SnapshotCallback(Callback):
     """Render the best feasible and infeasible layout of each category, per generation.
 
     Categories are ``CATEGORIES``; "best" means lowest F[0] — the weighted
-    piece score, not utilization. Any of the eight combinations may be
+    piece score or, under f0_objective=route_length, the summed circuit
+    length in studs; either way a search score, not utilization. Any of the
+    eight combinations may be
     absent in a given generation (no DC-bearing individual, or none infeasible),
     in which case that PNG is simply not written.
 
@@ -386,8 +390,10 @@ class SnapshotCallback(Callback):
     """
 
     def __init__(self, targets: list[int], output_dir: Path,
-                 catalog: TrackCatalog, config: OptimizationConfig, dims):
+                 catalog: TrackCatalog, config: OptimizationConfig, dims,
+                 f0_label: str = "weighted piece score"):
         super().__init__()
+        self._f0_label = f0_label
         self.targets = list(targets)
         self._target_set = set(self.targets)
         self._gen_width = len(str(max(self.targets, default=1)))
@@ -478,6 +484,7 @@ class SnapshotCallback(Callback):
                 inventory=self._config.inventory,
                 objectives=entry["F"],
                 cv=entry["cv"] if status == "infeasible" else None,
+                f0_label=self._f0_label,
             )
             plt.close(fig)
         except Exception as e:
@@ -869,6 +876,7 @@ def run_optimization(
         snapshot_cb = SnapshotCallback(
             _compute_snapshot_targets(config.algorithm.n_gen),
             output_dir, catalog, config, dims,
+            f0_label=problem.f0_label,
         )
         chain.append(snapshot_cb)
     else:
@@ -891,7 +899,7 @@ def run_optimization(
                 f"callbacks=[{', '.join(type(cb).__name__ for cb in chain)}]")
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info("Objectives: weighted piece score + traversal time (bi-objective)")
+    logger.info(f"Objectives: {problem.f0_label} + traversal time (bi-objective)")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(
@@ -934,9 +942,16 @@ def run_optimization(
     res.monitor_data = monitor.data
     res.snapshots = snapshot_cb.snapshots if snapshot_cb is not None else []
     res.category_elites = category_archive
-    # Carried on the result because save_results has no problem instance, and
-    # the ceiling must come from the objective's own definition.
-    res.max_score = problem.max_weighted_piece_score()
+    # Carried on the result because save_results has no problem instance: the
+    # F[0] labels and the piece-score ceiling come from the objective's own
+    # definition. route_length has no computable ceiling, so the progress
+    # plot draws the bare curve for it.
+    res.f0_label = problem.f0_label
+    res.f0_csv_name = problem.f0_csv_name
+    res.max_score = (
+        problem.max_weighted_piece_score()
+        if problem.f0_objective == "piece_score" else None
+    )
 
     logger.info("Optimization complete!")
 
@@ -1036,6 +1051,7 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                    if pop_counts is not None and np.any(feasible_mask) else None)
     boundary = config.boundary
     total_inv = sum(config.inventory.values())
+    f0_label = getattr(res, "f0_label", "weighted piece score")
     lines = ["# Category report", ""]
 
     for category in CATEGORIES:
@@ -1069,7 +1085,7 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
             lines += [
                 f"- pieces: {n_phys}/{total_inv}",
                 f"- utilization: {n_phys / total_inv:.1%} ({gap})",
-                f"- F[0] weighted score: {elite['score']:.3f}, "
+                f"- F[0] {f0_label}: {elite['score']:.3f}, "
                 f"time: {float(ind.F[1]):.2f} s{element_note}",
             ]
             if spans:  # all-degenerate paths must not abort the whole report
@@ -1130,8 +1146,10 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d",
                header=chromosome_csv_header(dims), comments="")
+    f0_csv_name = getattr(res, "f0_csv_name", "neg_weighted_piece_score")
+    f0_label = getattr(res, "f0_label", "weighted piece score")
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header="neg_weighted_piece_score,expected_traversal_time_s", comments="")
+               header=f"{f0_csv_name},expected_traversal_time_s", comments="")
     if G is not None:
         # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
@@ -1151,12 +1169,13 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     archive_F = getattr(monitor, "best_front", None) if monitor is not None else None
     if archive_F is not None and len(archive_F) > 0:
         np.savetxt(output_dir / "pareto_archive.csv", archive_F, delimiter=",",
-                   header="f0_neg_weighted_piece_score,f1_traversal_time_s", comments="")
+                   header=f"f0_{f0_csv_name},f1_traversal_time_s", comments="")
 
     try:
-        fig = plot_pareto_front(F, G, title="Pareto Front: Piece Score vs Traversal Time",
+        fig = plot_pareto_front(F, G,
+                                title=f"Pareto Front: {f0_label} vs traversal time",
                                 save_path=output_dir / "pareto_front.png",
-                                archive_F=archive_F)
+                                archive_F=archive_F, f0_label=f0_label)
         plt.close(fig)
         logger.info("Pareto front saved to pareto_front.png")
     except Exception as e:
@@ -1169,6 +1188,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             generations, scores, max_score=getattr(res, "max_score", None),
             save_path=output_dir / "objective_progress.png",
             n_gen_planned=config.algorithm.n_gen,
+            f0_label=f0_label,
         )
         plt.close(fig)
         logger.info("Objective progress saved to objective_progress.png")
@@ -1183,6 +1203,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             inventory=config.inventory,
             objectives=objectives,
             cv=cv,
+            f0_label=f0_label,
         )
         plt.close(fig)
 
