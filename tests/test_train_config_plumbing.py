@@ -102,3 +102,47 @@ def test_f1_would_move_under_the_assumed_baseline(catalog, default_config, train
     problem, layout, out = _evaluate_racetrack(catalog, default_config)
     baseline_time = _traversal_time(layout, catalog, problem, train_config)
     assert abs(out["F"][1] - baseline_time) > 1e-3
+
+
+def _constant_variant(speed: float = 0.8) -> OptimizationConfig:
+    """default.yaml switched to the constant-speed F[1] model."""
+    config = OptimizationConfig.load(CONFIG_DIR / "default.yaml")
+    config.f1_speed_model = "constant"
+    config.f1_constant_speed = speed
+    return config
+
+
+def test_f1_speed_model_defaults_to_physics(catalog, default_config):
+    assert default_config.f1_speed_model == "physics"
+    assert TrackOptimizationProblem(catalog, default_config).f1_constant_speed is None
+
+
+def test_constant_speed_config_states_the_flat_model():
+    config = OptimizationConfig.load(CONFIG_DIR / "all_pieces_constant_speed.yaml")
+    assert config.f1_speed_model == "constant"
+    assert config.f1_constant_speed == pytest.approx(0.8)
+
+
+def test_constant_f1_differs_from_physics(catalog, default_config):
+    """The two speed models must be distinguishable on a layout with straights:
+    physics runs them at the motor cap and curves at the slide cap, neither 0.8."""
+    _, _, out_physics = _evaluate_racetrack(catalog, default_config)
+    _, _, out_constant = _evaluate_racetrack(catalog, _constant_variant())
+    assert abs(out_constant["F"][1] - out_physics["F"][1]) > 1e-3
+
+
+def test_constant_f1_is_length_over_the_configured_speed(catalog):
+    """Single-route closed racetrack: F[1] must equal an oracle built straight
+    from catalog arc lengths, with no profiler anywhere near it."""
+    _, _, out = _evaluate_racetrack(catalog, _constant_variant())
+    indices = np.asarray(RACETRACK, dtype=np.int32)
+    arc_studs = catalog.get_route_arc_lengths(indices, np.zeros_like(indices)).sum()
+    expected = float(arc_studs) * catalog.stud_mm / 1000.0 / 0.8
+    assert out["F"][1] == pytest.approx(expected, abs=1e-9)
+
+
+def test_constant_speed_value_is_wired(catalog):
+    """Halving the configured speed must exactly double F[1]."""
+    _, _, out_full = _evaluate_racetrack(catalog, _constant_variant(0.8))
+    _, _, out_half = _evaluate_racetrack(catalog, _constant_variant(0.4))
+    assert out_half["F"][1] == pytest.approx(2.0 * out_full["F"][1])

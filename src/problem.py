@@ -8,8 +8,10 @@ Bi-objective NSGA-II with Deb's constraint handling:
     special pieces earn the routes they open
   Both are search scores, NOT utilization — the honest count rides on the
   ``n_pieces`` out-key.
-- F[1] = expected time to cover every physical piece once, averaged over the
-         2^J traversal routes at safety_margin=0.95 (minimize; see
+- F[1] = expected time to cover every physical piece once, averaged over every
+         enumerated drivable circuit (2^J switch choices + DC sub-loops);
+         speeds per config.f1_speed_model: the 3-pass physics profiler at
+         safety_margin=0.95, or a constant speed (minimize; see
          _expected_traversal_time)
 - 5 + per-piece-type inequality constraints via Deb's CV rules
 """
@@ -57,22 +59,26 @@ def _expected_traversal_time(
     safety_margin: float = SPEED_SAFETY_MARGIN,
     closure_pos_tol: float = 4.0,
     closure_angle_tol: float = 5.0,
+    constant_speed: float | None = None,
 ) -> float:
     """Expected time to cover every physical piece of the layout once.
 
-    Each of the 2^J take/skip-siding routes is profiled independently (the
-    3-pass profiler at ``safety_margin``), timing every segment it passes.
+    Every drivable circuit the decoder enumerates — the 2^J take/skip-siding
+    choices plus the extra circuits a double-crossover's spare routes close —
+    is timed independently. With ``constant_speed`` unset each circuit is
+    profiled (the 3-pass profiler at ``safety_margin``); set, every segment
+    is charged at that speed and train physics drops out of the objective.
     A physical piece is charged the MEAN of its traversal times across all
-    passages — the expected per-piece cost when the train picks routes
+    passages — the expected per-piece cost when the train picks circuits
     uniformly at random — and the objective is the sum over distinct
-    physical pieces. Routes agree on piece identity via ``piece_uids``; a
+    physical pieces. Circuits agree on piece identity via ``piece_uids``; a
     descriptor CROSS_90 / DOUBLE_CROSSOVER spans two main slots but is one
     physical piece, unified here through the layout's junction records. A
     plain loop therefore reduces to its lap time; a self-crossing one does
     not — the crossing is one physical piece the lap passes twice, so it is
     charged once, at the mean of those two passages.
 
-    Returns +inf when no route carries any piece: zero time would rank an
+    Returns +inf when no circuit carries any piece: zero time would rank an
     unusable layout as the fastest possible one.
     """
     alias = {}
@@ -87,13 +93,16 @@ def _expected_traversal_time(
             continue
         indices = np.asarray(path.piece_sequence, dtype=np.int32)
         route_indices = np.asarray(path.route_indices, dtype=np.int32)
-        profile = compute_speed_profile(
-            Layout(indices=indices, states=path.states, route_indices=route_indices),
-            catalog, train_config, safety_margin=safety_margin,
-            closure_pos_tol=closure_pos_tol, closure_angle_tol=closure_angle_tol,
-        )
         arc_m = catalog.get_route_arc_lengths(indices, route_indices) * stud_to_m
-        safe_speeds = np.where(profile.speeds > 0, profile.speeds, STALLED_SPEED_MS)
+        if constant_speed is not None:
+            safe_speeds = constant_speed
+        else:
+            profile = compute_speed_profile(
+                Layout(indices=indices, states=path.states, route_indices=route_indices),
+                catalog, train_config, safety_margin=safety_margin,
+                closure_pos_tol=closure_pos_tol, closure_angle_tol=closure_angle_tol,
+            )
+            safe_speeds = np.where(profile.speeds > 0, profile.speeds, STALLED_SPEED_MS)
         for uid, seg_time in zip(path.piece_uids, arc_m / safe_speeds, strict=True):
             entry = per_piece.setdefault(alias.get(uid, uid), [0.0, 0])
             entry[0] += float(seg_time)
@@ -116,8 +125,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
                                         the summed length of every unique
                                         circuit in studs)
         F[1] = expected_traversal_time (minimize the expected time to cover
-                                        every physical piece once at
-                                        safety_margin=0.95)
+                                        every physical piece once; speeds per
+                                        config.f1_speed_model — physics at
+                                        safety_margin=0.95, or constant)
 
     Constraints (g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
@@ -183,6 +193,9 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self.total_inventory = sum(config.inventory.values())
         self.special_piece_weight = config.special_piece_weight
         self.f0_objective = config.f0_objective
+        self.f1_constant_speed = (
+            config.f1_constant_speed if config.f1_speed_model == "constant" else None
+        )
         self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
         self.decoder_config = DecoderConfig.from_optimization_config(config)
@@ -215,14 +228,17 @@ class TrackOptimizationProblem(ElementwiseProblem):
         else:
             f0_value = self._weighted_piece_score(layout)
 
-        # F[1] = expected whole-network traversal time at SPEED_SAFETY_MARGIN:
-        # every physical piece charged the mean of its traversal times across
-        # the 2^J routes, so branch topology pays its real time cost. See
+        # F[1] = expected whole-network traversal time: every physical piece
+        # charged the mean of its traversal times across all enumerated
+        # circuits (2^J switch choices + DC sub-loops), so branch topology
+        # pays its real time cost. Speeds come from the 3-pass profiler at
+        # SPEED_SAFETY_MARGIN, or from the configured constant speed. See
         # _expected_traversal_time.
         traversal_time = _expected_traversal_time(
             layout, self.catalog, self._train_config,
             closure_pos_tol=self.closure_tolerance,
             closure_angle_tol=self.angle_tolerance,
+            constant_speed=self.f1_constant_speed,
         )
 
         out["F"] = [-f0_value, traversal_time]
@@ -315,6 +331,13 @@ class TrackOptimizationProblem(ElementwiseProblem):
             max_violation = max(max_violation, path_max)
 
         return float(max_violation)
+
+    @property
+    def f1_label(self) -> str:
+        """Human label of the configured F[1] speed model, for logs and reports."""
+        if self.f1_constant_speed is not None:
+            return f"expected traversal time (constant {self.f1_constant_speed} m/s)"
+        return "expected traversal time (train physics)"
 
     @property
     def f0_label(self) -> str:
