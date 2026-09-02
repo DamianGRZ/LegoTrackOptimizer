@@ -64,12 +64,13 @@ class TestFormatIndividual:
         )
         assert layout.n_pieces == 4 and layout.n_physical_pieces == 3
 
-        line, = _format_individual("Best feasible", layout, 0.5, 1.25, cv=None,
-                                   total_inventory=10)
+        line, = _format_individual("Best feasible", layout,
+                                   "weighted piece score=0.5, expected traversal time=1.25",
+                                   cv=None, total_inventory=10)
 
         assert "pieces=3/10" in line
         assert "pieces=4" not in line
-        # Utilization is that physical count over the kit, never the F[0] score.
+        # Utilization is that physical count over the kit, never a search score.
         assert "utilization=30.0%" in line
 
 

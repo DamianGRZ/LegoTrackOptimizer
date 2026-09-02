@@ -1,9 +1,7 @@
-"""F[0] trajectory over generations — weighted piece score, or route length
-in studs under f0_objective=route_length.
+"""Trajectory of the run's first objective over generations.
 
 Not a convergence plot: convergence in multi-objective search means approaching
-the true Pareto front and is measured by HV/IGD. This is the value of one
-objective per generation, rising because F[0] is maximized.
+the true Pareto front. This is the value of one objective per generation.
 
 pymoo has no chart for it — its ``RunningMetricAnimation`` plots front movement
 between generations and needs ``save_history``. The documented pymoo idiom is a
@@ -34,18 +32,18 @@ GRIDLINE = "#e1e0d9"
 AXIS_RULE = "#c3c2b7"
 
 
-def load_score_progress(csv_path: Path) -> tuple[NDArray, NDArray]:
-    """(generations, F[0] score) from a run's ``convergence.csv``.
+def load_score_progress(csv_path: Path, sign: float) -> tuple[NDArray, NDArray]:
+    """(generations, reported value of the first objective) from ``convergence.csv``.
 
-    The monitor stores ``best_f0``, the minimum F[0] over feasible individuals,
-    so the score is its negation. Generations with no feasible individual carry
-    NaN and are dropped.
+    The monitor stores ``best_f0``, the minimum of that objective over feasible
+    individuals; ``sign`` turns it back into the reported quantity. Generations
+    with no feasible individual carry NaN and are dropped.
     """
     data = np.genfromtxt(csv_path, delimiter=",", names=True)
     generations = np.atleast_1d(data["n_gen"]).astype(float)
     best_f0 = np.atleast_1d(data["best_f0"]).astype(float)
     keep = np.isfinite(best_f0)
-    return generations[keep], -best_f0[keep]
+    return generations[keep], sign * best_f0[keep]
 
 
 def plot_score_progress(
@@ -55,18 +53,19 @@ def plot_score_progress(
     save_path: Path | None = None,
     title: str | None = None,
     n_gen_planned: int | None = None,
-    f0_label: str = "weighted piece score",
+    objective_label: str = "weighted piece score",
+    maximized: bool = True,
 ) -> Figure:
-    """Best feasible F[0] against generation, labelled for the configured variant.
+    """Best feasible value of the first objective against generation.
 
     ``max_score`` draws the inventory ceiling as a dashed reference line — the
-    score with the whole kit placed and no terrain limits; pass None when the
-    variant has no computable ceiling (route_length) to plot the bare curve.
+    score with the whole kit placed and no terrain limits; pass None for an
+    objective with no computable ceiling to plot the bare curve.
     ``n_gen_planned`` extends the x-axis to the full budget, so a chart drawn
     mid-run shows how much of the run is still ahead.
     """
     if title is None:
-        title = f"F[0] {f0_label} by generation"
+        title = f"{objective_label} by generation"
     generations = np.asarray(generations, dtype=float)
     scores = np.asarray(scores, dtype=float)
 
@@ -92,7 +91,8 @@ def plot_score_progress(
     _set_y_range(ax, scores, max_score)
 
     ax.set_xlabel("Generation", color=INK_SECONDARY, fontsize=11)
-    ax.set_ylabel(f"{f0_label[:1].upper()}{f0_label[1:]} (higher is better)",
+    direction = "higher is better" if maximized else "lower is better"
+    ax.set_ylabel(f"{objective_label[:1].upper()}{objective_label[1:]} ({direction})",
                   color=INK_SECONDARY, fontsize=11)
     _strip_chrome(ax)
     return _finish(fig, save_path)

@@ -6,24 +6,24 @@ from pathlib import Path
 import numpy as np
 
 from pymoo.core.callback import Callback
-from pymoo.indicators.hv import HV
-from pymoo.indicators.igd import IGD
 from pymoo.util.nds.non_dominated_sorting import NonDominatedSorting
 
-from src.normalization import HV_REF_POINT, has_extent, ideal_nadir
 
-
-# Column order of convergence.csv (and of the per-generation row values).
-_CSV_COLUMNS = (
-    "n_gen", "n_eval",
-    "hv", "igd",
-    "n_feas", "feas_rate",
-    "best_f0", "best_f1",
+# Column order of convergence.csv, around one best_f<i> per objective.
+_LEADING_COLUMNS = ("n_gen", "n_eval", "n_feas", "feas_rate")
+_TRAILING_COLUMNS = (
     "n_unique_F", "n_unique_F_feas",
     "cv_eps",
     "mean_closure_x", "mean_closure_y", "mean_closure_theta",
     "gen_seconds",
 )
+
+
+def _csv_columns(n_obj: int) -> tuple[str, ...]:
+    """Column order for a run with ``n_obj`` objectives."""
+    best = tuple(f"best_f{i}" for i in range(n_obj))
+    return (*_LEADING_COLUMNS, *best, *_TRAILING_COLUMNS)
+
 
 _CLOSURE_COLUMNS = ("mean_closure_x", "mean_closure_y", "mean_closure_theta")
 
@@ -42,20 +42,14 @@ def _n_eval(algorithm) -> int:
 
 
 class ConvergenceMonitorCallback(Callback):
-    """Per-generation: HV, IGD, feasibility rate, mean closure residuals.
+    """Per-generation: feasibility rate, best value per objective, mean closure
+    residuals.
 
     With ``output_dir`` set, every generation is also appended to
     ``<output_dir>/convergence.csv`` as it happens — the incremental append
     doubles as crash forensics (a dead run still leaves its full trajectory).
 
     Caveats for consumers:
-    - ``hv`` measures how much of the cumulative archive's box the live
-      population still covers, NOT progress: it drops when the population
-      loses an extreme point, so the series is not monotonic. NaN until the
-      archive spans a non-zero range on both objectives (see ``_hv``).
-    - ``igd`` without an external ``pareto_ref`` is measured against the
-      rolling best-known front, so values are NOT comparable across
-      generations (the reference itself moves).
     - ``cv_eps`` is read from ``epsilon_source.last_cv_eps`` when a source is
       attached (see ``LegoAdaptiveEpsilon``); NaN otherwise.
     - ``mean_closure_x/y`` are in studs and ``mean_closure_theta`` in degrees,
@@ -66,16 +60,18 @@ class ConvergenceMonitorCallback(Callback):
 
     def __init__(
         self,
-        pareto_ref: np.ndarray | None = None,
         output_dir: Path | None = None,
         closure_tolerance: float | None = None,
         angle_tolerance: float | None = None,
     ) -> None:
         super().__init__()
-        self.igd = IGD(pareto_ref) if pareto_ref is not None else None
         self.closure_tolerance = closure_tolerance
         self.angle_tolerance = angle_tolerance
-        self.data.update((k, []) for k in _CSV_COLUMNS)
+        # The per-objective columns are only known once a population has been
+        # evaluated, so the header is settled on the first notify.
+        self._columns = _csv_columns(0)
+        self.data.update((k, []) for k in self._columns)
+        self._n_obj = 0
         self._best_F: np.ndarray | None = None
         # Set by run_optimization to the LegoAdaptiveEpsilon instance so the
         # live epsilon lands next to the feasibility trajectory it explains.
@@ -92,7 +88,7 @@ class ConvergenceMonitorCallback(Callback):
         monoculture). Consumed by the Pareto plot and saved artifacts.
         """
         if self._best_F is None:
-            return np.empty((0, 2))
+            return np.empty((0, self._n_obj))
         return self._best_F
 
     def notify(self, algorithm) -> None:
@@ -100,6 +96,7 @@ class ConvergenceMonitorCallback(Callback):
         F, CV, G = pop.get("F"), pop.get("CV"), pop.get("G")
         if F is None or CV is None:
             return
+        self._settle_columns(F.shape[1])
 
         feas_mask = CV.ravel() <= 0.0
         F_feas = F[feas_mask]
@@ -110,55 +107,30 @@ class ConvergenceMonitorCallback(Callback):
         row: dict[str, int | float] = {
             "n_gen": int(algorithm.n_gen),
             "n_eval": _n_eval(algorithm),
-            "hv": self._hv(F_feas) if n_feas else 0.0,
-            "igd": self._igd(F_feas) if n_feas else _NAN,
             "n_feas": n_feas,
             "feas_rate": n_feas / max(1, len(pop)),
-            "best_f0": float(F_feas[:, 0].min()) if n_feas else _NAN,
-            "best_f1": float(F_feas[:, 1].min()) if n_feas else _NAN,
+            **{f"best_f{i}": float(F_feas[:, i].min()) if n_feas else _NAN
+               for i in range(self._n_obj)},
             "n_unique_F": len(np.unique(F, axis=0)),
             "n_unique_F_feas": len(np.unique(F_feas, axis=0)) if n_feas else 0,
             "cv_eps": self._cv_eps(),
             **self._mean_closure(G, feas_mask, n_feas),
             "gen_seconds": self._tick(),
         }
-        for key in _CSV_COLUMNS:
+        for key in self._columns:
             self.data[key].append(row[key])
         self._append_csv_row(row)
 
+    def _settle_columns(self, n_obj: int) -> None:
+        """Fix the column set to the evaluated objective count, once."""
+        if self._n_obj == n_obj:
+            return
+        self._n_obj = n_obj
+        self._columns = _csv_columns(n_obj)
+        self.data.update((k, []) for k in self._columns if k not in self.data)
+
     # ------------------------------------------------------------------
     # Per-metric helpers
-
-    def _hv(self, F_feas: np.ndarray) -> float:
-        """Hypervolume of the feasible population in normalized objective space.
-
-        The ideal/nadir come from the run-cumulative archive, never from the
-        current generation: a front normalized by its own spread fills the
-        unit box by construction, and the indicator would then report the
-        front's shape rather than anything about the search.
-
-        Read this as COVERAGE, not progress: it is how much of the box the
-        archive has staked out that the live population still holds. It falls
-        whenever the population drops an extreme point, even though the
-        archive never shrinks, so the series is not monotonic.
-
-        NaN while the archive is a single point or flat on one objective —
-        there is no volume to measure against yet.
-        """
-        if self._best_F is None or len(self._best_F) == 0:
-            return _NAN
-        ideal, nadir = ideal_nadir(self._best_F)
-        if not has_extent(ideal, nadir):
-            return _NAN
-        indicator = HV(ref_point=np.asarray(HV_REF_POINT, dtype=float),
-                       norm_ref_point=False, zero_to_one=True,
-                       ideal=ideal, nadir=nadir)
-        return float(indicator.do(F_feas))
-
-    def _igd(self, F_feas: np.ndarray) -> float:
-        """IGD vs the external reference if given, else vs the rolling front."""
-        indicator = self.igd if self.igd is not None else IGD(self._best_F)
-        return float(indicator.do(F_feas))
 
     def _cv_eps(self) -> float:
         if self.epsilon_source is None:
@@ -219,8 +191,8 @@ class ConvergenceMonitorCallback(Callback):
         if self._csv_path is None:
             return
         cells = (str(v) if isinstance(v, int) else f"{v:.6g}"
-                 for v in (row[k] for k in _CSV_COLUMNS))
+                 for v in (row[k] for k in self._columns))
         with self._csv_path.open("a", encoding="utf-8") as fh:
             if fh.tell() == 0:
-                fh.write(",".join(_CSV_COLUMNS) + "\n")
+                fh.write(",".join(self._columns) + "\n")
             fh.write(",".join(cells) + "\n")

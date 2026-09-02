@@ -21,7 +21,7 @@ from pymoo.indicators.hv import HV
 from scipy.stats import binomtest
 
 from src.config import AlgorithmConfig
-from src.normalization import HV_REF_POINT, has_extent, ideal_nadir
+from src.normalization import has_extent, hv_ref_point, ideal_nadir
 
 OUTPUT_ROOT = Path("outputs/ablation")
 REFERENCE_ARM = "full"
@@ -114,7 +114,7 @@ def score_config(cells: list[Cell]) -> dict[tuple[str, int], float]:
     if not has_extent(ideal, nadir):
         return zeros
 
-    indicator = HV(ref_point=np.array(HV_REF_POINT), norm_ref_point=False,
+    indicator = HV(ref_point=hv_ref_point(len(ideal)), norm_ref_point=False,
                    zero_to_one=True, ideal=ideal, nadir=nadir)
     return {**zeros,
             **{(cell.arm, cell.seed): float(indicator(cell.front)) for cell in solved}}

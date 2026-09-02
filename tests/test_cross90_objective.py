@@ -136,17 +136,20 @@ class TestEmergentDescriptorParity:
         )
 
 
-class TestF0Variant:
-    """f0_objective selects what F[0] measures; the default stays piece_score."""
+class TestObjectiveSelection:
+    """``objectives`` names the terms and their order; the default stays
+    weighted_piece_score against traversal time."""
 
     def test_config_defaults(self) -> None:
-        assert OptimizationConfig.load("configs/all_pieces.yaml").f0_objective == "piece_score"
+        default = OptimizationConfig.load("configs/all_pieces.yaml")
+        assert default.objectives == ["weighted_piece_score", "traversal_time"]
         cfg = OptimizationConfig.load("configs/all_pieces_route_length.yaml")
-        assert cfg.f0_objective == "route_length"
+        assert cfg.objectives == ["route_length", "traversal_time"]
 
-    def test_configured_variant_is_in_use(self, cat) -> None:
-        """Same DC figure-8 genome, both variants: F[0] differs, F[1] does not,
-        and the route_length value equals an independent sum over circuits."""
+    def test_configured_terms_are_in_use(self, cat) -> None:
+        """Same DC figure-8 genome, both configs: the first objective differs,
+        the shared time term does not, and route_length equals an independent
+        sum over circuits."""
         from src.sampling import _gen_figure_eight_dbl_crossover
 
         by_variant = {}
@@ -160,13 +163,13 @@ class TestF0Variant:
             )
             out = {}
             problem._evaluate(x, out)
-            by_variant[cfg.f0_objective] = (problem, x, out)
+            by_variant[cfg.objectives[0]] = (problem, x, out)
 
-        _, _, out_score = by_variant["piece_score"]
+        _, _, out_score = by_variant["weighted_piece_score"]
         problem_len, x_len, out_len = by_variant["route_length"]
         assert out_len["F"][0] != pytest.approx(out_score["F"][0])
         assert out_len["F"][1] == pytest.approx(out_score["F"][1])
-        assert problem_len.f0_csv_name == "neg_route_length_studs"
+        assert problem_len.objective_csv_names[0] == "neg_route_length_studs"
 
         layout = decode_chromosome(
             x_len, cat, problem_len.config.inventory,
@@ -181,6 +184,63 @@ class TestF0Variant:
             for p in layout.paths
         )
         assert -out_len["F"][0] == pytest.approx(expected)
+
+    def test_three_objectives_evaluate_all_three(self, cat) -> None:
+        """A third objective must widen F, not silently fall off the end."""
+        cfg = OptimizationConfig.load("configs/all_pieces_three_objectives.yaml")
+        problem = TrackOptimizationProblem(catalog=cat, config=cfg)
+        assert problem.n_obj == 3
+
+        pair_cfg = OptimizationConfig.load("configs/all_pieces.yaml")
+        pair = TrackOptimizationProblem(catalog=cat, config=pair_cfg)
+        inv = cat.inventory_by_index(cfg.inventory)
+        from src.sampling import _gen_figure_eight_dbl_crossover
+        pieces, flips, _j, _c, dcs = _gen_figure_eight_dbl_crossover(inv, problem.dims)[0]
+        x = create_chromosome_from_pieces(
+            problem.dims, pieces, main_loop_flips=flips, double_crossovers=dcs,
+        )
+        out_three, out_pair = {}, {}
+        problem._evaluate(x, out_three)
+        pair._evaluate(x, out_pair)
+
+        assert len(out_three["F"]) == 3
+        # The shared terms keep their values and their places; only the third is new.
+        assert out_three["F"][:2] == pytest.approx(out_pair["F"])
+        assert out_three["F"][2] < 0.0  # negated route length in studs
+
+    def test_score_vs_route_length_has_no_time_term(self, cat) -> None:
+        """The two-objective experiment without a time term: both terms must
+        match their values under the 3-objective config that shares them."""
+        from src.sampling import _gen_figure_eight_dbl_crossover
+
+        cfg = OptimizationConfig.load("configs/all_pieces_score_vs_route_length.yaml")
+        assert cfg.objectives == ["weighted_piece_score", "route_length"]
+        problem = TrackOptimizationProblem(catalog=cat, config=cfg)
+        assert problem.n_obj == 2
+
+        three = TrackOptimizationProblem(
+            catalog=cat,
+            config=OptimizationConfig.load("configs/all_pieces_three_objectives.yaml"),
+        )
+        inv = cat.inventory_by_index(cfg.inventory)
+        pieces, flips, _j, _c, dcs = _gen_figure_eight_dbl_crossover(inv, problem.dims)[0]
+        x = create_chromosome_from_pieces(
+            problem.dims, pieces, main_loop_flips=flips, double_crossovers=dcs,
+        )
+        out_pair, out_three = {}, {}
+        problem._evaluate(x, out_pair)
+        three._evaluate(x, out_three)
+
+        assert out_pair["F"][0] == pytest.approx(out_three["F"][0])
+        assert out_pair["F"][1] == pytest.approx(out_three["F"][2])
+
+    def test_repeated_or_lone_objective_is_rejected(self) -> None:
+        cfg = OptimizationConfig.load("configs/all_pieces.yaml")
+        data = cfg.model_dump()
+        for bad in (["weighted_piece_score"],
+                    ["weighted_piece_score", "weighted_piece_score"]):
+            with pytest.raises(ValueError):
+                OptimizationConfig.model_validate({**data, "objectives": bad})
 
     def test_route_length_premiums_the_crossover(self, cat) -> None:
         """A DC figure-8's summed circuits reach nearly twice its full lap."""

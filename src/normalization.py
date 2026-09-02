@@ -14,9 +14,11 @@ from numpy.typing import NDArray
 from pymoo.decomposition.asf import ASF
 from pymoo.util.normalization import ZeroToOneNormalization
 
-# Hypervolume reference just outside the unit box, so every point of a
-# normalized front contributes volume.
-HV_REF_POINT = (1.1, 1.1)
+
+def hv_ref_point(n_obj: int) -> NDArray[np.float64]:
+    """Hypervolume reference just outside the unit box, so every point of a
+    normalized front contributes volume."""
+    return np.full(int(n_obj), 1.1)
 
 
 def ideal_nadir(F: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -65,3 +67,47 @@ def compromise_index(nF: NDArray[np.float64],
     if weights is None:
         weights = np.full(nF.shape[1], 1.0 / nF.shape[1])
     return int(ASF().do(nF, 1.0 / np.asarray(weights, dtype=float)).argmin())
+
+
+def balance_ranking(F: NDArray[np.float64]) -> NDArray[np.intp]:
+    """Rows of raw ``F``, most balanced across the objectives first.
+
+    The normalization spans ``F`` itself, so the order is a statement about this
+    set only and cannot be compared with one made on another set. Rows carrying
+    the +inf sentinel are dropped rather than collapsing the scale, so the
+    result may be shorter than ``F``.
+    """
+    F = np.asarray(F, dtype=float)
+    finite = np.flatnonzero(np.isfinite(F).all(axis=1))
+    if len(finite) == 0:
+        return np.empty(0, dtype=np.intp)
+    ideal, nadir = ideal_nadir(F[finite])
+    nF = normalize(F[finite], ideal, nadir)
+    # ASF().do keeps a (1, 1) shape for a single row but returns (n,) beyond it,
+    # so the values are flattened before ranking.
+    asf = np.asarray(ASF().do(nF, np.full(nF.shape[1], nF.shape[1], dtype=float))).ravel()
+    return finite[np.argsort(asf)]
+
+
+def first_objective_ranking(F: NDArray[np.float64]) -> NDArray[np.intp]:
+    """Rows of raw ``F`` ordered by the first objective alone, best (lowest, as
+    stored) first — the champion is simply the strongest on the run's primary
+    term. Rows carrying the +inf sentinel are dropped as in ``balance_ranking``.
+    """
+    F = np.asarray(F, dtype=float)
+    finite = np.flatnonzero(np.isfinite(F).all(axis=1))
+    return finite[np.argsort(F[finite, 0], kind="stable")]
+
+
+# config.champion_selection literal -> ranking function. Both rankings order a
+# set champion-first and share the +inf-skipping contract, so every consumer
+# can hold either without knowing which.
+CHAMPION_RANKINGS = {
+    "first_objective": first_objective_ranking,
+    "balanced": balance_ranking,
+}
+
+
+def champion_ranking(rule: str):
+    """Ranking function behind ``config.champion_selection``."""
+    return CHAMPION_RANKINGS[rule]

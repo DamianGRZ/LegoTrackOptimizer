@@ -1,12 +1,10 @@
-# all_pieces trading route length against traversal time, with the time charged
-# at a flat 0.8 m/s instead of the 3-pass train-physics profiler.
+# Experiment 1: weighted piece score against route length, with no time term
+# at all. Identical to all_pieces except for the objectives, so any difference
+# in the front is the objective swap and nothing else.
 
 train_config_path: trains/measured_consist.yaml
 
-objectives: [route_length, traversal_time]
-
-f1_speed_model: constant
-f1_constant_speed: 0.8
+objectives: [weighted_piece_score, route_length]
 
 inventory:
   # Straights

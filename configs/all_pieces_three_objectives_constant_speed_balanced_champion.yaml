@@ -1,12 +1,18 @@
-# all_pieces trading route length against traversal time, with the time charged
-# at a flat 0.8 m/s instead of the 3-pass train-physics profiler.
+# Experiment 2 at a flat speed with the balanced champion rule: three
+# objectives, the time charged at 0.8 m/s, and elites, snapshots and reports
+# picking the equal-weight ASF compromise instead of the best weighted piece
+# score. Identical to all_pieces_three_objectives_constant_speed otherwise, so
+# any difference in the run is the champion rule and nothing else (it also
+# steers elite injection).
 
 train_config_path: trains/measured_consist.yaml
 
-objectives: [route_length, traversal_time]
+objectives: [weighted_piece_score, traversal_time, route_length]
 
 f1_speed_model: constant
 f1_constant_speed: 0.8
+
+champion_selection: balanced
 
 inventory:
   # Straights
@@ -34,6 +40,9 @@ algorithm:
   crossover_prob: 0.8
   mutation_prob: 0.3
   eliminate_duplicates: true
+  # pymoo recommends m-nearest-neighbours crowding above two objectives; 'cd'
+  # sums per-axis gaps and thins out as dimensions grow.
+  crowding_func: mnn
   seed: null
   termination:
     n_max_gen: 1000
