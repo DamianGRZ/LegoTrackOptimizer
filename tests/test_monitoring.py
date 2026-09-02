@@ -42,7 +42,7 @@ class TestConvergenceMonitorCallback:
     def test_callback_initializes_data_keys(self):
         from src.algorithm.monitoring import ConvergenceMonitorCallback
         cb = ConvergenceMonitorCallback()
-        expected_keys = {"n_gen", "n_eval", "hv", "igd", "n_feas", "feas_rate",
+        expected_keys = {"n_gen", "n_eval", "n_feas", "feas_rate",
                          "mean_closure_x", "mean_closure_y", "mean_closure_theta"}
         assert expected_keys.issubset(cb.data.keys()), (
             f"Missing keys: {expected_keys - cb.data.keys()}"
@@ -50,8 +50,8 @@ class TestConvergenceMonitorCallback:
         for k in expected_keys:
             assert cb.data[k] == [], f"{k} should init as empty list, got {cb.data[k]}"
 
-    def test_hv_filters_infeasibles_before_computing(self):
-        """The +inf sentinel must never reach HV.__call__ — filter to feasible-only first."""
+    def test_infeasibles_are_excluded_from_the_per_objective_best(self):
+        """The +inf sentinel rides on degenerate individuals; only feasibles count."""
         from src.algorithm.monitoring import ConvergenceMonitorCallback
         cb = ConvergenceMonitorCallback()
 
@@ -61,63 +61,31 @@ class TestConvergenceMonitorCallback:
             CV=np.array([[0.0], [5e6], [0.0]]),
         )
         cb.notify(algo)
-        assert len(cb.data["hv"]) == 1
-        assert np.isfinite(cb.data["hv"][0]), "HV must not be inf/nan"
-        assert cb.data["hv"][0] > 0, f"HV should be positive, got {cb.data['hv'][0]}"
         assert cb.data["n_feas"][0] == 2
         assert cb.data["feas_rate"][0] == pytest.approx(2 / 3, rel=1e-6)
+        assert cb.data["best_f0"][0] == pytest.approx(-0.8)
+        assert cb.data["best_f1"][0] == pytest.approx(-1.05)
 
-    def test_hv_nan_until_archive_spans_both_objectives(self):
-        """A one-point archive gives no box to normalize against; NaN says so
-        instead of reporting a full unit box as if it were coverage."""
+    def test_best_columns_are_nan_when_nothing_is_feasible(self):
         from src.algorithm.monitoring import ConvergenceMonitorCallback
         cb = ConvergenceMonitorCallback()
-
-        cb.notify(FakeAlgo(1, np.array([[-0.5, -1.0]]), np.array([[0.0]])))
-        assert np.isnan(cb.data["hv"][0])
-
-        cb.notify(FakeAlgo(2, np.array([[-0.7, -0.8]]), np.array([[0.0]])))
-        assert np.isfinite(cb.data["hv"][1])
-
-    def test_hv_measures_coverage_of_the_archive_not_front_shape(self):
-        """HV is normalized by the cumulative archive, so a population that
-        collapses onto one end of the known front scores lower — normalizing
-        each generation by its own spread would report the same number."""
-        from src.algorithm.monitoring import ConvergenceMonitorCallback
-        cb = ConvergenceMonitorCallback()
-
-        both_ends = np.array([[-0.8, -0.9], [-0.6, -1.05]])
-        cb.notify(FakeAlgo(1, both_ends, np.array([[0.0], [0.0]])))
-        cb.notify(FakeAlgo(2, both_ends[:1], np.array([[0.0]])))
-
-        assert cb.data["hv"][1] < cb.data["hv"][0]
-
-    def test_hv_zero_when_all_infeasible(self):
-        from src.algorithm.monitoring import ConvergenceMonitorCallback
-        cb = ConvergenceMonitorCallback()
-        algo = FakeAlgo(
+        cb.notify(FakeAlgo(
             n_gen=1,
             F=np.array([[np.inf, np.inf], [np.inf, np.inf]]),
             CV=np.array([[1e6], [2e6]]),
             n_eval=50,
-        )
-        cb.notify(algo)
-        assert cb.data["hv"][0] == 0.0
+        ))
+        assert np.isnan(cb.data["best_f0"][0])
         assert cb.data["n_feas"][0] == 0
         assert cb.data["feas_rate"][0] == 0.0
 
-    def test_igd_self_improving_across_generations(self):
-        """Without an external pareto_ref, IGD is computed against a rolling best-known front."""
+    def test_columns_follow_the_evaluated_objective_count(self):
+        """Three objectives must get three best_f columns, not two."""
         from src.algorithm.monitoring import ConvergenceMonitorCallback
-        cb = ConvergenceMonitorCallback(pareto_ref=None)
-
-        algo1 = FakeAlgo(1, np.array([[-0.5, -1.0]]), np.array([[0.0]]))
-        cb.notify(algo1)
-        assert np.isfinite(cb.data["igd"][0])
-
-        algo2 = FakeAlgo(2, np.array([[-0.8, -1.05]]), np.array([[0.0]]))
-        cb.notify(algo2)
-        assert np.isfinite(cb.data["igd"][1])
+        cb = ConvergenceMonitorCallback()
+        cb.notify(FakeAlgo(1, np.array([[-0.5, 8.0, -900.0]]), np.array([[0.0]])))
+        assert cb.data["best_f2"] == [pytest.approx(-900.0)]
+        assert "best_f3" not in cb.data
 
     @staticmethod
     def _closure_algo():
@@ -178,7 +146,7 @@ class TestConvergenceCsv:
 
         header, rows = self._rows(tmp_path / "convergence.csv")
         assert header[0] == "n_gen"
-        assert {"hv", "feas_rate", "best_f0", "n_unique_F", "cv_eps"} <= set(header)
+        assert {"feas_rate", "best_f0", "best_f1", "n_unique_F", "cv_eps"} <= set(header)
         assert [row["n_gen"] for row in rows] == ["1", "2", "3"]
         assert all(len(row) == len(header) for row in rows)
 

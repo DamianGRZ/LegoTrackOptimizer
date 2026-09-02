@@ -1,12 +1,11 @@
-# all_pieces trading route length against traversal time, with the time charged
-# at a flat 0.8 m/s instead of the 3-pass train-physics profiler.
+# all_pieces with the balanced champion rule: elites, snapshots and reports
+# pick the equal-weight ASF compromise instead of the best weighted piece
+# score. Identical to all_pieces otherwise, so any difference in the run is
+# the champion rule and nothing else (it also steers elite injection).
 
 train_config_path: trains/measured_consist.yaml
 
-objectives: [route_length, traversal_time]
-
-f1_speed_model: constant
-f1_constant_speed: 0.8
+champion_selection: balanced
 
 inventory:
   # Straights

@@ -123,6 +123,19 @@ def test_constant_speed_config_states_the_flat_model():
     assert config.f1_constant_speed == pytest.approx(0.8)
 
 
+def test_three_objectives_constant_speed_config_states_both(catalog):
+    """The 3-objective constant-speed experiment: both knobs must survive the
+    trip into the problem, not just parse."""
+    config = OptimizationConfig.load(
+        CONFIG_DIR / "all_pieces_three_objectives_constant_speed.yaml")
+    assert config.objectives == ["weighted_piece_score", "traversal_time", "route_length"]
+    assert config.f1_speed_model == "constant"
+    problem = TrackOptimizationProblem(catalog, config)
+    assert problem.n_obj == 3
+    assert problem.f1_constant_speed == pytest.approx(0.8)
+    assert "constant 0.8 m/s" in problem.objective_labels[1]
+
+
 def test_constant_f1_differs_from_physics(catalog, default_config):
     """The two speed models must be distinguishable on a layout with straights:
     physics runs them at the motor cap and curves at the slide cap, neither 0.8."""

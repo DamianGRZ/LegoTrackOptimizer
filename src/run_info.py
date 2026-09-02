@@ -28,12 +28,21 @@ from src.config import OptimizationConfig
 from src.decoder import DecoderConfig, decode_chromosome
 from src.encoding import compute_dimensions
 from src.intersection import CROSS_90_INDEX, DOUBLE_CROSSOVER_INDEX
+from src.normalization import champion_ranking
 from src.train import TrainConfigError
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOG = logging.getLogger(__name__)
 
 RUN_INFO_FILENAME = "run_info.md"
+
+
+def objective_summary(values, labels, signs) -> str:
+    """One ``label=value`` phrase per objective, values back in reported sense."""
+    return ", ".join(
+        f"{label}={sign * float(value):.4g}"
+        for label, sign, value in zip(labels, signs, values)
+    )
 
 
 def _git(*args: str) -> str | None:
@@ -259,16 +268,15 @@ def _piece_usage(layout, inventory: dict, catalog: TrackCatalog) -> list[str]:
     return rows
 
 
-def _format_individual(label: str, layout, score: float, time_s: float,
+def _format_individual(label: str, layout, objectives: str,
                        cv: float | None, total_inventory: int) -> list[str]:
     """Summary line for one individual: PHYSICAL pieces (matching ``count_pieces``
     and the category report rather than traversal slots), that count as a share of
-    the kit, and the F[0] search score (weighted piece score, or route length
-    under f0_objective=route_length) — three separate quantities."""
+    the kit, and the objective values — separate quantities, never merged."""
     used = layout.n_physical_pieces
     line = (f"- **{label}**: pieces={used}/{total_inventory}, "
-            f"utilization={used / max(1, total_inventory):.1%}, score={score:.3f}, "
-            f"time={time_s:.2f} s, switch_pairs={layout.n_switch_pairs}")
+            f"utilization={used / max(1, total_inventory):.1%}, {objectives}, "
+            f"switch_pairs={layout.n_switch_pairs}")
     if cv is not None:
         line += f", CV={cv:.2f}"
     return [line]
@@ -350,32 +358,41 @@ def append_run_summary(
     dims = compute_dimensions(config, catalog)
     decoder_cfg = DecoderConfig.from_optimization_config(config)
 
+    labels, signs = res.objective_labels, res.objective_signs
+    rank = champion_ranking(config.champion_selection)
+    rule = config.champion_selection
+
     best_feas_layout = None
-    if n_feasible > 0:
-        feas_idx = np.where(feasible_mask)[0]
-        best_feas = int(feas_idx[int(np.argmin(F[feas_idx, 0]))])
+    feas_idx = np.flatnonzero(feasible_mask)
+    feas_ranking = rank(F[feas_idx]) if n_feasible > 0 else ()
+    if len(feas_ranking):
+        best_feas = int(feas_idx[int(feas_ranking[0])])
         best_feas_layout = decode_chromosome(
             X[best_feas], catalog, config.inventory,
             dims=dims, config=decoder_cfg,
         )
         lines += _format_individual(
-            "Best feasible", best_feas_layout,
-            float(-F[best_feas, 0]), float(F[best_feas, 1]), cv=None,
+            f"Best feasible ({rule})", best_feas_layout,
+            objective_summary(F[best_feas], labels, signs), cv=None,
             total_inventory=sum(config.inventory.values()),
         )
 
-    best_overall = int(np.argmin(F[:, 0]))
+    overall_ranking = rank(F)
+    if len(overall_ranking) == 0:
+        _append(path, lines)
+        return
+    best_overall = int(overall_ranking[0])
     overall_layout = decode_chromosome(
         X[best_overall], catalog, config.inventory,
         dims=dims, config=decoder_cfg,
     )
     overall_cv = (float(np.sum(np.maximum(0, G[best_overall])))
                   if G is not None else 0.0)
-    overall_label = ("Best overall (feasible)" if feasible_mask[best_overall]
-                     else "Best overall (infeasible)")
+    overall_label = (f"Best overall ({rule}, feasible)" if feasible_mask[best_overall]
+                     else f"Best overall ({rule}, infeasible)")
     lines += _format_individual(
         overall_label, overall_layout,
-        float(-F[best_overall, 0]), float(F[best_overall, 1]), cv=overall_cv,
+        objective_summary(F[best_overall], labels, signs), cv=overall_cv,
         total_inventory=sum(config.inventory.values()),
     )
 

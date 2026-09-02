@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
 from .train import TrainConfig
+
+# Objective terms a run may minimize; each is implemented by one term of
+# TrackOptimizationProblem.
+ObjectiveName = Literal["weighted_piece_score", "traversal_time", "route_length"]
 
 
 class _StrictModel(BaseModel):
@@ -140,17 +144,27 @@ class OptimizationConfig(_StrictModel):
                     "double-crossover). >1 rewards multi-path topology so the GA does "
                     "not strip it as overhead.",
     )
-    f0_objective: Literal["piece_score", "route_length"] = Field(
-        default="piece_score",
-        description="F[0] variant: 'piece_score' maximizes the weighted piece score; "
+    objectives: List[ObjectiveName] = Field(
+        default_factory=lambda: ["weighted_piece_score", "traversal_time"],
+        description="Objective terms in F order; n_obj is this list's length. "
+                    "'weighted_piece_score' maximizes the weighted piece score, "
                     "'route_length' maximizes the summed length in studs of every "
-                    "unique circuit, so special pieces earn the routes they open.",
+                    "unique circuit (so special pieces earn the routes they open), "
+                    "'traversal_time' minimizes the expected time to cover every "
+                    "physical piece once.",
+    )
+    champion_selection: Literal["first_objective", "balanced"] = Field(
+        default="first_objective",
+        description="How reports, snapshots and the elite callbacks pick one "
+                    "individual out of a set: 'first_objective' takes the best "
+                    "value of objectives[0]; 'balanced' takes the equal-weight "
+                    "ASF compromise across all objectives.",
     )
     f1_speed_model: Literal["physics", "constant"] = Field(
         default="physics",
-        description="F[1] speed model: 'physics' profiles the train over every circuit "
-                    "(3-pass profiler); 'constant' charges every segment at "
-                    "f1_constant_speed instead.",
+        description="Speed model of the 'traversal_time' objective: 'physics' profiles "
+                    "the train over every circuit (3-pass profiler); 'constant' charges "
+                    "every segment at f1_constant_speed instead.",
     )
     f1_constant_speed: float = Field(
         default=0.8, gt=0.0,
@@ -175,6 +189,18 @@ class OptimizationConfig(_StrictModel):
                 raise ValueError(
                     f"Inventory count for {piece_id} must be non-negative, got {count}"
                 )
+        return v
+
+    @field_validator("objectives")
+    @classmethod
+    def validate_objectives(cls, v: List[str]) -> List[str]:
+        """At least two distinct terms: NSGA-II ranks by dominance, and a repeated
+        term is a duplicated axis that separates nothing."""
+        if len(v) < 2:
+            raise ValueError(f"objectives needs at least 2 entries, got {v}")
+        duplicates = sorted({name for name in v if v.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"objectives must be distinct, repeated: {duplicates}")
         return v
 
     @property

@@ -36,11 +36,13 @@ from src.encoding import (
     get_active_double_crossovers,
     get_active_junctions,
 )
-from src.normalization import compromise_index, has_extent, ideal_nadir, normalize
+from src.normalization import (
+    champion_ranking, compromise_index, has_extent, ideal_nadir, normalize,
+)
 from src.operators import PartitionedCrossover, PartitionedMutation
 from src.problem import DEGENERATE_G, TrackOptimizationProblem
 from src.repair import TrackRepairPipeline
-from src.run_info import count_pieces
+from src.run_info import count_pieces, objective_summary
 from src.sampling import IntegerSampling
 from src.visualization import (
     load_score_progress,
@@ -68,8 +70,10 @@ def log_piece_usage(layout, inventory: dict, catalog: TrackCatalog,
 
 
 def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
-                                   logger: logging.Logger) -> None:
-    """Log the raw span of both objectives and the balanced ASF pick.
+                                   logger: logging.Logger,
+                                   labels: tuple[str, ...],
+                                   signs: tuple[float, ...]) -> None:
+    """Log the raw span of every objective and the balanced ASF pick.
 
     The objectives sit on different scales, so the balanced solution is
     chosen in normalized space (pymoo's compromise programming). The raw
@@ -81,8 +85,9 @@ def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
 
     F_feas = F[feasible_indices]
     ideal, nadir = ideal_nadir(F_feas)
-    logger.info(f"Objective scale (raw, minimized): f0 [{ideal[0]:.4g}, {nadir[0]:.4g}], "
-                f"f1 [{ideal[1]:.4g}, {nadir[1]:.4g}]")
+    spans = ", ".join(f"{label} [{lo:.4g}, {hi:.4g}]"
+                      for label, lo, hi in zip(labels, ideal, nadir))
+    logger.info(f"Objective scale (raw, minimized): {spans}")
 
     if not has_extent(ideal, nadir):
         logger.info("Feasible front is a single point - no compromise to pick")
@@ -90,7 +95,7 @@ def log_front_scale_and_compromise(F: np.ndarray, feasible_indices: np.ndarray,
 
     idx = int(feasible_indices[compromise_index(normalize(F_feas, ideal, nadir))])
     logger.info(f"Compromise (equal-weight ASF): individual {idx}, "
-                f"score={-F[idx, 0]:.3f}, time={F[idx, 1]:.2f} s")
+                f"{objective_summary(F[idx], labels, signs)}")
 
 
 def piece_counts(pop) -> np.ndarray | None:
@@ -161,26 +166,45 @@ class ProgressCallback(Callback):
         )
 
 
+def worst_slot(F, G, feas_mask, used_slots, rank) -> int | None:
+    """Population slot an elite may take over: worst-CV infeasible if there is
+    one, else the feasible ``rank`` orders last. None when every slot is
+    spoken for."""
+    infeasible = [i for i in np.flatnonzero(~feas_mask) if i not in used_slots]
+    if infeasible:
+        cv = np.maximum(G[infeasible], 0).sum(axis=1)
+        return int(infeasible[int(np.argmax(cv))])
+    feasible = [i for i in np.flatnonzero(feas_mask) if i not in used_slots]
+    if not feasible:
+        return None
+    ranking = rank(F[feasible])
+    return int(feasible[int(ranking[-1])] if len(ranking) else feasible[-1])
+
+
 # =============================================================================
 # Feasible-Elite Callback
 # =============================================================================
 
 class FeasibleEliteCallback(Callback):
-    """Preserve the best-scoring feasible individual across generations.
+    """Preserve the champion feasible individual across generations.
 
     Once the adaptive-epsilon schedule fully engages, small-loop feasibles
-    reproduce easily and dominate the population, pushing out hard-won
-    high-scoring feasibles. This callback keeps a deep copy of the
-    best-ever-seen feasible individual (by F[0]: weighted piece score, or
-    route length under f0_objective=route_length) and re-injects
-    it (replacing the worst-CV infeasible or lowest-scoring feasible) whenever
-    a better-scoring feasible is no longer present in the current population.
+    reproduce easily and dominate the population, pushing out hard-won ones.
+    This callback keeps a deep copy of the elite and re-injects it (replacing
+    the worst-CV infeasible, else the feasible ranked last) whenever the
+    population no longer holds it.
+
+    ``rank`` orders a set of F rows champion-first and comes from
+    ``config.champion_selection``. The stored elite always enters the
+    generation's comparison as one more row, because a rule that ranks within
+    a set (the balanced compromise) cannot compare scores made on differently
+    scaled sets.
     """
 
-    def __init__(self):
+    def __init__(self, rank):
         super().__init__()
+        self._rank = rank
         self._elite = None
-        self._elite_score = -np.inf
 
     def notify(self, algorithm):
         pop = algorithm.pop
@@ -193,33 +217,24 @@ class FeasibleEliteCallback(Callback):
             return
 
         feasible_mask = np.all(G <= 0, axis=1)
+        feasible_idx = np.flatnonzero(feasible_mask)
+        contest = [F[feasible_idx]]
+        if self._elite is not None:
+            contest.append(np.asarray(self._elite.F, dtype=float).reshape(1, -1))
+        ranking = self._rank(np.vstack(contest))
+        if len(ranking) == 0:
+            return
+        winner = int(ranking[0])
 
-        if np.any(feasible_mask):
-            scores = -F[feasible_mask, 0]
-            best_in_feas = int(np.argmax(scores))
-            best_score_now = float(scores[best_in_feas])
-            if best_score_now > self._elite_score:
-                global_idx = int(np.where(feasible_mask)[0][best_in_feas])
-                self._elite = copy.deepcopy(pop[global_idx])
-                self._elite_score = best_score_now
-
-        if self._elite is None:
+        # The elite sits last, so a tie inside the population is resolved in the
+        # population's favour and costs no injection.
+        if winner < len(feasible_idx):
+            self._elite = copy.deepcopy(pop[int(feasible_idx[winner])])
             return
 
-        current_best_score = (
-            float(np.max(-F[feasible_mask, 0])) if np.any(feasible_mask) else -np.inf
-        )
-        if self._elite_score <= current_best_score:
-            return
-
-        if not np.all(feasible_mask):
-            infeas_idx = np.where(~feasible_mask)[0]
-            cv = np.maximum(G[infeas_idx], 0).sum(axis=1)
-            slot = int(infeas_idx[int(np.argmax(cv))])
-        else:
-            slot = int(np.argmax(F[:, 0]))
-
-        pop[slot] = copy.deepcopy(self._elite)
+        slot = worst_slot(F, G, feasible_mask, used_slots=set(), rank=self._rank)
+        if slot is not None:
+            pop[slot] = copy.deepcopy(self._elite)
 
 
 # =============================================================================
@@ -265,22 +280,22 @@ class CategoryEliteArchive(Callback):
 
     Generalizes :class:`FeasibleEliteCallback` to per-category elites: for each
     category (committed switch pair / CROSS_90 / DOUBLE_CROSSOVER) the archive
-    keeps the best-scoring FEASIBLE individual ever seen and re-injects it
-    (one per category, replacing the worst individual) whenever the population
-    no longer holds a feasible member of that category at least as good.
-    Best INFEASIBLE individuals are archived too, but only for reporting —
-    they are never injected.
+    keeps the champion FEASIBLE individual ever seen (per ``rank``, from
+    ``config.champion_selection``) and re-injects it (one per category,
+    replacing the worst individual) whenever the population no longer holds a
+    feasible member of that category at least as good. Best INFEASIBLE
+    individuals are archived too, but only for reporting — they are never
+    injected.
 
     Must run AFTER FeasibleEliteCallback in the chain: the global elite's slot
     stops being "worst" once injected, so it is never clobbered here.
     """
 
-    def __init__(self, inject: bool = True):
+    def __init__(self, rank, inject: bool = True):
         super().__init__()
+        self._rank = rank
         self.inject = inject
-        # category -> {"score": F[0] (weighted piece score or route length),
-        #              "n_pieces": physical census,
-        #              "ind": Individual}
+        # category -> {"n_pieces": physical census, "ind": Individual}
         self.feasible: dict = {}
         self.infeasible: dict = {}
 
@@ -312,45 +327,44 @@ class CategoryEliteArchive(Callback):
                 self._inject(category, pop, F, G, feas_mask, member, used_slots)
 
     def _update(self, store, category, pop, F, mask):
-        if not np.any(mask):
+        idx = np.flatnonzero(mask)
+        if len(idx) == 0:
             return
-        idx = np.where(mask)[0]
-        best = int(idx[np.argmax(-F[idx, 0])])
-        score = float(-F[best, 0])
-        current = store.get(category)
-        if current is None or score > current["score"]:
-            counts = piece_counts(pop)
-            store[category] = {
-                "score": score,
-                "n_pieces": 0 if counts is None else int(counts[best]),
-                "ind": copy.deepcopy(pop[best]),
-            }
+        if self._holder_wins(store.get(category), F[idx]):
+            return
+        ranking = self._rank(F[idx])
+        if len(ranking) == 0:
+            return
+        best = int(idx[int(ranking[0])])
+        counts = piece_counts(pop)
+        store[category] = {
+            "n_pieces": 0 if counts is None else int(counts[best]),
+            "ind": copy.deepcopy(pop[best]),
+        }
 
     def _inject(self, category, pop, F, G, feas_mask, has_element, used_slots):
         elite = self.feasible.get(category)
         if elite is None:
             return
-        member_mask = has_element & feas_mask
-        if np.any(member_mask) and float(np.max(-F[member_mask, 0])) >= elite["score"]:
+        member_idx = np.flatnonzero(has_element & feas_mask)
+        if len(member_idx) and not self._holder_wins(elite, F[member_idx]):
             return  # an equal-or-better feasible member is already present
 
-        slot = self._worst_slot(F, G, feas_mask, used_slots)
+        slot = worst_slot(F, G, feas_mask, used_slots, rank=self._rank)
         if slot is None:
             return
         used_slots.add(slot)
         pop[slot] = copy.deepcopy(elite["ind"])
 
-    @staticmethod
-    def _worst_slot(F, G, feas_mask, used_slots):
-        """Worst-CV infeasible slot first, else lowest-scoring feasible."""
-        infeas = [i for i in np.where(~feas_mask)[0] if i not in used_slots]
-        if infeas:
-            cv = np.maximum(G[infeas], 0).sum(axis=1)
-            return int(np.asarray(infeas)[int(np.argmax(cv))])
-        feas = [i for i in np.where(feas_mask)[0] if i not in used_slots]
-        if feas:
-            return int(np.asarray(feas)[int(np.argmax(F[feas, 0]))])
-        return None
+    def _holder_wins(self, entry, F_rivals) -> bool:
+        """Whether the archived individual still out-ranks every rival, judged
+        in one contest so within-set rules stay comparable."""
+        if entry is None:
+            return False
+        held = np.asarray(entry["ind"].F, dtype=float).reshape(1, -1)
+        # The holder sits last, so a tie goes to the rivals and costs no swap.
+        ranking = self._rank(np.vstack([F_rivals, held]))
+        return len(ranking) == 0 or int(ranking[0]) == len(F_rivals)
 
 
 # =============================================================================
@@ -374,9 +388,8 @@ SNAPSHOT_STATUSES = ("feasible", "infeasible")
 class SnapshotCallback(Callback):
     """Render the best feasible and infeasible layout of each category, per generation.
 
-    Categories are ``CATEGORIES``; "best" means lowest F[0] — the weighted
-    piece score or, under f0_objective=route_length, the summed circuit
-    length in studs; either way a search score, not utilization. Any of the
+    Categories are ``CATEGORIES``; "best" is whatever ``rank`` says — the
+    configured champion rule, the same pick the elite archive makes. Any of the
     eight combinations may be
     absent in a given generation (no DC-bearing individual, or none infeasible),
     in which case that PNG is simply not written.
@@ -391,9 +404,12 @@ class SnapshotCallback(Callback):
 
     def __init__(self, targets: list[int], output_dir: Path,
                  catalog: TrackCatalog, config: OptimizationConfig, dims,
-                 f0_label: str = "weighted piece score"):
+                 objective_labels: tuple[str, ...], objective_signs: tuple[float, ...],
+                 rank):
         super().__init__()
-        self._f0_label = f0_label
+        self._objective_labels = objective_labels
+        self._objective_signs = objective_signs
+        self._rank = rank
         self.targets = list(targets)
         self._target_set = set(self.targets)
         self._gen_width = len(str(max(self.targets, default=1)))
@@ -438,10 +454,11 @@ class SnapshotCallback(Callback):
             feasible_mask = np.ones(len(X), dtype=bool)
 
         def _pick(mask: np.ndarray) -> dict | None:
-            if not np.any(mask):
+            idx_pool = np.flatnonzero(mask)
+            ranking = self._rank(F[idx_pool]) if len(idx_pool) else ()
+            if len(ranking) == 0:
                 return None
-            idx_pool = np.where(mask)[0]
-            best = int(idx_pool[int(np.argmin(F[idx_pool, 0]))])
+            best = int(idx_pool[int(ranking[0])])
             return {
                 "X": np.asarray(X[best]).copy(),
                 "F": np.asarray(F[best]).copy(),
@@ -484,7 +501,8 @@ class SnapshotCallback(Callback):
                 inventory=self._config.inventory,
                 objectives=entry["F"],
                 cv=entry["cv"] if status == "infeasible" else None,
-                f0_label=self._f0_label,
+                objective_labels=self._objective_labels,
+                objective_signs=self._objective_signs,
             )
             plt.close(fig)
         except Exception as e:
@@ -861,22 +879,28 @@ def run_optimization(
 
     termination = _build_termination(config)
 
+    # One champion rule for the whole run: elites, snapshots and reports must
+    # all point at the same individual or the artifacts contradict each other.
+    rank = champion_ranking(config.champion_selection)
+
     # After FeasibleEliteCallback: the global elite's slot is no longer
     # "worst", so category injection never clobbers it.
-    category_archive = CategoryEliteArchive() if comp.elite_injection else None
+    category_archive = CategoryEliteArchive(rank) if comp.elite_injection else None
     monitor = ConvergenceMonitorCallback(output_dir=output_dir,
                                          closure_tolerance=config.closure_tolerance,
                                          angle_tolerance=config.angle_tolerance)
     monitor.epsilon_source = algorithm
     chain: list[Callback] = []
     if comp.elite_injection:
-        chain += [FeasibleEliteCallback(), category_archive]
+        chain += [FeasibleEliteCallback(rank), category_archive]
     chain.append(monitor)
     if output_dir is not None:
         snapshot_cb = SnapshotCallback(
             _compute_snapshot_targets(config.algorithm.n_gen),
             output_dir, catalog, config, dims,
-            f0_label=problem.f0_label,
+            objective_labels=problem.objective_labels,
+            objective_signs=problem.objective_signs,
+            rank=rank,
         )
         chain.append(snapshot_cb)
     else:
@@ -899,7 +923,7 @@ def run_optimization(
                 f"callbacks=[{', '.join(type(cb).__name__ for cb in chain)}]")
 
     logger.info(f"Starting {algo_name} track optimization...")
-    logger.info(f"Objectives: {problem.f0_label} + {problem.f1_label} (bi-objective)")
+    logger.info(f"Objectives ({problem.n_obj}): {', '.join(problem.objective_labels)}")
     logger.info(f"Population: {config.algorithm.pop_size}")
     logger.info(f"Generations: {config.algorithm.n_gen}")
     logger.info(
@@ -943,14 +967,16 @@ def run_optimization(
     res.snapshots = snapshot_cb.snapshots if snapshot_cb is not None else []
     res.category_elites = category_archive
     # Carried on the result because save_results has no problem instance: the
-    # F[0] labels and the piece-score ceiling come from the objective's own
-    # definition. route_length has no computable ceiling, so the progress
-    # plot draws the bare curve for it.
-    res.f0_label = problem.f0_label
-    res.f0_csv_name = problem.f0_csv_name
+    # objective names and the piece-score ceiling come from the objectives' own
+    # definitions. Only weighted_piece_score has a computable ceiling, and the
+    # progress plot tracks the first objective, so any other one draws the bare
+    # curve.
+    res.objective_labels = problem.objective_labels
+    res.objective_csv_names = problem.objective_csv_names
+    res.objective_signs = problem.objective_signs
     res.max_score = (
         problem.max_weighted_piece_score()
-        if problem.f0_objective == "piece_score" else None
+        if problem.objectives[0] == "weighted_piece_score" else None
     )
 
     logger.info("Optimization complete!")
@@ -967,20 +993,22 @@ def run_optimization(
             feasible_mask = (
                 np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
             )
-            if np.any(feasible_mask):
-                feasible_F = F[feasible_mask]
-                feasible_indices = np.where(feasible_mask)[0]
-                best_idx = feasible_indices[np.argmin(feasible_F[:, 0])]
+            feasible_indices = np.flatnonzero(feasible_mask)
+            ranking = rank(F[feasible_indices]) if len(feasible_indices) else ()
+            if len(ranking):
+                best_idx = int(feasible_indices[int(ranking[0])])
                 best_layout = decode_chromosome(
                     X[best_idx], catalog, config.inventory,
                     dims=dims, config=problem.decoder_config,
                 )
                 total_inv = sum(config.inventory.values())
                 used = best_layout.n_physical_pieces
+                summary = objective_summary(
+                    F[best_idx], problem.objective_labels, problem.objective_signs)
                 logger.info(
-                    f"Best feasible: pieces={used}/{total_inv}, "
-                    f"utilization={used / max(1, total_inv):.1%}, "
-                    f"score={-F[best_idx, 0]:.3f}, time={F[best_idx, 1]:.2f} s, "
+                    f"Best feasible ({config.champion_selection}): "
+                    f"pieces={used}/{total_inv}, "
+                    f"utilization={used / max(1, total_inv):.1%}, {summary}, "
                     f"switch_pairs={best_layout.n_switch_pairs}"
                 )
                 log_piece_usage(best_layout, config.inventory, catalog, logger)
@@ -1051,7 +1079,8 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
                    if pop_counts is not None and np.any(feasible_mask) else None)
     boundary = config.boundary
     total_inv = sum(config.inventory.values())
-    f0_label = getattr(res, "f0_label", "weighted piece score")
+    labels = res.objective_labels
+    signs = res.objective_signs
     lines = ["# Category report", ""]
 
     for category in CATEGORIES:
@@ -1085,8 +1114,7 @@ def _write_category_report(res, output_dir, catalog, config, dims, decoder_cfg,
             lines += [
                 f"- pieces: {n_phys}/{total_inv}",
                 f"- utilization: {n_phys / total_inv:.1%} ({gap})",
-                f"- F[0] {f0_label}: {elite['score']:.3f}, "
-                f"time: {float(ind.F[1]):.2f} s{element_note}",
+                f"- objectives: {objective_summary(ind.F, labels, signs)}{element_note}",
             ]
             if spans:  # all-degenerate paths must not abort the whole report
                 xs = np.concatenate([s[:, 0] for s in spans])
@@ -1146,10 +1174,11 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     np.savetxt(output_dir / "chromosomes.csv", X, delimiter=",", fmt="%d",
                header=chromosome_csv_header(dims), comments="")
-    f0_csv_name = getattr(res, "f0_csv_name", "neg_weighted_piece_score")
-    f0_label = getattr(res, "f0_label", "weighted piece score")
+    labels = res.objective_labels
+    signs = res.objective_signs
+    csv_names = ",".join(res.objective_csv_names)
     np.savetxt(output_dir / "fitness.csv", F, delimiter=",",
-               header=f"{f0_csv_name},expected_traversal_time_s", comments="")
+               header=csv_names, comments="")
     if G is not None:
         # G layout: 5 base + one per catalog piece index (inv_<t>).
         constraint_header = (
@@ -1161,6 +1190,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     feasible_mask = np.all(G <= 0, axis=1) if G is not None else np.ones(len(X), dtype=bool)
     feasible_indices = np.where(feasible_mask)[0]
+    rank = champion_ranking(config.champion_selection)
 
     # Run-cumulative feasible front from the monitor: the terminal population
     # is a converged monoculture, so this archive is what actually shows the
@@ -1169,13 +1199,13 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     archive_F = getattr(monitor, "best_front", None) if monitor is not None else None
     if archive_F is not None and len(archive_F) > 0:
         np.savetxt(output_dir / "pareto_archive.csv", archive_F, delimiter=",",
-                   header=f"f0_{f0_csv_name},f1_traversal_time_s", comments="")
+                   header=csv_names, comments="")
 
     try:
         fig = plot_pareto_front(F, G,
-                                title=f"Pareto Front: {f0_label} vs traversal time",
+                                title=f"Pareto front: {' vs '.join(labels)}",
                                 save_path=output_dir / "pareto_front.png",
-                                archive_F=archive_F, f0_label=f0_label)
+                                archive_F=archive_F, objective_labels=labels)
         plt.close(fig)
         logger.info("Pareto front saved to pareto_front.png")
     except Exception as e:
@@ -1183,12 +1213,14 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     try:
         # convergence.csv is already on disk — the monitor appends it live.
-        generations, scores = load_score_progress(output_dir / "convergence.csv")
+        generations, scores = load_score_progress(
+            output_dir / "convergence.csv", sign=signs[0])
         fig = plot_score_progress(
             generations, scores, max_score=getattr(res, "max_score", None),
             save_path=output_dir / "objective_progress.png",
             n_gen_planned=config.algorithm.n_gen,
-            f0_label=f0_label,
+            objective_label=labels[0],
+            maximized=signs[0] < 0,
         )
         plt.close(fig)
         logger.info("Objective progress saved to objective_progress.png")
@@ -1203,20 +1235,19 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
             inventory=config.inventory,
             objectives=objectives,
             cv=cv,
-            f0_label=f0_label,
+            objective_labels=labels,
+            objective_signs=signs,
         )
         plt.close(fig)
 
     # Each artifact block is isolated: a decode/render failure in one must not
     # cost the remaining artifacts of the run.
     try:
-        best_overall_idx = np.argmin(F[:, 0])
+        best_overall_idx = int(rank(F)[0])  # IndexError on all-degenerate F is caught below
         best_overall_layout = decode_chromosome(
             X[best_overall_idx], catalog, config.inventory,
             dims=dims, config=decoder_cfg,
         )
-        best_overall_score = -F[best_overall_idx, 0]
-        best_overall_time = F[best_overall_idx, 1]
         best_overall_cv = (
             float(np.sum(np.maximum(0, G[best_overall_idx]))) if G is not None else 0.0
         )
@@ -1225,9 +1256,9 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
         total_inv = sum(config.inventory.values())
         used = best_overall_layout.n_physical_pieces
         logger.info(
-            f"Best overall: pieces={used}/{total_inv}, "
+            f"Best overall ({config.champion_selection}): pieces={used}/{total_inv}, "
             f"utilization={used / max(1, total_inv):.1%}, "
-            f"score={best_overall_score:.3f}, time={best_overall_time:.2f} s, "
+            f"{objective_summary(F[best_overall_idx], labels, signs)}, "
             f"switch_pairs={best_overall_layout.n_switch_pairs}, CV={best_overall_cv:.2f}"
             f"{' (FEASIBLE)' if is_feasible else ' (infeasible)'}"
         )
@@ -1236,7 +1267,7 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
 
     try:
         if len(feasible_indices) > 0:
-            best_feas_idx = feasible_indices[np.argmin(F[feasible_indices, 0])]
+            best_feas_idx = feasible_indices[int(rank(F[feasible_indices])[0])]
             best_feas_layout = decode_chromosome(
                 X[best_feas_idx], catalog, config.inventory,
                 dims=dims, config=decoder_cfg,
@@ -1250,14 +1281,17 @@ def save_results(res, output_dir: Path, catalog: TrackCatalog,
     except Exception as e:
         logger.warning(f"Could not render best_layout.png: {e}")
 
-    log_front_scale_and_compromise(F, feasible_indices, logger)
+    log_front_scale_and_compromise(F, feasible_indices, logger, labels, signs)
 
     try:
         infeasible_indices = (
             np.where(~feasible_mask)[0] if G is not None else np.array([], dtype=int)
         )
-        if len(infeasible_indices) > 0:
-            best_infeas_idx = infeasible_indices[np.argmin(F[infeasible_indices, 0])]
+        # Degenerate individuals carry the +inf sentinel, which both champion
+        # rules skip; a population of nothing else leaves no layout to render.
+        ranking = rank(F[infeasible_indices]) if len(infeasible_indices) else ()
+        if len(ranking):
+            best_infeas_idx = infeasible_indices[int(ranking[0])]
             best_infeas_layout = decode_chromosome(
                 X[best_infeas_idx], catalog, config.inventory,
                 dims=dims, config=decoder_cfg,

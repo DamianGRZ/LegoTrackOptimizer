@@ -6,9 +6,12 @@ from pymoo.decomposition.asf import ASF
 from pymoo.indicators.hv import HV
 
 from src.normalization import (
-    HV_REF_POINT,
+    balance_ranking,
+    champion_ranking,
     compromise_index,
+    first_objective_ranking,
     has_extent,
+    hv_ref_point,
     ideal_nadir,
     normalize,
 )
@@ -75,6 +78,66 @@ class TestCompromiseIndex:
         assert compromise_index(nF, np.array([0.1, 0.9])) == 1
 
 
+class TestBalanceRanking:
+    """The elite callbacks pick by this ranking, so it decides what survives."""
+
+    def test_row_agrees_with_the_equal_weight_compromise(self):
+        F = _sample_front(50)
+        expected = compromise_index(normalize(F, *ideal_nadir(F)))
+        assert balance_ranking(F)[0] == expected
+
+    def test_orders_from_balanced_to_extreme(self):
+        """Two extremes and one middle point: the middle wins, an extreme loses."""
+        F = np.array([[-0.60, 15.0], [-0.05, 2.5], [-0.35, 8.0]])
+        ranking = balance_ranking(F)
+        assert ranking[0] == 2
+        assert ranking[-1] in (0, 1)
+
+    def test_infinite_rows_are_skipped_not_ranked(self):
+        """Degenerate individuals carry the +inf sentinel; including them would
+        collapse the normalization onto a single finite point."""
+        F = np.array([[np.inf, np.inf], [-0.4, 9.0], [-0.2, 4.0]])
+        assert set(balance_ranking(F).tolist()) == {1, 2}
+
+    def test_no_finite_row_leaves_an_empty_ranking(self):
+        assert len(balance_ranking(np.full((3, 2), np.inf))) == 0
+
+    def test_ranks_three_objectives(self):
+        """The pick must not assume two objectives — 3-objective runs use it too."""
+        F = np.array([[-0.6, 15.0, -900.0], [-0.05, 2.5, -80.0], [-0.3, 8.0, -400.0]])
+        assert balance_ranking(F)[0] == 2
+
+    def test_single_row_is_its_own_champion(self):
+        """pymoo's ASF keeps a (1, 1) shape for one row; the ranking must not
+        trip over it."""
+        assert balance_ranking(np.array([[-0.6, 1.0]])).tolist() == [0]
+
+
+class TestChampionRankings:
+    """``config.champion_selection`` chooses between these; they must be
+    distinguishable on the same set or the knob selects nothing."""
+
+    def test_first_objective_ranks_by_f0_alone(self):
+        F = np.array([[-0.60, 15.0], [-0.05, 2.5], [-0.35, 8.0]])
+        assert first_objective_ranking(F).tolist() == [0, 2, 1]
+
+    def test_infinite_rows_are_dropped(self):
+        F = np.array([[np.inf, np.inf], [-0.4, 9.0], [-0.2, 4.0]])
+        assert first_objective_ranking(F).tolist() == [1, 2]
+        assert len(first_objective_ranking(np.full((3, 2), np.inf))) == 0
+
+    def test_rules_disagree_on_an_unbalanced_front(self):
+        """The F0 extreme pays badly on F1: rule one still takes it, the
+        balanced rule walks past it — the configured choice is observable."""
+        F = np.array([[-0.60, 15.0], [-0.05, 2.5], [-0.35, 8.0]])
+        assert first_objective_ranking(F)[0] == 0
+        assert balance_ranking(F)[0] == 2
+
+    def test_mapping_matches_the_config_literals(self):
+        assert champion_ranking("first_objective") is first_objective_ranking
+        assert champion_ranking("balanced") is balance_ranking
+
+
 class TestPymooReferenceEquivalence:
     """Pin the implementation to pymoo's Getting-Started Part 3 reference.
 
@@ -104,7 +167,7 @@ class TestPymooReferenceEquivalence:
         objective must not move the indicator — otherwise HV would be
         incomparable between runs whose objectives span different ranges."""
         F = _sample_front(40)
-        ref_point = np.asarray(HV_REF_POINT, dtype=float)
+        ref_point = hv_ref_point(F.shape[1])
 
         def hv_normalized(objectives):
             ideal, nadir = ideal_nadir(objectives)

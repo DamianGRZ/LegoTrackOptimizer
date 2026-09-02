@@ -624,19 +624,21 @@ def _draw_track_view(ax, layout: MultiPathLayout, main_path: TraversalPath, boun
 def _panel_metrics_lines(layout: MultiPathLayout, inventory: Optional[dict[str, int]],
                          objectives: Optional[Sequence[float]], cv: Optional[float],
                          closure_tolerance: float, angle_tolerance: float,
-                         f0_label: str = "weighted piece score") -> list[str]:
-    """Metric rows for the info panel. F rows require objectives, the constraint
-    row requires cv; errors are shown against their tolerances."""
+                         objective_labels: Optional[Sequence[str]] = None,
+                         objective_signs: Optional[Sequence[float]] = None) -> list[str]:
+    """Metric rows for the info panel. Objective rows need values, names and
+    signs together, the constraint row needs cv; errors are shown against their
+    tolerances."""
     used = layout.n_physical_pieces
     total = sum(inventory.values()) if inventory else None
     lines = [f"Pieces: {used}" if total is None else f"Pieces: {used}/{total}"]
     if total is not None:
         lines.append(f"Utilization: {used / total:.1%}")
-    if objectives is not None:
-        # F[0] is a search score, not a share of the kit — shown as a bare
-        # number so it never reads as a rival utilization percentage.
-        lines.append(f"F[0] {f0_label}: {-float(objectives[0]):.3f}")
-        lines.append(f"F[1] time: {float(objectives[1]):.2f} s")
+    if objectives is not None and objective_labels and objective_signs:
+        # A search score is not a share of the kit — shown as a bare number so
+        # it never reads as a rival utilization percentage.
+        lines += [f"{label}: {sign * float(value):.4g}" for label, sign, value
+                  in zip(objective_labels, objective_signs, objectives)]
     lines.append(f"Number of unique Paths: {layout.n_paths}")
     lines.append(f"Closure error: {layout.max_closure_error:.2f} / "
                  f"{closure_tolerance:.1f} studs")
@@ -721,14 +723,16 @@ def plot_layout(
     inventory: Optional[dict[str, int]] = None,
     objectives: Optional[Sequence[float]] = None,
     cv: Optional[float] = None,
-    f0_label: str = "weighted piece score",
+    objective_labels: Optional[Sequence[str]] = None,
+    objective_signs: Optional[Sequence[float]] = None,
 ) -> Figure:
     """Render one full-size track view with a metrics + legend panel beside it.
 
     The closure/angle tolerances are keyword-only and required: the drift
     overlay must be gated by the optimizer's own thresholds, never a renderer
-    default. F rows appear only when ``objectives`` is given, the constraint
-    row only when ``cv`` is given (pass it for infeasible individuals).
+    default. Objective rows appear only when values, names and signs are all
+    given, the constraint row only when ``cv`` is given (pass it for infeasible
+    individuals).
 
     Args:
         layout: Decoded multi-path layout.
@@ -739,9 +743,11 @@ def plot_layout(
         closure_tolerance: Position closure tolerance in studs, from config.
         angle_tolerance: Angle closure tolerance in degrees, from config.
         inventory: Optional {piece_id: count} capacities for panel and legend.
-        objectives: Optional raw pymoo F row (negated F[0] — weighted piece
-            score or route length in studs — and time).
+        objectives: Optional raw pymoo F row, as stored (minimized).
         cv: Optional constraint violation of the rendered individual.
+        objective_labels: One name per objective, in F order.
+        objective_signs: Factor per objective turning its stored minimum into
+            the value the panel shows.
 
     Returns:
         Matplotlib figure.
@@ -768,7 +774,8 @@ def plot_layout(
 
         metrics = _panel_metrics_lines(layout, inventory, objectives, cv,
                                        closure_tolerance, angle_tolerance,
-                                       f0_label=f0_label)
+                                       objective_labels=objective_labels,
+                                       objective_signs=objective_signs)
         handles = _legend_handles(layout, catalog, inventory, has_branch=has_branch,
                                   has_drift=has_drift, has_boundary=boundary is not None)
         fig.tight_layout()

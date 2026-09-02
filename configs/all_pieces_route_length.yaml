@@ -1,9 +1,10 @@
-# all_pieces with the route_length F[0]: maximize the summed length in studs
-# of every unique circuit, so special pieces earn the routes they open.
+# all_pieces trading route length against traversal time: maximize the summed
+# length in studs of every unique circuit, so special pieces earn the routes
+# they open, against the time to cover the network.
 
 train_config_path: trains/measured_consist.yaml
 
-f0_objective: route_length
+objectives: [route_length, traversal_time]
 
 inventory:
   # Straights

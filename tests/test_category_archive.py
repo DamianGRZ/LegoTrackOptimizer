@@ -11,6 +11,7 @@ from pymoo.core.population import Population
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.encoding import compute_dimensions, create_chromosome_from_pieces, create_empty_chromosome
+from src.normalization import first_objective_ranking
 from src.problem import TrackOptimizationProblem
 
 
@@ -90,7 +91,7 @@ class TestCategoryEliteArchive:
 
     def test_captures_best_feasible_and_infeasible_separately(self):
         from src.algorithm.runner import CategoryEliteArchive
-        arch = CategoryEliteArchive(inject=False)
+        arch = CategoryEliteArchive(first_objective_ranking, inject=False)
         pop = _fab_pop([
             {"F0": -0.30, "feas": True, "cross": 1},
             {"F0": -0.20, "feas": True, "cross": 1},   # worse feasible cross
@@ -98,13 +99,13 @@ class TestCategoryEliteArchive:
             {"F0": -0.60, "feas": True},               # plain — no category
         ])
         arch.notify(_algo(pop))
-        assert arch.feasible["cross"]["score"] == pytest.approx(0.30)
-        assert arch.infeasible["cross"]["score"] == pytest.approx(0.90)
+        assert float(arch.feasible["cross"]["ind"].F[0]) == pytest.approx(-0.30)
+        assert float(arch.infeasible["cross"]["ind"].F[0]) == pytest.approx(-0.90)
         assert "switch" not in arch.feasible and "dc" not in arch.feasible
 
     def test_injects_archived_elite_when_category_extinct(self):
         from src.algorithm.runner import CategoryEliteArchive
-        arch = CategoryEliteArchive()
+        arch = CategoryEliteArchive(first_objective_ranking)
         gen1 = _fab_pop([
             {"F0": -0.30, "feas": True, "cross": 1},
             {"F0": -0.60, "feas": True},
@@ -123,7 +124,7 @@ class TestCategoryEliteArchive:
 
     def test_no_injection_when_better_member_present(self):
         from src.algorithm.runner import CategoryEliteArchive
-        arch = CategoryEliteArchive()
+        arch = CategoryEliteArchive(first_objective_ranking)
         gen1 = _fab_pop([{"F0": -0.30, "feas": True, "cross": 1}])
         arch.notify(_algo(gen1))
         gen2 = _fab_pop([
@@ -134,11 +135,11 @@ class TestCategoryEliteArchive:
         arch.notify(_algo(gen2))
         np.testing.assert_array_equal(gen2.get("X"), x_before)
         # And the archive itself upgraded to the better member.
-        assert arch.feasible["cross"]["score"] == pytest.approx(0.35)
+        assert float(arch.feasible["cross"]["ind"].F[0]) == pytest.approx(-0.35)
 
     def test_two_categories_inject_into_distinct_slots(self):
         from src.algorithm.runner import CategoryEliteArchive
-        arch = CategoryEliteArchive()
+        arch = CategoryEliteArchive(first_objective_ranking)
         gen1 = _fab_pop([
             {"F0": -0.30, "feas": True, "cross": 1},
             {"F0": -0.25, "feas": True, "dc": 1},
@@ -170,24 +171,29 @@ class TestCategoryReport:
         pop = Population.new("X", X)
         Evaluator().eval(problem, pop)
 
-        arch = CategoryEliteArchive(inject=False)
+        arch = CategoryEliteArchive(first_objective_ranking, inject=False)
         arch.notify(SimpleNamespace(pop=pop))
         assert "cross" in arch.feasible, "seed sanity: cross elite captured"
         # The no-special-piece baseline is archived like any other category.
         assert "plain" in arch.feasible, "plain elite captured"
 
-        res = SimpleNamespace(pop=pop, category_elites=arch)
+        res = SimpleNamespace(
+            pop=pop, category_elites=arch,
+            objective_labels=problem.objective_labels,
+            objective_csv_names=problem.objective_csv_names,
+            objective_signs=problem.objective_signs,
+        )
         save_results(res, tmp_path, cat, cfg)
 
         report = (tmp_path / "category_report.md").read_text(encoding="utf-8")
         for category in ("plain", "switch", "cross", "dc"):
             assert f"## {category}" in report
             assert (tmp_path / f"best_with_{category}.png").exists()
-        # Pieces, utilization and the weighted F[0] score are three separate
-        # quantities; each gets its own name so no percent is ambiguous.
+        # Pieces, utilization and the search score are separate quantities; each
+        # gets its own name so no percent is ambiguous.
         assert "- pieces:" in report
         assert "- utilization:" in report
-        assert "F[0] weighted piece score:" in report
+        assert "- objectives: weighted piece score=" in report
 
 
 class TestDecoderDropLog:
@@ -306,18 +312,18 @@ class TestEmergentCrossCounting:
         assert int(np.asarray(pop.get("n_cross_comm"))[0]) == 1
 
 
-class TestArchiveScoreIndConsistency:
-    """After an earlier category injects mid-notify, later categories must
-    see the CURRENT population: every archive entry's score must equal the
-    archived individual's own -F[0] (no stale-snapshot bookkeeping)."""
+class TestArchiveEntryConsistency:
+    """After an earlier category injects mid-notify, later categories must see
+    the CURRENT population: an entry's piece count must belong to the individual
+    it stores, not to the occupant that individual replaced."""
 
-    def test_injected_elite_not_recorded_with_stale_score(self):
+    def test_injected_elite_not_recorded_with_stale_count(self):
         from src.algorithm.runner import CategoryEliteArchive
-        arch = CategoryEliteArchive()
+        arch = CategoryEliteArchive(first_objective_ranking)
         # gen1: one feasible individual carrying BOTH cross and dc.
         gen1 = _fab_pop([
-            {"F0": -0.30, "feas": True, "cross": 1, "dc": 1},
-            {"F0": -0.60, "feas": True},
+            {"F0": -0.30, "feas": True, "cross": 1, "dc": 1, "pcs": 22},
+            {"F0": -0.60, "feas": True, "pcs": 40},
         ])
         arch.notify(_algo(gen1))
         # gen2: both categories extinct. The cross category injects its
@@ -325,12 +331,11 @@ class TestArchiveScoreIndConsistency:
         # dc bookkeeping must describe the injected individual, not the
         # replaced occupant.
         gen2 = _fab_pop([
-            {"F0": -0.62, "feas": True},
-            {"F0": -0.10, "feas": False},
+            {"F0": -0.62, "feas": True, "pcs": 41},
+            {"F0": -0.10, "feas": False, "pcs": 7},
         ])
         arch.notify(_algo(gen2))
         for store in (arch.feasible, arch.infeasible):
             for category, entry in store.items():
-                assert entry["score"] == pytest.approx(
-                    -float(entry["ind"].F[0])
-                ), (category, entry["score"], float(entry["ind"].F[0]))
+                own = int(entry["ind"].get("n_pieces"))
+                assert entry["n_pieces"] == own, (category, entry["n_pieces"], own)

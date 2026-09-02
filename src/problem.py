@@ -1,22 +1,17 @@
 """pymoo optimization problem for multi-objective track layout optimization.
 
-Bi-objective NSGA-II with Deb's constraint handling:
-- F[0], per config.f0_objective:
-  - piece_score (default): -weighted piece score (maximize piece usage;
-    special pieces carry a premium so topology is not stripped as overhead)
-  - route_length: -summed length in studs of every unique circuit, so
-    special pieces earn the routes they open
-  Both are search scores, NOT utilization — the honest count rides on the
-  ``n_pieces`` out-key.
-- F[1] = expected time to cover every physical piece once, averaged over every
-         enumerated drivable circuit (2^J switch choices + DC sub-loops);
-         speeds per config.f1_speed_model: the 3-pass physics profiler at
-         safety_margin=0.95, or a constant speed (minimize; see
-         _expected_traversal_time)
-- 5 + per-piece-type inequality constraints via Deb's CV rules
+NSGA-II with Deb's constraint handling. ``config.objectives`` lists the terms
+to minimize, one per entry of F and in that order, so a run has as many
+objectives as the list is long. The weighted piece score and the summed circuit
+length are search scores held negated (utilization is the ``n_pieces`` out-key,
+not either of them); the expected traversal time is minimized as measured.
+Constraints are the same whatever the objectives: closure, boundary, collisions
+and one inventory term per piece type.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import numpy as np
 from pymoo.core.problem import ElementwiseProblem
@@ -113,21 +108,33 @@ def _expected_traversal_time(
     return sum(total / passages for total, passages in per_piece.values())
 
 
-class TrackOptimizationProblem(ElementwiseProblem):
-    """Bi-objective track layout optimization with NSGA-II.
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    """A term ``config.objectives`` can name: the method that minimizes it, the
+    names reports and CSV headers give it, and the factor turning the stored
+    minimum back into the quantity a reader is shown."""
 
-    Objectives (both minimized for pymoo):
-        F[0] = -weighted_piece_score   (default; maximize piece usage, with a
-                                        premium per special piece; not a
-                                        utilization ratio — report
-                                        ``n_pieces`` instead)
-             = -route_length_studs     (f0_objective=route_length; maximize
-                                        the summed length of every unique
-                                        circuit in studs)
-        F[1] = expected_traversal_time (minimize the expected time to cover
-                                        every physical piece once; speeds per
-                                        config.f1_speed_model — physics at
-                                        safety_margin=0.95, or constant)
+    term: str
+    label: str
+    csv_name: str
+    sign: float
+
+
+OBJECTIVE_SPECS = {
+    "weighted_piece_score": ObjectiveSpec(
+        "_f_weighted_piece_score", "weighted piece score", "neg_weighted_piece_score", -1.0),
+    "route_length": ObjectiveSpec(
+        "_f_route_length", "route length (studs)", "neg_route_length_studs", -1.0),
+    "traversal_time": ObjectiveSpec(
+        "_f_traversal_time", "expected traversal time", "expected_traversal_time_s", 1.0),
+}
+
+
+class TrackOptimizationProblem(ElementwiseProblem):
+    """Track layout optimization with NSGA-II.
+
+    The objectives are whichever terms ``config.objectives`` names, evaluated in
+    that order and all minimized for pymoo; ``OBJECTIVE_SPECS`` defines them.
 
     Constraints (g <= 0 feasible, Deb's CV rules):
         G[0]: closure_x    = abs(dx) / closure_tolerance - 1
@@ -179,7 +186,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         super().__init__(
             n_var=self.dims.n_var,
-            n_obj=2,
+            n_obj=len(config.objectives),
             # 3 closure + boundary + collisions + per-type inventory
             n_ieq_constr=5 + catalog.n_pieces,
             xl=xl,
@@ -192,9 +199,12 @@ class TrackOptimizationProblem(ElementwiseProblem):
         self._train_config = config.load_train_config()
         self.total_inventory = sum(config.inventory.values())
         self.special_piece_weight = config.special_piece_weight
-        self.f0_objective = config.f0_objective
+        self.objectives = tuple(config.objectives)
         self.f1_constant_speed = (
             config.f1_constant_speed if config.f1_speed_model == "constant" else None
+        )
+        self._objective_terms = tuple(
+            getattr(self, OBJECTIVE_SPECS[name].term) for name in self.objectives
         )
         self.inventory_by_index = catalog.inventory_by_index(config.inventory)
 
@@ -212,7 +222,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
         # Never NaN — pymoo tolerates +inf in HV when filtered to feasible-only,
         # but NaN breaks dominance comparison and requires replace_nan_values_by.
         if layout.n_pieces == 0:
-            out["F"] = np.array([np.inf, np.inf])
+            out["F"] = np.full(self.n_obj, np.inf)
             out["G"] = np.full(self.n_ieq_constr, DEGENERATE_G)
             out["n_pieces"] = 0
             out["n_sw_pairs"] = 0
@@ -220,28 +230,7 @@ class TrackOptimizationProblem(ElementwiseProblem):
             out["n_dc_comm"] = 0
             return
 
-        # F[0], per the configured variant: the weighted piece score, or the
-        # summed studs of every unique circuit ('route_length' premiums
-        # special pieces by the routes they open). Maximized via negation.
-        if self.f0_objective == "route_length":
-            f0_value = self._route_length_studs(layout)
-        else:
-            f0_value = self._weighted_piece_score(layout)
-
-        # F[1] = expected whole-network traversal time: every physical piece
-        # charged the mean of its traversal times across all enumerated
-        # circuits (2^J switch choices + DC sub-loops), so branch topology
-        # pays its real time cost. Speeds come from the 3-pass profiler at
-        # SPEED_SAFETY_MARGIN, or from the configured constant speed. See
-        # _expected_traversal_time.
-        traversal_time = _expected_traversal_time(
-            layout, self.catalog, self._train_config,
-            closure_pos_tol=self.closure_tolerance,
-            closure_angle_tol=self.angle_tolerance,
-            constant_speed=self.f1_constant_speed,
-        )
-
-        out["F"] = [-f0_value, traversal_time]
+        out["F"] = [term(layout) for term in self._objective_terms]
 
         # Committed-element census as custom out-keys: the Evaluator copies
         # them onto the Population, so the category-elite archive reads them
@@ -332,29 +321,47 @@ class TrackOptimizationProblem(ElementwiseProblem):
 
         return float(max_violation)
 
-    @property
-    def f1_label(self) -> str:
-        """Human label of the configured F[1] speed model, for logs and reports."""
-        if self.f1_constant_speed is not None:
-            return f"expected traversal time (constant {self.f1_constant_speed} m/s)"
-        return "expected traversal time (train physics)"
+    def _f_weighted_piece_score(self, layout) -> float:
+        return -self._weighted_piece_score(layout)
+
+    def _f_route_length(self, layout) -> float:
+        return -self._route_length_studs(layout)
+
+    def _f_traversal_time(self, layout) -> float:
+        return _expected_traversal_time(
+            layout, self.catalog, self._train_config,
+            closure_pos_tol=self.closure_tolerance,
+            closure_angle_tol=self.angle_tolerance,
+            constant_speed=self.f1_constant_speed,
+        )
+
+    def _objective_label(self, name: str) -> str:
+        """Human label of one objective. The traversal time carries its speed
+        model, which the term name alone does not say."""
+        label = OBJECTIVE_SPECS[name].label
+        if name != "traversal_time":
+            return label
+        speed = ("train physics" if self.f1_constant_speed is None
+                 else f"constant {self.f1_constant_speed} m/s")
+        return f"{label} ({speed})"
 
     @property
-    def f0_label(self) -> str:
-        """Human label of the configured F[0] variant, for reports and plots."""
-        if self.f0_objective == "route_length":
-            return "route length (studs)"
-        return "weighted piece score"
+    def objective_labels(self) -> tuple[str, ...]:
+        """Label per objective, in evaluation order, for logs, reports and plots."""
+        return tuple(self._objective_label(name) for name in self.objectives)
 
     @property
-    def f0_csv_name(self) -> str:
-        """fitness.csv column name of the configured F[0] variant (negated)."""
-        if self.f0_objective == "route_length":
-            return "neg_route_length_studs"
-        return "neg_weighted_piece_score"
+    def objective_csv_names(self) -> tuple[str, ...]:
+        """fitness.csv column name per objective, in evaluation order."""
+        return tuple(OBJECTIVE_SPECS[name].csv_name for name in self.objectives)
+
+    @property
+    def objective_signs(self) -> tuple[float, ...]:
+        """Factor per objective turning its stored minimum into the reported value."""
+        return tuple(OBJECTIVE_SPECS[name].sign for name in self.objectives)
 
     def max_weighted_piece_score(self) -> float:
-        """Ceiling on the F[0] score for this inventory, ignoring all geometry.
+        """Ceiling on the weighted piece score for this inventory, ignoring geometry.
 
         The whole kit placed, plus every special element it can form: siding
         pairs are capped by the scarcer switch handedness, crossings and

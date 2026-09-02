@@ -15,6 +15,7 @@ from src.algorithm.runner import (
 from src.catalog import TrackCatalog
 from src.config import OptimizationConfig
 from src.encoding import compute_dimensions, create_chromosome_from_pieces
+from src.normalization import first_objective_ranking
 from src.problem import TrackOptimizationProblem
 
 
@@ -72,6 +73,9 @@ class TestSnapshotFiles:
     def _run_one(self, tmp_path, cat, cfg, dims, population, n_gen, gen):
         callback = SnapshotCallback(
             _compute_snapshot_targets(n_gen), tmp_path, cat, cfg, dims,
+            objective_labels=("weighted piece score", "expected traversal time"),
+            objective_signs=(-1.0, 1.0),
+            rank=first_objective_ranking,
         )
         callback.notify(SimpleNamespace(n_gen=gen, pop=population))
         return tmp_path / "snapshots"
@@ -101,6 +105,9 @@ class TestSnapshotFiles:
     ):
         callback = SnapshotCallback(
             _compute_snapshot_targets(5), tmp_path, cat, cfg, dims,
+            objective_labels=("weighted piece score", "expected traversal time"),
+            objective_signs=(-1.0, 1.0),
+            rank=first_objective_ranking,
         )
         callback.notify(SimpleNamespace(n_gen=1, pop=population))
         callback.notify(SimpleNamespace(n_gen=1, pop=population))
