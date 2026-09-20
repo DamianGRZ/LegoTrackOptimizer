@@ -5,6 +5,8 @@ MultiPathLayout (druga, osobna petla jest tam niewyrazalna). Zamiast tego
 kazdy FIZYCZNY klocek rysowany jest raz, z jego wlasnej ramki, wspolnym
 silnikiem _draw_piece / _draw_joint - podsypka, szyny, kolory i styl V1.
 """
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
@@ -12,7 +14,7 @@ from matplotlib.patches import Patch
 from src.config import BoundaryConfig
 from src.encoding import (
     STRAIGHT_16, STRAIGHT_24, R40_CURVE, CROSS_90,
-    R40_SWITCH_LEFT, R40_SWITCH_RIGHT,
+    R40_SWITCH_LEFT, R40_SWITCH_RIGHT, DOUBLE_CROSSOVER,
 )
 # track_renderer wymusza backend Agg przy imporcie, wiec tu nie trzeba.
 from src.visualization.track_renderer import (
@@ -31,11 +33,13 @@ PIECE_MAP = {
     "WL": (R40_SWITCH_LEFT, 0),
     "WR": (R40_SWITCH_RIGHT, 0),
     "XX": (CROSS_90, 0),
+    "DC": (DOUBLE_CROSSOVER, 0),
 }
 LEGEND_NAMES = {
     STRAIGHT_16: "STRAIGHT_16", STRAIGHT_24: "STRAIGHT_24",
     R40_CURVE: "R40_CURVE", CROSS_90: "CROSS_90",
     R40_SWITCH_LEFT: "R40_SWITCH_LEFT", R40_SWITCH_RIGHT: "R40_SWITCH_RIGHT",
+    DOUBLE_CROSSOVER: "DOUBLE_CROSSOVER",
 }
 MARKER_ANCHOR = {"WL": (16.0, 0.0), "WR": (16.0, 0.0), "XX": (8.0, 0.0)}
 
@@ -94,7 +98,7 @@ def legend_handles(lay, inventory):
         STRAIGHT_16: inventory["S16"], STRAIGHT_24: inventory["S24"],
         R40_CURVE: inventory["R40"],
         R40_SWITCH_LEFT: inventory["WL"], R40_SWITCH_RIGHT: inventory["WR"],
-        CROSS_90: inventory["XX"],
+        CROSS_90: inventory["XX"], DOUBLE_CROSSOVER: inventory["DC"],
     }
     handles = []
     for idx in sorted(LEGEND_NAMES):
@@ -110,22 +114,43 @@ def legend_handles(lay, inventory):
     return handles
 
 
-def save_gallery(rows, path, inventory, max_size, cols: int = 3):
-    """Galeria ukladow z frontu: (lay, elem, trasy, kolizje, rozmiar) na panel."""
+def save_gallery(rows, path, max_size, cols: int = 3):
+    """Wszystkie uklady na jednym PNG, bez legendy; numer w tytule panelu
+    to numer pliku z save_layouts. Wiersz to (lay, elem, trasy, kolizje, rozmiar)."""
     half_w, half_h = max_size[0] / 2.0, max_size[1] / 2.0
     boundary = BoundaryConfig(min_x=-half_w, max_x=half_w, min_y=-half_h, max_y=half_h)
     n_rows = (len(rows) + cols - 1) // cols
     fig, axes = plt.subplots(n_rows, cols, figsize=(8 * cols, 7.5 * n_rows))
     axes = list(np.atleast_1d(axes).flatten())
-    for ax, (lay, used, routes, ov, size) in zip(axes, rows):
+    for k, (ax, (lay, used, routes, ov, size)) in enumerate(zip(axes, rows), 1):
         draw_layout_v1(ax, lay, boundary)
-        ax.set_title(f"{used:.0f} elem, {routes:.0f} tras, kolizje {ov:.0f}, "
+        ax.set_title(f"#{k}: {used:.0f} elem, {routes:.0f} tras, kolizje {ov:.0f}, "
                      f"{size[0]:.0f}x{size[1]:.0f} studow", fontsize=12)
     for ax in axes[len(rows):]:
         ax.axis("off")
-    axes[0].legend(handles=legend_handles(rows[0][0], inventory),
-                   loc="lower left", prop={"family": "monospace", "size": 8})
     fig.tight_layout()
     fig.savefig(path, dpi=110, bbox_inches="tight")
     plt.close(fig)
     return path
+
+
+def save_layouts(rows, path, inventory, max_size):
+    """Kazdy uklad na osobnym PNG `<path>_<k>`, z legenda na prawo od rysunku.
+    Zwraca liste sciezek."""
+    half_w, half_h = max_size[0] / 2.0, max_size[1] / 2.0
+    boundary = BoundaryConfig(min_x=-half_w, max_x=half_w, min_y=-half_h, max_y=half_h)
+    stem, suffix = Path(path).with_suffix(""), Path(path).suffix or ".png"
+    paths = []
+    for k, (lay, used, routes, ov, size) in enumerate(rows, 1):
+        fig, ax = plt.subplots(figsize=(9, 8.5))
+        draw_layout_v1(ax, lay, boundary)
+        ax.set_title(f"#{k}: {used:.0f} elem, {routes:.0f} tras, kolizje {ov:.0f}, "
+                     f"{size[0]:.0f}x{size[1]:.0f} studow", fontsize=12)
+        ax.legend(handles=legend_handles(lay, inventory), loc="upper left",
+                  bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0,
+                  prop={"family": "monospace", "size": 8})
+        out = f"{stem}_{k}{suffix}"
+        fig.savefig(out, dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(out)
+    return paths

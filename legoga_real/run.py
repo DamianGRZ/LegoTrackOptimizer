@@ -1,5 +1,5 @@
 """
-Uruchomienie: python -m legoga.run
+Uruchomienie: python -m legoga_real.run
 
 Prototyp NSGA-II dla ukladania torow LEGO.
 """
@@ -18,7 +18,26 @@ from .ga import (DEFAULT_INVENTORY, TrackCrossover, TrackDuplicates,
                  TrackMutation, TrackProblem, TrackSampling,
                  inventory_excess)
 from .progress import ProgressCallback
-from .render_with_v1 import save_gallery
+from .render_with_v1 import save_gallery, save_layouts
+
+
+def front_spread(rows, n: int = 6):
+    """Rownomiernie rozlozone punkty frontu, po jednym na pare (klocki, trasy).
+
+    Front zawiera zwykle po kilka ukladow o tych samych wartosciach obu celow -
+    roznych fizycznie, lecz nieodroznialnych na rysunku. Wybor pierwszych `n`
+    wierszy oddaje im caly rysunek i gubi drugi koniec frontu.
+    """
+    uniq, seen = [], set()
+    for row in rows:
+        _, used, routes, _, _ = row
+        if (used, routes) not in seen:
+            seen.add((used, routes))
+            uniq.append(row)
+    if len(uniq) <= n:
+        return uniq
+    step = (len(uniq) - 1) / max(n - 1, 1)
+    return [uniq[round(i * step)] for i in range(n)]
 
 
 def run(inventory=None, pop=60, gens=40, seed=1, out="tory.png",
@@ -60,8 +79,10 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="tory.png",
               f"{sz[0]:6.0f}x{sz[1]:<6.0f}  {s}")
 
     if rows:
-        save_gallery(rows[:6], out, problem.inv, max_size)
-        print(f"\nRysunek: {out}")
+        picked = front_spread(rows)
+        gallery = save_gallery(picked, out, max_size)
+        paths = save_layouts(picked, out, problem.inv, max_size)
+        print("\nRysunki: " + ", ".join([gallery, *paths]))
 
     stem = Path(out).with_suffix("")
     progress = res.algorithm.callback
