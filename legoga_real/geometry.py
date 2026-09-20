@@ -11,11 +11,9 @@ Konwencje
 * Port ma pozycje i kierunek ZEWNETRZNY (outward) - tam, gdzie "wystaje" tor.
   Port 0 kazdego elementu jest w (0,0) i patrzy w kierunku 8 (czyli -x).
 
-!!!  UWAGA - LICZBY DO PODMIANY  !!!
-Geometria SWITCH_* i CROSS ponizej to PRZYBLIZENIE (rozjazd traktowany jako
-prosta-16 z odgalezieniem rownym jednemu lukowi). Rzeczywiste LEGO ma inne
-wymiary. Przed uzyciem produkcyjnym podmien wartosci na dane z biblioteki
-czesci BlueBrick / TrixBrix. Cala geometria siedzi w tym jednym pliku.
+Rozjazd jest zmierzony: korpus 32 study, port odgalezienia (32.75, +-13.0),
+odgalezienie to luk R40 na calej dlugosci. Skrzyzowanie jest modelem prostym -
+dwie niezalezne osie po 16 studow. Cala geometria siedzi w tym jednym pliku.
 """
 from __future__ import annotations
 
@@ -37,6 +35,14 @@ CURVE_UNITS = 1               # luk = 1 jednostka kata = 22.5 stopnia
 SWITCH_BODY = 32.0
 SWITCH_C_X, SWITCH_C_Y = 32.75, 13.0
 
+# Podwojny rozjazd krzyzowy (data/track_pieces_v2.yaml, 4DBrix 210.1): dwa
+# rownolegle tory po 48 studow (3 x S16 albo 2 x S24), 16 studow od osi do
+# osi (srodek toru do srodka toru), polaczone dwoma skosami. Skosy nie sa
+# zlozeniem klockow prototypu i nie sa modelowane - licza sie tylko ich
+# porty i trasy.
+DC_LEN = 48.0
+DC_SPACING = 16.0
+
 TRACK_WIDTH = 8.0             # szerokosc toru - do detekcji kolizji
 
 
@@ -46,7 +52,8 @@ _SW_A1 = math.asin(0.6)       # kat pierwszego luku odgalezienia (3-4-5)
 ARC_LEN = CURVE_R * _A * CURVE_UNITS
 ELEM_LEN = {"S16": STRAIGHT_LEN, "S24": STRAIGHT_LONG_LEN,
             "CL": ARC_LEN, "CR": ARC_LEN,
-            "WL": SWITCH_BODY, "WR": SWITCH_BODY, "XX": STRAIGHT_LEN}
+            "WL": SWITCH_BODY, "WR": SWITCH_BODY, "XX": STRAIGHT_LEN,
+            "DC": DC_LEN}
 
 
 def rad(a: int) -> float:
@@ -212,6 +219,21 @@ XX = _reg(ElementType(
     routes=((0, 1), (2, 3)),
     centerline=((0, 1, _line_points(0, 0, STRAIGHT_LEN, 0)),
                 (2, 3, _line_points(_H, -_H, _H, _H))),
+    is_node=True,
+))
+
+# Podwojny rozjazd krzyzowy: tor 1 na y = 0 (porty 0 -> 1), tor 2 na y = 16
+# (porty 2 -> 3), skosy 0 -> 3 i 2 -> 1. Os probkowana tylko wzdluz torow -
+# skosy leza miedzy nimi, blizej niz TRACK_WIDTH od ktoregos toru.
+DC = _reg(ElementType(
+    name="DC",
+    ports=((0.0, 0.0, 8),
+           (DC_LEN, 0.0, 0),
+           (0.0, DC_SPACING, 8),
+           (DC_LEN, DC_SPACING, 0)),
+    routes=((0, 1), (2, 3), (0, 3), (2, 1)),
+    centerline=((0, 1, _line_points(0, 0, DC_LEN, 0, 6)),
+                (2, 3, _line_points(0, DC_SPACING, DC_LEN, DC_SPACING, 6))),
     is_node=True,
 ))
 

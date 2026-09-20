@@ -10,8 +10,8 @@ from __future__ import annotations
 import math
 import random
 
-from .geometry import (ANG, ELEMENTS, STRAIGHT_LEN, SWITCH_BODY, advance,
-                       compose, inverse, port_pose)
+from .geometry import (ANG, ELEM_LEN, ELEMENTS, STRAIGHT_LEN, SWITCH_BODY,
+                       advance, compose, inverse, port_pose)
 from .layout import Layout
 from .table import TransformTable
 
@@ -19,6 +19,7 @@ FLIP = {"CL": "CR", "CR": "CL", "S16": "S16", "S24": "S24"}
 NEUTRAL_BLOCKS = [("S16",), ("S24",), ("CL", "CR"), ("CR", "CL"),
                   ("S16", "S16"), ("CL", "CR", "S16"), ("S16", "CL", "CR")]
 SWITCHES = ("WL", "WR")
+STRAIGHTS = ("S16", "S24")
 
 
 # --- zarodki ----------------------------------------------------------------
@@ -37,7 +38,7 @@ def figure_eight(n: int = 2) -> Layout:
     """Osemka: skrzyzowanie w srodku, dwie petle o przeciwnych skretach."""
     lay = Layout(["XX"])
     left = ["CL"] * 8 + ["S16"] * n + ["CL"] * 8 + ["S16"] * n
-    # prototyp: zwrocmy zwykly owal jesli osemka sie nie domknie
+    """prototyp: zwrocmy zwykly owal jesli osemka sie nie domknie"""
     return oval(n)
 
 
@@ -298,29 +299,43 @@ def put_switch(lay: Layout, i: int, tname: str, rev: bool) -> Layout:
     return new
 
 
-def s16_pairs(lay: Layout):
-    """Pary sasiednich prostych S16 (i przez port p polaczona z j).
+def straight_runs(lay: Layout, studs: float):
+    """Ciagi kolejnych prostych o lacznej dlugosci dokladnie `studs`.
 
-    Prawdziwy rozjazd ma korpus 32 study = dokladnie dwie S16, wiec
-    podmiana takiej pary na rozjazd nie rusza geometrii reszty ukladu.
+    Zwraca liste (ids, p, q): ids to klocki ciagu po kolei, p to port
+    pierwszego klocka prowadzacy do drugiego, q to port ostatniego klocka
+    prowadzacy do przedostatniego. Reszta ukladu wisi na (ids[0], 1 - p)
+    i (ids[-1], 1 - q). Ten sam ciag widziany od drugiego konca nie jest
+    powtarzany. 32 study to zawsze dwie S16, 48 to trzy S16 albo dwie S24.
     """
     out, seen = [], set()
     for i, t in enumerate(lay.types):
-        if t != "S16":
+        if t not in STRAIGHTS:
             continue
         for p in (0, 1):
-            nb = lay.match.get((i, p))
-            if nb is None:
+            ids, q, total = [i], 1 - p, ELEM_LEN[t]
+            cur = (i, p)
+            while total < studs:
+                nb = lay.match.get(cur)
+                if nb is None or nb[0] in ids or lay.types[nb[0]] not in STRAIGHTS:
+                    break
+                ids.append(nb[0])
+                q = nb[1]
+                total += ELEM_LEN[lay.types[nb[0]]]
+                cur = (nb[0], 1 - q)
+            if total != studs:
                 continue
-            j, q = nb
-            if j == i or lay.types[j] != "S16":
-                continue
-            key = frozenset(((i, p), (j, q)))
+            key = frozenset(((ids[0], 1 - p), (ids[-1], 1 - q)))
             if key in seen:
                 continue
             seen.add(key)
-            out.append((i, p, j, q))
+            out.append((ids, p, q))
     return out
+
+
+def s16_pairs(lay: Layout):
+    """Pary sasiednich S16 pod rozjazd: korpus 32 study to dokladnie dwie S16."""
+    return [(ids[0], p, ids[1], q) for ids, p, q in straight_runs(lay, SWITCH_BODY)]
 
 
 def switch_frame(lay: Layout, T0, i: int, p: int, rev: bool):
@@ -476,7 +491,7 @@ def mut_remove_branch(lay: Layout, rng: random.Random) -> Layout | None:
 
 
 def mutate(lay: Layout, table: TransformTable, rng: random.Random,
-           weights=(0.35, 0.18, 0.22, 0.08, 0.12, 0.05)) -> Layout:
+           weights=(0.30, 0.16, 0.19, 0.07, 0.10, 0.04, 0.10, 0.04)) -> Layout:
     """Jedna proba mutacji; przy niepowodzeniu zwraca oryginal."""
     ops = [
         lambda: mut_swap_segment(lay, table, rng),
@@ -485,8 +500,10 @@ def mutate(lay: Layout, table: TransformTable, rng: random.Random,
         lambda: mut_remove_branch(lay, rng),
         lambda: mut_add_crossing_pair(lay, table, rng),
         lambda: mut_remove_crossing(lay, rng),
+        lambda: mut_add_dbl_crossover(lay, table, rng),
+        lambda: mut_remove_dbl_crossover(lay, rng),
     ]
-    order = rng.choices(range(6), weights=weights, k=6)
+    order = rng.choices(range(len(ops)), weights=weights, k=len(ops))
     for k in order:
         try:
             out = ops[k]()
@@ -668,6 +685,122 @@ def mut_remove_crossing(lay: Layout, rng: random.Random) -> Layout | None:
         for (aa, p), (bb, q) in new.match.items():
             if aa in remap and bb in remap:
                 out.match[(remap[aa], p)] = (remap[bb], q)
+        if out.is_matched():
+            return out
+    return None
+
+
+# --- podwojny rozjazd krzyzowy ---------------------------------------------
+
+def put_dc(lay: Layout, ids, p: int, q: int, rev: bool) -> Layout | None:
+    """Podmien ciag prostych `ids` na klocek DC w slocie ids[0].
+
+    Porty 0/1 klocka przejmuja polaczenia z reszta ukladu (`rev` zamienia
+    je miejscami), porty 2/3 zostaja wolne. Pozostale klocki ciagu zostaja
+    osierocone - caller MUSI na koncu wywolac compact(). Wzor: put_switch_pair.
+    """
+    A = lay.match.get((ids[0], 1 - p))
+    B = lay.match.get((ids[-1], 1 - q))
+    if A is None or B is None:
+        return None
+    new = lay.copy()
+    for e in ids:
+        new.unlink((e, 0))
+        new.unlink((e, 1))
+    new.types[ids[0]] = "DC"
+    new.link(A, (ids[0], 1 if rev else 0))
+    new.link(B, (ids[0], 0 if rev else 1))
+    return new
+
+
+def mut_add_dbl_crossover(lay: Layout, table: TransformTable,
+                          rng: random.Random, attempts: int = 12) -> Layout | None:
+    """Wstaw podwojny rozjazd krzyzowy i domknij jego drugi tor osobna petla.
+
+    Tor 1 klocka zastepuje 48 studow prostych i przenosi tak samo jak one,
+    wiec reszta ukladu sie nie rusza. Porty 3 -> 2 laczy lancuch z tablicy
+    (jak w mut_add_crossing_pair): powstaje druga zamknieta petla, a skosy
+    klocka daja nowe trasy przez obie. Potrzebne przesuniecie wynika z samego
+    klocka, wiec jest jedno dla kazdego polozenia. Wszystkie cztery porty
+    dostaja partnera za jednym razem, wiec jedna sztuka wystarczy. Drugi tor
+    moze lezec po obu stronach toru 1 (`rev`); zla strona wjezdza w reszte
+    ukladu i odpada na overlap().
+    """
+    runs = straight_runs(lay, ELEM_LEN["DC"])
+    if not runs:
+        return None
+    N = compose(inverse(port_pose("DC", 3)), compose(port_pose("DC", 2), (0.0, 0.0, 8)))
+    seqs = table.connectors(N, limit=8, scan=50000, rng=rng)
+    if not seqs:
+        return None
+    base_ov = lay.overlap()
+    base_rt = lay.count_routes()
+    best, best_score = None, None
+
+    for _ in range(attempts):
+        ids, p, q = rng.choice(runs)
+        i = ids[0]
+        for rev in (False, True):
+            base = put_dc(lay, ids, p, q, rev)
+            if base is None:
+                continue
+            for seq in seqs:
+                out = base.copy()
+                prev = (i, 3)
+                for e in seq:
+                    k = out.add(e)
+                    out.link(prev, (k, 0))
+                    prev = (k, 1)
+                out.link(prev, (i, 2))
+                out = out.compact()
+                if not (out.is_matched() and out.is_planar_closed()):
+                    continue
+                ov, rt = out.overlap(), out.count_routes()
+                score = (rt - base_rt, -(ov - base_ov))
+                if best is None or score > best_score:
+                    best, best_score = out, score
+                if score[0] > 0 and ov <= base_ov:
+                    return out
+    return best
+
+
+def mut_remove_dbl_crossover(lay: Layout, rng: random.Random) -> Layout | None:
+    """Usun podwojny rozjazd krzyzowy razem z petla na jego drugim torze;
+    tor 1 dostaje z powrotem trzy S16. Odpowiednik mut_remove_crossing."""
+    xs = [i for i, t in enumerate(lay.types) if t == "DC"]
+    if not xs:
+        return None
+    rng.shuffle(xs)
+    for i in xs:
+        r = chain_from(lay, (i, 2))
+        if r is None:
+            continue
+        ids, _, end = r
+        if end != (i, 3):
+            continue
+        new = lay.copy()
+        for k in ids:
+            for p in range(ELEMENTS[new.types[k]].n_ports):
+                new.unlink((k, p))
+            new.types[k] = None
+        new.unlink((i, 2))
+        new.unlink((i, 3))
+        b_side = new.match.get((i, 1))
+        new.unlink((i, 1))
+        new.types[i] = "S16"
+        prev = (i, 1)
+        for _ in range(2):
+            k = new.add("S16")
+            new.link(prev, (k, 0))
+            prev = (k, 1)
+        if b_side is not None:
+            new.link(prev, b_side)
+        keep = [k for k in range(len(new.types)) if new.types[k] is not None]
+        remap = {o: n for n, o in enumerate(keep)}
+        out = Layout([new.types[k] for k in keep])
+        for (aa, p), (bb, qq) in new.match.items():
+            if aa in remap and bb in remap:
+                out.match[(remap[aa], p)] = (remap[bb], qq)
         if out.is_matched():
             return out
     return None

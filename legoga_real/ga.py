@@ -33,7 +33,7 @@ from .table import TransformTable
 
 # Magazyn z configs/all_pieces.yaml. R40 to JEDEN fizyczny klocek -
 # kierunek (CL/CR) wybiera sie przy ulozeniu, wiec CL+CR dziela wspolna
-# pule "R40". DOUBLE_CROSSOVER (2 szt.) pominiety - prototyp go nie zna.
+# pule "R40".
 DEFAULT_INVENTORY = {
     "S16": 120,
     "S24": 8,
@@ -41,14 +41,19 @@ DEFAULT_INVENTORY = {
     "WL": 3,
     "WR": 3,
     "XX": 2,
+    "DC": 2,
 }
 
 
-def inventory_excess(lay: Layout, inv: dict) -> int:
+def physical_counts(lay: Layout) -> dict:
+    """Liczby klockow fizycznych: CL i CR to ten sam R40 ulozony w inna strone."""
     c = lay.counts()
-    r40 = c.pop("CL", 0) + c.pop("CR", 0)
-    over = max(0, r40 - inv.get("R40", 0))
-    return over + sum(max(0, n - inv.get(t, 0)) for t, n in c.items())
+    c["R40"] = c.pop("CL", 0) + c.pop("CR", 0)
+    return c
+
+
+def inventory_excess(lay: Layout, inv: dict) -> int:
+    return sum(max(0, n - inv.get(t, 0)) for t, n in physical_counts(lay).items())
 
 
 def used_pieces(lay: Layout) -> int:
@@ -58,7 +63,7 @@ def used_pieces(lay: Layout) -> int:
 # --- problem ----------------------------------------------------------------
 
 class TrackProblem(ElementwiseProblem):
-    def __init__(self, inventory=None, table_len: int = 7,
+    def __init__(self, inventory=None, table_len: int = 11,
                  max_size=(400.0, 400.0), seed: int = 0):
         self.inv = dict(inventory or DEFAULT_INVENTORY)
         self.table = TransformTable(max_len=table_len)
@@ -152,6 +157,6 @@ class TrackDuplicates(ElementwiseDuplicateElimination):
 
 def _sig(lay: Layout):
     x0, y0, x1, y1 = lay.bbox()
-    return (tuple(sorted(lay.counts().items())),
+    return (tuple(sorted(physical_counts(lay).items())),
             lay.count_routes(),
             round(x1 - x0, 1), round(y1 - y0, 1))
