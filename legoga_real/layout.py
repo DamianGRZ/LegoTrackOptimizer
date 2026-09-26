@@ -195,9 +195,12 @@ class Layout:
         Uwzglednia, ze rozjazd nie laczy drogi prostej z odgalezieniem,
         a skrzyzowanie to dwie niezalezne sciezki.
         """
+        if "routes" in self._cache:
+            return self._cache["routes"]
         nodes = self.nodes()
         if not nodes:
-            return 1 if self.is_matched() and len(self.types) else 0
+            self._cache["routes"] = 1 if self.is_matched() and len(self.types) else 0
+            return self._cache["routes"]
 
         edges = self.reduce()
         # stany = (wezel, port_wejsciowy)
@@ -233,7 +236,8 @@ class Layout:
 
         for s in range(n):
             dfs(s, s, {s})
-        return count // 2      # kazda trasa policzona w obie strony
+        self._cache["routes"] = count // 2      # kazda trasa policzona w obie strony
+        return self._cache["routes"]
 
     def cyclomatic(self) -> int:
         """Liczba niezaleznych petli - tani zamiennik count_routes."""
@@ -252,8 +256,8 @@ class Layout:
         toru i tam bliskosc przestrzenna jest realnym konfliktem. Liczenie
         krokow myli te dwa przypadki; liczenie studow nie.
         """
-        if "near" in self._cache:
-            return self._cache["near"]
+        if ("near", max_studs) in self._cache:
+            return self._cache[("near", max_studs)]
         adj = defaultdict(list)
         for (i, _), (j, _) in self.match.items():
             w = 0.5 * (ELEM_LEN.get(self.types[i], 16.0) +
@@ -276,7 +280,7 @@ class Layout:
             for u in dist:
                 if u != s:
                     out.add((min(s, u), max(s, u)))
-        self._cache["near"] = out
+        self._cache[("near", max_studs)] = out
         return out
 
     def overlap(self) -> int:
@@ -348,8 +352,46 @@ class Layout:
             return (0, 0, 0, 0)
         return (min(xs), min(ys), max(xs), max(ys))
 
+    def extents(self):
+        """(szerokosc, wysokosc) prostokata otaczajacego dla kazdego z ANG obrotow.
+
+        Kat ukladu wynika z tego, ktory element ma numer 0, a na stole jest
+        darmowy. Katy sa dyskretne, wiec ANG obrotow wyczerpuje mozliwosci.
+        """
+        if "ext" in self._cache:
+            return self._cache["ext"]
+        T, _ = self.place()
+        pts = [apply(T[i], p) for i, t in enumerate(self.types) if T[i] is not None
+               for (_, _, line) in ELEMENTS[t].centerline for p in line]
+        out = []
+        for k in range(ANG):
+            rot = [apply((0.0, 0.0, k), p) for p in pts] or [(0.0, 0.0)]
+            xs = [x for x, _ in rot]
+            ys = [y for _, y in rot]
+            out.append((max(xs) - min(xs), max(ys) - min(ys)))
+        self._cache["ext"] = out
+        return out
+
+    def fit(self, max_size=None):
+        """(obrot, szerokosc, wysokosc) najmniej wystajace poza stol max_size.
+
+        Remis rozstrzyga krotszy dluzszy bok, potem krotszy krotszy bok, na
+        wartosciach zaokraglonych, zeby nie decydowal szum float.
+        """
+        max_w, max_h = max_size or (math.inf, math.inf)
+        ext = self.extents()
+
+        def key(k):
+            w, h = ext[k]
+            over = max(0.0, w - max_w) + max(0.0, h - max_h)
+            return (round(over, 6), round(max(w, h), 6), round(min(w, h), 6))
+
+        k = min(range(ANG), key=key)
+        w, h = ext[k]
+        return k, w, h
+
     def summary(self):
-        x0, y0, x1, y1 = self.bbox()
+        _, w, h = self.fit()
         return {
             "elements": len(self.types),
             "counts": self.counts(),
@@ -358,7 +400,7 @@ class Layout:
             "components": self.components(),
             "routes": self.count_routes(),
             "overlap": self.overlap(),
-            "size_studs": (round(x1 - x0, 1), round(y1 - y0, 1)),
+            "size_studs": (round(w, 1), round(h, 1)),
         }
 
     def min_clearance(self):
