@@ -181,7 +181,8 @@ def load_table(cfg: Settings) -> TransformTable:
 def git_info() -> dict:
     def git(*args):
         return subprocess.run(["git", *args], capture_output=True, text=True).stdout.strip()
-    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+    dirty = git("status", "--porcelain", "--", "legoga_real")   # tylko kod, ktory biegnie
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(dirty)}
 
 
 def run_cell(task: dict) -> str:
@@ -195,7 +196,8 @@ def run_cell(task: dict) -> str:
         with (out / "log.txt").open("w", encoding="utf-8") as log, contextlib.redirect_stdout(log):
             res, _, times = run(inventory=kit, pop=task["pop"], gens=task["gens"],
                                 seed=task["seed"], out=out, max_size=size, verbose=False,
-                                cfg=cfg, table=load_table(cfg), hv=HV_RAW, render=False)
+                                cfg=cfg, table=load_table(cfg), hv=HV_RAW,
+                                render=task["render"])
     except Exception as exc:                 # jeden padniety bieg nie zatrzymuje kampanii
         (out / "error.txt").write_text(repr(exc), encoding="utf-8")
         return "fail"
@@ -246,7 +248,8 @@ def save_results(out: Path, task: dict, res, times: dict) -> None:
     (out / "run.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
 
 
-def tasks_for(stage: str, n_seeds: int | None, variants_file: str | None) -> list[dict]:
+def tasks_for(stage: str, n_seeds: int | None, variants_file: str | None,
+              render: bool = False) -> list[dict]:
     seeds = SEEDS.get(stage, SEEDS_DEFAULT)
     n_seeds = n_seeds or N_SEEDS[stage]
     if n_seeds > len(seeds):
@@ -257,7 +260,8 @@ def tasks_for(stage: str, n_seeds: int | None, variants_file: str | None) -> lis
             for seed in seeds[:n_seeds]:
                 path = ROOT / f"stage{stage}" / name / f"{kit}_{table}" / f"seed_{seed}"
                 task = {"stage": stage, "name": name, "cfg": cfg, "pop": pop, "gens": gens,
-                        "kit": kit, "table": table, "seed": seed, "out": str(path)}
+                        "kit": kit, "table": table, "seed": seed, "out": str(path),
+                        "render": render}
                 out.append(task)
     return out
 
@@ -279,9 +283,10 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, help="ile pierwszych ziaren; domyslnie wg etapu")
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--variants", help="plik JSON z wariantami (etapy 3b, 4, 5)")
+    ap.add_argument("--render", action="store_true", help="rysunki ukladow w kazdym biegu")
     a = ap.parse_args()
 
-    tasks = tasks_for(a.stage, a.seeds, a.variants)
+    tasks = tasks_for(a.stage, a.seeds, a.variants, a.render)
     print(f"etap {a.stage}: {len(tasks)} biegow", flush=True)
     build_tables({table_key(t["cfg"]) for t in tasks})
     done: list = []

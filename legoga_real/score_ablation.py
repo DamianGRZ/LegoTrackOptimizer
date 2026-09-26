@@ -28,13 +28,13 @@ LARGEST = "500x500"
 # --- zbieranie ---------------------------------------------------------------
 
 def progress_at(path: Path, budgets) -> dict:
-    """Pole frontu przy pierwszym pokoleniu, ktore osiagnelo dany budzet ocen."""
+    """Pole frontu po ostatnim pokoleniu, ktore zmiescilo sie w budzecie ocen."""
     with path.open(encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     out = {}
     for b in budgets:
-        hit = next((r for r in rows if float(r["n_eval"]) >= b), None)
-        out[f"hv_at_{b}"] = float(hit["hv"]) if hit else float("nan")
+        within = [r for r in rows if float(r["n_eval"]) <= b]
+        out[f"hv_at_{b}"] = float(within[-1]["hv"]) if within else float("nan")
     return out
 
 
@@ -231,7 +231,7 @@ def plot_progress(root, rows, stage, variants, column, out_dir: Path, budgets=()
             series = progress_series(root, stage, variant, table, column)
             if not series:
                 continue
-            grid = np.linspace(0, max(s[-1, 0] for s in series), 200)
+            grid = np.linspace(min(s[0, 0] for s in series), max(s[-1, 0] for s in series), 200)
             lo, med, hi = median_band(series, grid)
             ax.plot(grid, med, label=variant)
             ax.fill_between(grid, lo, hi, alpha=0.2)
@@ -289,9 +289,10 @@ def main() -> None:
     print(f"{len(rows)} biegow -> {ROOT / 'runs.csv'}; sufit tras {rows[0]['routes_ceiling']}")
 
     cmp = compare(rows, a.stage, base, a.metric)
-    if not cmp:
-        raise SystemExit(f"etap {a.stage}: brak par z baza '{base}'")
-    print_table(cmp, a.metric)
+    if cmp:
+        print_table(cmp, a.metric)
+    else:
+        print(f"etap {a.stage}: brak par z baza '{base}', tylko wykresy")
 
     plots = ROOT / "plots"
     plots.mkdir(exist_ok=True)
