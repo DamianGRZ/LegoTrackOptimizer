@@ -45,8 +45,11 @@ MARKER_ANCHOR = {"WL": (16.0, 0.0), "WR": (16.0, 0.0), "XX": (8.0, 0.0)}
 
 
 def draw_layout_v1(ax, lay, boundary):
-    """Kazdy fizyczny klocek raz, z jego ramki wyznaczonej przez place()."""
-    T, _ = lay.place()
+    """Kazdy fizyczny klocek raz, z jego ramki wyznaczonej przez place(),
+    obrocony tak, jak ocenial go GA (najlepsze dopasowanie do stolu)."""
+    k, _, _ = lay.fit((boundary.max_x - boundary.min_x,
+                       boundary.max_y - boundary.min_y))
+    T = [t if t is None else compose((0.0, 0.0, k), t) for t in lay.place()[0]]
     xs, ys = [], []
     for t_frame in T:
         if t_frame is not None:

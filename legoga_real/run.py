@@ -10,15 +10,16 @@ import time
 from pathlib import Path
 
 import numpy as np
-from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.algorithms.moo.nsga2 import NSGA2, binary_tournament
+from pymoo.operators.selection.tournament import TournamentSelection
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 
-from .ga import (DEFAULT_INVENTORY, TrackCrossover, TrackDuplicates,
-                 TrackMutation, TrackProblem, TrackSampling,
-                 inventory_excess)
+from .ga import (TrackCrossover, TrackDuplicates, TrackMutation, TrackProblem,
+                 TrackSampling, tournament)
 from .progress import ProgressCallback
 from .render_with_v1 import save_gallery, save_layouts
+from .settings import Settings
 
 
 def front_spread(rows, n: int = 6):
@@ -40,16 +41,24 @@ def front_spread(rows, n: int = 6):
     return [uniq[round(i * step)] for i in range(n)]
 
 
-def run(inventory=None, pop=60, gens=40, seed=1, out="tory.png",
-        max_size=(500.0, 500.0), verbose=True):
+def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
+        max_size=(500.0, 500.0), verbose=True, cfg: Settings = Settings(),
+        table=None):
+    """Pelny przebieg; wszystkie wyniki laduja w katalogu `out`."""
+    out_dir = Path(out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gallery_path = out_dir / "tory.png"
     problem = TrackProblem(inventory=inventory, seed=seed,
-                           max_size=max_size)
+                           max_size=max_size, cfg=cfg, table=table)
+    compare = binary_tournament if cfg.pressure == 2 else tournament
     algo = NSGA2(
         pop_size=pop,
+        n_offsprings=cfg.n_offsprings,
         sampling=TrackSampling(),
-        crossover=TrackCrossover(),
+        selection=TournamentSelection(func_comp=compare, pressure=cfg.pressure),
+        crossover=TrackCrossover(prob=cfg.cx_prob),
         mutation=TrackMutation(),
-        eliminate_duplicates=TrackDuplicates(),
+        eliminate_duplicates=TrackDuplicates(cfg.sig_with_size) if cfg.dedupe else False,
     )
     t0 = time.time()
     res = minimize(problem, algo, get_termination("n_gen", gens),
@@ -64,10 +73,10 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="tory.png",
     rows = []
     for k in range(len(X)):
         lay = X[k, 0] if X.dtype == object else X[k]
-        x0, y0, x1, y1 = lay.bbox()
+        _, w, h = lay.fit(max_size)
         rows.append((lay, -F[k, 0], -F[k, 1],
                      G[k, 0] if G is not None else 0,
-                     (x1 - x0, y1 - y0)))
+                     (w, h)))
     rows.sort(key=lambda r: (-r[2], -r[1]))
 
     print(f"\nCzas: {dt:.1f} s | front Pareto: {len(rows)} rozwiazan\n")
@@ -80,11 +89,11 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="tory.png",
 
     if rows:
         picked = front_spread(rows)
-        gallery = save_gallery(picked, out, max_size)
-        paths = save_layouts(picked, out, problem.inv, max_size)
-        print("\nRysunki: " + ", ".join([gallery, *paths]))
+        gallery = save_gallery(picked, gallery_path, max_size)
+        paths = save_layouts(picked, gallery_path, problem.inv, max_size)
+        print("\nRysunki: " + ", ".join(map(str, [gallery, *paths])))
 
-    stem = Path(out).with_suffix("")
+    stem = gallery_path.with_suffix("")
     progress = res.algorithm.callback
     csv_path = progress.save_csv(f"{stem}_progress.csv")
     plot_paths = progress.save_plots(stem, n_gen_planned=gens,
@@ -98,7 +107,7 @@ if __name__ == "__main__":
     ap.add_argument("--pop", type=int, default=60)
     ap.add_argument("--gens", type=int, default=40)
     ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--out", default="tory.png")
+    ap.add_argument("--out", default="outputs/legoga", help="katalog wynikow")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     run(pop=a.pop, gens=a.gens, seed=a.seed, out=a.out, verbose=not a.quiet)
