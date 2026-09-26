@@ -290,11 +290,11 @@ def main() -> None:
     print(f"etap {a.stage}: {len(tasks)} biegow", flush=True)
     build_tables({table_key(t["cfg"]) for t in tasks})
     done: list = []
-    # tabela 12 zajmuje 8 GB, wiec te biegi ida najwyzej po dwa naraz
+    # proces z tabela 12 wczytana z dysku zajmuje ok. 4 GB, wiec najwyzej cztery naraz
     heavy = [t for t in tasks if t["cfg"].table_len >= 12]
     light = [t for t in tasks if t["cfg"].table_len < 12]
     run_pool(light, a.workers, done)
-    run_pool(heavy, min(a.workers, 2), done)
+    run_pool(heavy, min(a.workers, 4), done)
 
 
 if __name__ == "__main__":
