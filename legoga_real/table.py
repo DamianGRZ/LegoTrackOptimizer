@@ -52,7 +52,7 @@ def _neigh_keys(t):
 
 
 class TransformTable:
-    def __init__(self, max_len: int = 7, elements=CHAIN_ELEMENTS,
+    def __init__(self, max_len: int = 11, elements=CHAIN_ELEMENTS,
                  per_bucket: int | None = 60):
         self.max_len = max_len
         self.elements = tuple(elements)
@@ -165,13 +165,6 @@ class TransformTable:
 
     @staticmethod
     def load(path):
-        return pickle.loads(Path(path).read_bytes())
-
-
-_CACHE = {}
-
-
-def get_table(max_len: int = 7) -> TransformTable:
-    if max_len not in _CACHE:
-        _CACHE[max_len] = TransformTable(max_len=max_len)
-    return _CACHE[max_len]
+        # strumieniowo: read_bytes trzymalby caly plik obok zbudowanych obiektow
+        with Path(path).open("rb") as fh:
+            return pickle.load(fh)

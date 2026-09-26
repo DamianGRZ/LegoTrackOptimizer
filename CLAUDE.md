@@ -276,8 +276,15 @@ legoga_real/layout.py — the `Layout` genome.
 legoga_real/table.py — the equivalence table.
 legoga_real/ops.py — seeds and closure-preserving operators.
 legoga_real/ga.py — the pymoo layer.
-legoga_real/run.py — entry point.
-legoga_real/progress.py — per-generation callback, CSV plus two plots.
+legoga_real/run.py — entry point; `render=False` skips every picture and keeps the CSV.
+legoga_real/progress.py — per-generation callback: feasible count, best of each objective,
+hypervolume, evaluations, wall time, operator counters; CSV plus two plots.
+legoga_real/settings.py — every tunable knob as one frozen `Settings`; defaults are today's
+behaviour.
+legoga_real/ablate.py — the parameter ablation: variants per stage, seeds × kits × tables,
+a process pool, tables built once and loaded from disk, resume by skipping `run.json`.
+legoga_real/score_ablation.py — the report: `runs.csv`, paired tests against the base,
+plots. Reads run directories only.
 legoga_real/render_with_v1.py — draws results with the V1 renderer.
 legoga_real/viz.py — standalone drawing; unused, but the only renderer with no dependency
 outside the package.
@@ -361,10 +368,10 @@ Facts about the current code, not a wish list.
 
 ### Dead code (verified in both packages)
 
-Never called: `crossing_connectors` (ops.py:467), `_XCONN` (ops.py:498), `other_port`
-(geometry.py:251), `get_table` / `_CACHE` (table.py:174, :171), `save` / `load`
-(table.py:163, :167), `__len__` / `cyclomatic` / `bbox` / `summary` / `min_clearance`
+Never called: `crossing_connectors` (ops.py:475), `_XCONN` (ops.py:506), `other_port`
+(geometry.py:251), `__len__` / `cyclomatic` / `bbox` / `summary` / `min_clearance`
 (layout.py:83, :242, :340, :393, :406), `stats` (table.py:112), and all of `viz.py`.
+`save` / `load` (table.py:163, :167) are called by the ablation only.
 
 `bbox` joined the list when `fit` took over every size question. Nothing else replaced it,
 so a caller that genuinely wants the untouched orientation still has it.

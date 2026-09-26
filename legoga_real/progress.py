@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -10,17 +11,20 @@ from pymoo.core.callback import Callback
 
 from src.visualization.objective_progress import plot_score_progress
 
-COLUMNS = ("n_gen", "n_feas", "best_pieces", "best_routes")
+COLUMNS = ("n_gen", "n_feas", "best_pieces", "best_routes", "hv", "n_eval", "t_wall",
+           "mut_calls", "mut_hits", "cx_calls", "cx_hits")
 
 
 class ProgressCallback(Callback):
-    """Co pokolenie: liczba poprawnych ukladow i najlepsza wartosc kazdego celu.
-
-    Poprawny uklad ma CV <= 0. Pokolenie bez poprawnych ukladow dostaje NaN.
+    """Co pokolenie: liczba poprawnych ukladow, najlepsza wartosc kazdego celu,
+    pole frontu (gdy podano licznik `hv`), liczba ocen, sekundy od startu i
+    liczniki operatorow. Poprawny uklad ma CV <= 0; bez poprawnych jest NaN.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, hv=None) -> None:
         super().__init__()
+        self.hv = hv
+        self.t0 = time.perf_counter()
         self.data.update((key, []) for key in COLUMNS)
 
     def notify(self, algorithm) -> None:
@@ -29,7 +33,11 @@ class ProgressCallback(Callback):
         feasible = F[CV.ravel() <= 0.0]
         n_feas = len(feasible)
         best_pieces, best_routes = -feasible.min(axis=0) if n_feas else (np.nan, np.nan)
-        row = (int(algorithm.n_gen), n_feas, float(best_pieces), float(best_routes))
+        hv = self.hv(feasible) if self.hv and n_feas else np.nan
+        mut, cx = algorithm.mating.mutation, algorithm.mating.crossover
+        row = (int(algorithm.n_gen), n_feas, float(best_pieces), float(best_routes),
+               float(hv), algorithm.evaluator.n_eval, time.perf_counter() - self.t0,
+               mut.calls, mut.hits, cx.calls, cx.hits)
         for key, value in zip(COLUMNS, row):
             self.data[key].append(value)
 

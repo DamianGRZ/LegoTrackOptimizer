@@ -114,6 +114,8 @@ class TrackSampling(Sampling):
 
 
 class TrackCrossover(Crossover):
+    calls = hits = 0      # prob / prob z dzieckiem innym niz rodzic a; przed maska `prob` pymoo
+
     def __init__(self, prob: float = 0.9):
         super().__init__(2, 1, prob=prob)
 
@@ -126,11 +128,15 @@ class TrackCrossover(Crossover):
             c = ops.crossover(a, b, problem.table, rng, problem.cfg)
             if inventory_excess(c, problem.inv) > 0:
                 c = a
+            self.calls += 1
+            self.hits += c is not a
             Y[0, k, 0] = c
         return Y
 
 
 class TrackMutation(Mutation):
+    calls = hits = 0      # prob mutacji / prob, ktore zmienily uklad
+
     def _do(self, problem, X, **kwargs):
         cfg = problem.cfg
         if cfg.forget_each_gen:
@@ -142,7 +148,9 @@ class TrackMutation(Mutation):
             lay = X[k, 0]
             for _ in range(rng.randint(1, cfg.n_ops)):
                 cand = ops.mutate(lay, problem.table, rng, cfg)
-                if inventory_excess(cand, problem.inv) == 0:
+                self.calls += 1
+                if cand is not lay and inventory_excess(cand, problem.inv) == 0:
+                    self.hits += 1
                     lay = cand
             X[k, 0] = lay
         return X
