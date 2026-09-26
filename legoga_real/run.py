@@ -43,13 +43,19 @@ def front_spread(rows, n: int = 6):
 
 def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
         max_size=(500.0, 500.0), verbose=True, cfg: Settings = Settings(),
-        table=None):
-    """Pelny przebieg; wszystkie wyniki laduja w katalogu `out`."""
+        table=None, hv=None, render=True):
+    """Pelny przebieg; wszystkie wyniki laduja w katalogu `out`.
+
+    Zwraca (res, rows, times); `times` to sekundy budowy tabeli i optymalizacji.
+    `render=False` pomija rysunki (galeria, uklady, wykresy przebiegu); CSV zostaje.
+    """
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     gallery_path = out_dir / "tory.png"
+    t0 = time.time()
     problem = TrackProblem(inventory=inventory, seed=seed,
                            max_size=max_size, cfg=cfg, table=table)
+    t_table = time.time() - t0
     compare = binary_tournament if cfg.pressure == 2 else tournament
     algo = NSGA2(
         pop_size=pop,
@@ -63,7 +69,7 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
     t0 = time.time()
     res = minimize(problem, algo, get_termination("n_gen", gens),
                    seed=seed, verbose=verbose, save_history=False,
-                   callback=ProgressCallback())
+                   callback=ProgressCallback(hv))
     dt = time.time() - t0
 
     X = np.atleast_2d(res.X)
@@ -87,19 +93,23 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
         print(f"{used:5.0f} {routes:6.0f} {ov:8.0f} "
               f"{sz[0]:6.0f}x{sz[1]:<6.0f}  {s}")
 
+    stem = gallery_path.with_suffix("")
+    progress = res.algorithm.callback
+    csv_path = progress.save_csv(f"{stem}_progress.csv")
+    times = {"table": t_table, "optimize": dt}
+    if not render:
+        print(f"Przebieg: {csv_path}")
+        return res, rows, times
+
     if rows:
         picked = front_spread(rows)
         gallery = save_gallery(picked, gallery_path, max_size)
         paths = save_layouts(picked, gallery_path, problem.inv, max_size)
         print("\nRysunki: " + ", ".join(map(str, [gallery, *paths])))
-
-    stem = gallery_path.with_suffix("")
-    progress = res.algorithm.callback
-    csv_path = progress.save_csv(f"{stem}_progress.csv")
     plot_paths = progress.save_plots(stem, n_gen_planned=gens,
                                      max_pieces=sum(problem.inv.values()))
     print(f"Przebieg: {csv_path}, " + ", ".join(map(str, plot_paths)))
-    return res, rows
+    return res, rows, times
 
 
 if __name__ == "__main__":
