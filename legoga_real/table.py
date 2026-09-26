@@ -31,14 +31,21 @@ GRID = 0.5          # rozmiar kubelka przestrzennego (study)
 SNAP = 0.15
 
 
+def _cell(v: float) -> int:
+    """Numer komorki siatki. Zaokraglenie, nie podloga: wspolrzedne torow leza
+    dokladnie na wielokrotnosciach GRID, wiec podloga przeskakiwala komorke
+    przy dryfie float rzedu 1e-14."""
+    return int(math.floor(v / GRID + 0.5))
+
+
 def _key(t):
     x, y, a = t
-    return (int(math.floor(x / GRID)), int(math.floor(y / GRID)), a % ANG)
+    return (_cell(x), _cell(y), a % ANG)
 
 
 def _neigh_keys(t):
     x, y, a = t
-    bx, by = int(math.floor(x / GRID)), int(math.floor(y / GRID))
+    bx, by = _cell(x), _cell(y)
     for dx in (-1, 0, 1):
         for dy in (-1, 0, 1):
             yield (bx + dx, by + dy, a % ANG)
@@ -46,7 +53,7 @@ def _neigh_keys(t):
 
 class TransformTable:
     def __init__(self, max_len: int = 7, elements=CHAIN_ELEMENTS,
-                 per_bucket: int = 60):
+                 per_bucket: int | None = 60):
         self.max_len = max_len
         self.elements = tuple(elements)
         self.per_bucket = per_bucket
@@ -71,7 +78,7 @@ class TransformTable:
     def _insert(self, seq, t):
         k = _key(t)
         b = self.buckets[k]
-        if len(b) < self.per_bucket:
+        if self.per_bucket is None or len(b) < self.per_bucket:
             b.append((seq, t))
         prev = self.min_len.get(k)
         if prev is None or len(seq) < prev:
@@ -123,15 +130,16 @@ class TransformTable:
         Najpierw zwykly lookup. Jesli za malo trafien, rozbijamy N = A o B
         i szukamy B w tablicy dla kolejnych A (meet in the middle). Zasieg
         rosnie z max_len do 2*max_len bez wzrostu pamieci.
+        Wyniki sa pamietane przez jedno pokolenie.
         """
         memo = self.__dict__.setdefault("_conn_memo", {})
         mk = (_key(N), limit)
         if mk in memo:
-            return memo[mk]
+            return list(memo[mk])
         out = [tuple(s) for s in self.lookup(N, max_len=self.max_len, min_len=1)]
         if len(out) >= limit:
             memo[mk] = out[:limit]
-            return memo[mk]
+            return list(memo[mk])
         flat = self._flat()
         n_scan = min(scan, len(flat))
         idx = rng.sample(range(len(flat)), n_scan) if rng is not None else range(n_scan)
@@ -142,9 +150,13 @@ class TransformTable:
                 out.append(tuple(s) + tuple(s2))
                 if len(out) >= limit:
                     memo[mk] = out
-                    return out
+                    return list(out)
         memo[mk] = out
-        return out
+        return list(out)
+
+    def forget(self):
+        """Skasuj zapamietane laczniki; kolejne connectors() losuje od nowa."""
+        self.__dict__.pop("_conn_memo", None)
 
     # -- cache --------------------------------------------------------------
 
