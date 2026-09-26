@@ -1,6 +1,6 @@
 """Ablacja ustawien: python -m legoga_real.ablate --stage 1 [--seeds 5] [--workers 10]
 
-Etapy 0, 1, 2, 3a maja warianty w kodzie; 3b, 4 i 5 zaleza od wynikow, wiec biora
+Etapy 0, 1, 2, 2_lite, 3a, 3a_lite maja warianty w kodzie; 3b, 4 i 5 zaleza od wynikow, wiec biora
 je z pliku JSON (--variants): lista {"name", "settings", "pop", "gens"}.
 Kazdy bieg laduje w outputs/legoga_real_ablation/<etap>/<wariant>/<zestaw>_<stol>/seed_<n>/
 jako run.json, front.csv, layouts.json, log.txt i to, co zapisuje run(). Bieg z gotowym
@@ -33,9 +33,16 @@ ROOT = Path("outputs/legoga_real_ablation")
 # etapy wyboru na ziarnach od 1; potwierdzenie (etap 5) na ziarnach, ktorych wybor nie widzial
 SEEDS = {"5": list(range(11, 41))}
 SEEDS_DEFAULT = list(range(1, 11))
-N_SEEDS = {"0": 1, "1": 5, "2": 10, "3a": 3, "3b": 10, "4": 10, "5": 30}
+N_SEEDS = {"0": 1, "1": 5, "2": 10, "2_lite": 5, "3a": 3, "3a_lite": 3, "3b": 10, "4": 10,
+           "5": 30}
 POP, GENS = 60, 40
 EVALS_LONG = 19200
+# etap 2: rodzice x potomkowie; wersja lite to rzadsza siatka z tym samym budzetem ocen
+POP_OFF = {"2": ((20, 30, 60, 100, 150), (10, 15, 30, 60, 120, 200)),
+           "2_lite": ((20, 60, 150), (30, 60, 200))}
+# etap 3a: glebokosc tabeli x wycinek; lite tylko tam, gdzie zamiennik moze byc dluzszy
+TABLE_WIN = {"3a": (range(1, 13), range(1, 12)),
+             "3a_lite": ((7, 9, 11, 12), (3, 6, 10))}
 
 REAL_KIT = {"S16": 90, "S24": 2, "R40": 140, "WL": 7, "WR": 3, "XX": 3, "DC": 1}
 KITS = {
@@ -107,18 +114,20 @@ def variants(stage: str, variants_file: str | None) -> dict:
         out["blocks_3"] = (dataclasses.replace(base, neutral_blocks=BLOCKS_3), POP, GENS)
         out["blocks_12"] = (dataclasses.replace(base, neutral_blocks=BLOCKS_12), POP, GENS)
         return out
-    if stage == "2":
+    if stage in ("2", "2_lite"):
+        pops, offs = POP_OFF[stage]
         out = {}
-        for pop in (20, 30, 60, 100, 150):
-            for off in (10, 15, 30, 60, 120, 200):
+        for pop in pops:
+            for off in offs:
                 gens = math.ceil((EVALS_LONG - pop) / off) + 1   # pokolenie 1 = start
                 cfg = dataclasses.replace(base, n_offsprings=off)
                 out[f"pop_{pop}_off_{off}"] = (cfg, pop, gens)
         return out
-    if stage == "3a":
+    if stage in ("3a", "3a_lite"):
+        depths, wins = TABLE_WIN[stage]
         out = {}
-        for depth in range(1, 13):
-            for win in range(1, 12):
+        for depth in depths:
+            for win in wins:
                 cfg = dataclasses.replace(base, table_len=depth, max_win=win)
                 out[f"table_{depth}_win_{win}"] = (cfg, POP, GENS)
         return out
@@ -279,7 +288,8 @@ def run_pool(tasks: list[dict], workers: int, done: list) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--stage", required=True, choices=["0", "1", "2", "3a", "3b", "4", "5"])
+    ap.add_argument("--stage", required=True,
+                    choices=["0", "1", "2", "2_lite", "3a", "3a_lite", "3b", "4", "5"])
     ap.add_argument("--seeds", type=int, help="ile pierwszych ziaren; domyslnie wg etapu")
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--variants", help="plik JSON z wariantami (etapy 3b, 4, 5)")

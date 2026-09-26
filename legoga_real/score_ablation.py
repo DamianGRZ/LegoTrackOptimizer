@@ -21,7 +21,8 @@ from scipy.stats import false_discovery_control, fisher_exact, wilcoxon  # noqa:
 
 ROOT = Path("outputs/legoga_real_ablation")
 BUDGETS = (1200, 2400, 4800, 9600, 19200)
-BASE = {"2": "pop_60_off_60", "3a": "table_11_win_6", "3b": "table_11_win_6"}
+BASE = {"2": "pop_60_off_60", "2_lite": "pop_60_off_60", "3a": "table_11_win_6",
+        "3a_lite": "table_11_win_6", "3b": "table_11_win_6"}
 LARGEST = "500x500"
 
 
@@ -301,9 +302,9 @@ def main() -> None:
     plot_quality_vs_time(rows, a.stage, base, plots)
     if a.progress:
         plot_progress(ROOT, rows, a.stage, a.progress, "best_pieces", plots)
-    if a.stage == "2":
-        variants = sorted({r["variant"] for r in rows if r["stage"] == "2"})
-        plot_progress(ROOT, rows, "2", variants, "hv", plots, budgets=BUDGETS)
+    if a.stage in ("2", "2_lite"):
+        variants = sorted({r["variant"] for r in rows if r["stage"] == a.stage})
+        plot_progress(ROOT, rows, a.stage, variants, "hv", plots, budgets=BUDGETS)
     if a.fronts:
         plot_fronts(ROOT, a.stage, base, a.fronts, a.table, a.seed, plots)
     print(f"Wykresy: {plots}")
