@@ -19,13 +19,14 @@ import random
 
 import numpy as np
 from pymoo.core.crossover import Crossover
-from pymoo.core.duplicate import ElementwiseDuplicateElimination
+from pymoo.core.duplicate import DuplicateElimination
 from pymoo.core.mutation import Mutation
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.core.sampling import Sampling
 
 from . import ops
 from .layout import Layout
+from .settings import Settings
 from .table import TransformTable
 
 
@@ -63,19 +64,20 @@ def used_pieces(lay: Layout) -> int:
 # --- problem ----------------------------------------------------------------
 
 class TrackProblem(ElementwiseProblem):
-    def __init__(self, inventory=None, table_len: int = 11,
-                 max_size=(400.0, 400.0), seed: int = 0):
+    def __init__(self, inventory=None, max_size=(400.0, 400.0), seed: int = 0,
+                 cfg: Settings = Settings(), table: TransformTable | None = None):
         self.inv = dict(inventory or DEFAULT_INVENTORY)
-        self.table = TransformTable(max_len=table_len)
+        self.cfg = cfg
+        self.table = table or TransformTable(max_len=cfg.table_len,
+                                             per_bucket=cfg.per_bucket)
         self.max_size = max_size
         self.rng = random.Random(seed)
         super().__init__(n_var=1, n_obj=2, n_ieq_constr=3, vtype=object)
 
     def _evaluate(self, x, out, *args, **kwargs):
         lay: Layout = x[0]
-        x0, y0, x1, y1 = lay.bbox()
-        over_size = max(0.0, (x1 - x0) - self.max_size[0]) + \
-                    max(0.0, (y1 - y0) - self.max_size[1])
+        _, w, h = lay.fit(self.max_size)
+        over_size = max(0.0, w - self.max_size[0]) + max(0.0, h - self.max_size[1])
         out["F"] = [-used_pieces(lay), -lay.count_routes()]
         out["G"] = [lay.overlap(),
                     inventory_excess(lay, self.inv),
@@ -90,23 +92,21 @@ class TrackSampling(Sampling):
     """
 
     def _do(self, problem, n_samples, **kwargs):
-        rng = problem.rng
-        inv = problem.inv
+        rng, inv, cfg = problem.rng, problem.inv, problem.cfg
         max_s = inv.get("S16", 0)
         seeds = []
-        for n in (4, 6, 8, 10, 12, 14):
+        for n in cfg.oval_sizes:
             if 2 * n <= max_s:
                 seeds.append(ops.oval(n))
         seeds.append(ops.circle())
-        for n in (6, 10):
-            if 2 * n <= max_s:
-                seeds.append(ops.oval(n, "S16"))
+        if cfg.figure_eight and inv.get("XX", 0):
+            seeds.append(ops.figure_eight())
 
         X = np.empty((n_samples, 1), dtype=object)
         for k in range(n_samples):
             lay = rng.choice(seeds)
-            for _ in range(rng.randint(3, 25)):
-                cand = ops.mutate(lay, problem.table, rng)
+            for _ in range(rng.randint(*cfg.warmup)):
+                cand = ops.mutate(lay, problem.table, rng, cfg)
                 if inventory_excess(cand, inv) == 0:
                     lay = cand
             X[k, 0] = lay
@@ -114,8 +114,8 @@ class TrackSampling(Sampling):
 
 
 class TrackCrossover(Crossover):
-    def __init__(self):
-        super().__init__(2, 1)
+    def __init__(self, prob: float = 0.9):
+        super().__init__(2, 1, prob=prob)
 
     def _do(self, problem, X, **kwargs):
         rng = problem.rng
@@ -123,7 +123,7 @@ class TrackCrossover(Crossover):
         Y = np.empty((1, n_matings, 1), dtype=object)
         for k in range(n_matings):
             a, b = X[0, k, 0], X[1, k, 0]
-            c = ops.crossover(a, b, problem.table, rng)
+            c = ops.crossover(a, b, problem.table, rng, problem.cfg)
             if inventory_excess(c, problem.inv) > 0:
                 c = a
             Y[0, k, 0] = c
@@ -131,32 +131,54 @@ class TrackCrossover(Crossover):
 
 
 class TrackMutation(Mutation):
-    def __init__(self, prob: float = 0.9, n_ops: int = 2):
-        super().__init__()
-        self.prob_mut = prob
-        self.n_ops = n_ops
-
     def _do(self, problem, X, **kwargs):
+        cfg = problem.cfg
+        if cfg.forget_each_gen:
+            problem.table.forget()
         rng = problem.rng
         for k in range(len(X)):
-            if rng.random() > self.prob_mut:
+            if rng.random() > cfg.mut_prob:
                 continue
             lay = X[k, 0]
-            for _ in range(rng.randint(1, self.n_ops)):
-                cand = ops.mutate(lay, problem.table, rng)
+            for _ in range(rng.randint(1, cfg.n_ops)):
+                cand = ops.mutate(lay, problem.table, rng, cfg)
                 if inventory_excess(cand, problem.inv) == 0:
                     lay = cand
             X[k, 0] = lay
         return X
 
 
-class TrackDuplicates(ElementwiseDuplicateElimination):
-    def is_equal(self, a, b):
-        return _sig(a.X[0]) == _sig(b.X[0])
+def tournament(pop, P, **kwargs):
+    """Turniej o rodzica dla grup wiekszych niz dwie; dla dwoch pymoo ma wlasna
+    funkcje. Z grupy wygrywa uklad z najmniejszym naruszeniem ograniczen.
+    Gdy naruszenie jest zerowe, wygrywa nizsza ranga (blizszy front), a przy
+    tej samej randze wiekszy odstep od sasiadow. Uklady z naruszeniem nie
+    maja rangi ani odstepu, wiec dla nich klucz konczy sie na naruszeniu."""
+    def key(i):
+        ind = pop[i]
+        if ind.CV[0] > 0:
+            return (ind.CV[0],)
+        return (0.0, ind.get("rank"), -ind.get("crowding"))
+    return np.array([[min(row, key=key)] for row in P])
 
 
-def _sig(lay: Layout):
-    x0, y0, x1, y1 = lay.bbox()
-    return (tuple(sorted(physical_counts(lay).items())),
-            lay.count_routes(),
-            round(x1 - x0, 1), round(y1 - y0, 1))
+class TrackDuplicates(DuplicateElimination):
+    """Duplikat = rowna sygnatura; zbior zamiast porownania kazdej pary."""
+
+    def __init__(self, with_size: bool = True):
+        super().__init__()
+        self.with_size = with_size
+
+    def _do(self, pop, other, is_duplicate):
+        seen = set() if other is None else {self._sig(ind.X[0]) for ind in other}
+        for i, ind in enumerate(pop):
+            s = self._sig(ind.X[0])
+            is_duplicate[i] = s in seen
+            seen.add(s)
+        return is_duplicate
+
+    def _sig(self, lay: Layout):
+        _, w, h = lay.fit()
+        size = (round(max(w, h), 1), round(min(w, h), 1)) if self.with_size else ()
+        return (tuple(sorted(physical_counts(lay).items())),
+                lay.count_routes(), *size, lay.overlap() == 0)
