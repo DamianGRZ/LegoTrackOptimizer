@@ -1,301 +1,391 @@
-# LEGO Track Optimizer
+# legoga — LEGO track prototype
 
-**Code Quality**: Always use pymoo and Python best practices. Write professional, clean code - avoid excessive if/else chains and AI-generated patterns. Prefer vectorized numpy operations, early returns, and functional decomposition.
-
----
-
-## Testing & Verification
-
-- **Always run the FULL test suite after code changes.** Do not use `--quick` or `-k <subset>` for validation unless explicitly told otherwise.
-- **No assertion without evidence.** Never claim a fix works without actually running the relevant command and pasting the literal output. If output contradicts your hypothesis, investigate — do not explain it away.
-- **Verify feasibility, not just exit codes.** After optimizer runs, confirm closure error, orphan switches, and feasible-solution count via `/diag` before declaring success.
-- **Use `/verify-fix`** for the full run-edit-test-inspect loop.
-- **Style gate**: `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py` must exit 0 after code changes. Config in `setup.cfg`: 99-char limit; `ignore` re-lists pycodestyle defaults + E203 (slice colons like `x[start : end + 1]` are PEP 8-conformant — never "fix" them).
-- **Known baseline (2026-08-30): 0 failed, 563 passed, 0 skipped** (clean).
-  - The former perpetual failure (`test_two_layer_loop_closes`) was rewritten to `test_two_layer_both_through_is_infeasible`: the two-layer both-through DC pattern is geometrically infeasible (22.5° **oblique** self-crossing, unlegalizable by any catalog piece — CROSS_90 only handles 90° — plus a ~32-stud closure gap), so the test now documents that it does NOT close. The seed `_gen_two_layer_loop_dbl_crossover` stays a stub; the only single-loop DC topology that closes is the figure-8 (cross routes).
+**Subject of this document:** the `legoga_real/` prototype. It is the active line of work
+and the only system described here.
 
 ---
 
-## MCP Servers
+## The genome
 
-| Server | When to use |
-|--------|-------------|
-| `context7` | **ALWAYS verify with context7 when unsure about pymoo OR Python — never answer from memory.** Mandatory before asserting any pymoo API (class/operator/callback signatures, survival/crowding/constraint-handling behavior, version-specific syntax) and any non-trivial Python/stdlib/numpy/scipy semantics. Call `mcp__context7__resolve-library-id` then `mcp__context7__query-docs` (verified ids: pymoo `/anyoptimization/pymoo`; Python/stdlib `/python/cpython`; numpy `/numpy/numpy`; scipy `/websites/scipy_doc_scipy`). If a claim about library behavior gates a code change or a design decision, cite the doc — do not guess. |
+**V1 used an integer vector** — one long chromosome with extra fixed-purpose fields
+appended at the end. **The prototype does not.** An individual is one `Layout` object
+(legoga_real/layout.py:32) built from three parts:
 
----
+**1. A list of piece names.** `types`, a plain list of strings. The *index* is the piece
+id — "the first piece" means `types[0]`, and every other structure refers to pieces by
+that integer. The string itself is not used directly for anything: it is a key into
+`ELEMENTS` (legoga_real/geometry.py:131), which is where ports, routes and shape actually
+come from.
 
-## File & Git Operations
+**2. A dictionary of joints.** `match`, mapping a `(piece, port)` tuple to another
+`(piece, port)` tuple. **Every joint is stored twice** — `(x, px) -> (y, py)` *and*
+`(y, py) -> (x, px)` — so a connection can be found from either piece without searching.
+Written and removed only through `link` / `unlink` (legoga_real/layout.py:55, :60), which
+maintain both directions and invalidate the cache.
 
-- **"Remove" or "untrack" never means `rm` from disk.** Use `git rm --cached <file>` or update `.gitignore`. Deleting files without asking is a hard-don't.
-- **Never `git init`** without first verifying the directory is not already a git repo.
-- **Auto-edits are enabled.** Do not ask for confirmation on routine file edits inside `src/`, `tests/`, `configs/`, or `data/`.
-- **Still confirm for destructive ops**: `git reset --hard`, `git push --force`, deleting branches, dropping files.
+**3. A cache.** `_cache`, holding the results of the current round of work — placement
+(legoga_real/layout.py:108), reduced graph (:157), route count (:199), near pairs (:260),
+overlap (:288) and the bounding rectangle per rotation (:362). Any edit clears it. Near
+pairs are keyed by the distance asked for, so a different distance cannot be served
+somebody else's answer.
 
----
+Because the genome carries the joints themselves, "no open track" is **definitional**
+rather than a penalty: a port either has a partner in `match` or the object is not a
+valid layout.
 
-## Project Invariants
+pymoo sees this as `n_var=1`, `vtype=object` (legoga_real/ga.py:72) — a numpy object
+array of `Layout` instances. That is why sampling, crossover and mutation are all custom;
+no stock pymoo operator can touch this representation.
 
-Recurring mistakes that must not repeat:
+### The two questions asked of a layout
 
-- **Chromosome length scales with inventory dynamically.** Never hardcode `N_VAR`. The optimizer maximizes piece usage, so fixed-size slots cap the search space artificially.
-- **No hardcoded dimensional or constraint limits.** Boundary, branch count, switch-pair count must all derive from inventory and config at runtime.
-- **Repair must be wired into the evaluation pipeline**, not called ad-hoc. Constraint metric for switches is orphan-switch count, not just `loose_port_count`.
-- **Fitness must reward branches.** If the objective does not credit multi-path topology, the GA eliminates switches as pure overhead.
-- **A configured value must reach the code that acts on it, and nothing may substitute for it in silence.** Two failure shapes, both found in shipped code: a value read by one subsystem and defaulted in another (`boundary_tolerance` — the constraint at 2.0, the repair at 0.0), and a name the loader drops without stopping (a misspelled key, or a piece id absent from the catalog, which still inflated the kit size and understated every utilization figure). Function signatures must not advertise a default the production path always overrides — the declaration is what the next reader believes. Where a value can only be checked against something the config does not know, gate it where the two meet: `TrackOptimizationProblem.__init__` rejects inventory names the catalog lacks.
-- **Guard wiring with its own test.** Ordinary tests compare a result against an oracle built from the *same* object, so both sides move together and a swapped input is invisible. A wiring test asserts the configured object is distinguishable from the alternative, then that it is the one in use.
+- `is_matched()` — legoga_real/layout.py:94 — are there any free ports? Topology only.
+- `is_planar_closed()` — legoga_real/layout.py:142 — does it close *geometrically*, in
+  the plane?
 
----
-
-## What, Why, How
-
-**What**: Multi-objective genetic algorithm for optimizing closed LEGO railway layouts with fixed inventory.
-
-**Why**: Generate feasible track layouts satisfying geometric constraints (closure, boundaries) while maximizing piece utilization and minimizing the expected time to traverse the whole network.
-
-**How**: pymoo NSGA-II with heuristic sampling, template-based passing sidings, construction-based decoder, and locomotive physics model.
-
----
-
-## Available Skills
-
-| Skill | Usage | Description | When to Invoke |
-|-------|-------|-------------|----------------|
-| `/optimize` | Invoke with Skill tool | Run LEGO Track Optimizer with flexible config options | User asks to run optimization |
-| `/test` | Invoke with Skill tool | Inline pytest runner (no agent overhead) | After code changes, before committing, when user says "run tests" |
-| `/review` | Invoke with Skill tool | Compact code review against pymoo/project conventions | After writing or modifying src/ files |
-| `/diag` | Invoke with Skill tool | Parse outputs/ directory and report fitness, constraints, layout | After any optimization run completes |
-| `/quality` | Invoke with Skill tool | Deep Python & pymoo quality gate — rewrites code to project standards | After implementing new features or refactoring. Use instead of `/review` for deep analysis |
-| `/verify-fix` | Invoke with Skill tool | End-to-end verification loop: full tests + optimizer run + diag, with literal output | After every bug fix. Enforces no-assertion-without-evidence. |
-| `/verify-run` | Invoke with Skill tool | Launch a named `verify_<config>` run in the background, watch to completion, hand off to `/diag` | User asks to run/verify a config or babysit a running optimization |
-| `/inspect-layout` | Invoke with Skill tool | Visually read layout/snapshot PNGs and check geometry invariants; decide viz bug vs real geometry bug | User asks to analyze snapshots or verify a layout image looks correct |
-| `/inspect-genome` | Invoke with Skill tool | Decode chromosomes from a run and cross-check phenotype vs out-keys/PNG titles/reports | A layout image and a report disagree (e.g. crossing visible but counted 0); auditing piece usage |
-| `/commit-slices` | Invoke with Skill tool | Slice a mixed working tree into logical, individually-green commits (no stash; worktree-verified) | User asks to split session work into commits |
-| `/code-map-audit` | Invoke with Skill tool | Parallel-agent dead-code scan + code map written into CLAUDE.md (re-grep before delete; never auto-rm) | User asks to audit for unused code or refresh the code-map section |
+The first is guaranteed by construction; the second is what can genuinely fail.
 
 ---
 
-## Available Agents
+## No repair operator
 
-Use with the Task tool for specialized work. **Prefer skills over agents when possible** — skills run inline and save ~5-8k tokens per invocation.
+There is no repair stage, and none should be added. The transform table
+(legoga_real/table.py:54) groups chains of pieces by their **net transform**, so two
+chains from one bucket are interchangeable anywhere in any loop. Mutation and crossover
+build only out of those equivalences, so they do not create invalid layouts in the first
+place — there is nothing left to repair. As a last guard, `mutate` accepts a candidate
+only if it is still matched and still closes (legoga_real/ops.py:493).
 
-| Agent | Purpose | When to Use (vs Skill) |
-|-------|---------|------------------------|
-| `test-runner-analyzer` | Deep test analysis with coverage, flaky detection | Only for complex test debugging. For simple runs, use `/test` skill instead |
-| `config-test-runner` | Run FULL optimizer with all configs, validate layouts visually, check chromosomes | When validating that all configs produce correct results (switches→branches, crossing→crossings, all closed) |
-| `python-pymoo-reviewer` | Deep pymoo architecture review | Only for large refactors. For quick checks, use `/review` skill instead |
-| `pymoo-error-fixer` | Fix issues identified by the review agent | After `/review` or reviewer agent finds issues |
-| `ga-pymoo-implementer` | Implement GA/pymoo code after planning phase | After plan is approved, for complex implementations |
-| `research-explorer` | Research technical concepts, evaluate proposals | For deep research requiring web search and documentation |
+Operators that drop pieces leave holes in the numbering. Closing them is one shared step,
+`Layout.compact()` (legoga_real/layout.py:72), called at the end of every such operator
+(legoga_real/ops.py:193, :471, :689, :810) — never hand-written again.
+
+## Pairing: what is a law and what is only this operator
+
+**Switches must come in pairs.** This one is structural. A switch has three ports; adding
+one alone leaves a port without a partner, which the representation forbids outright
+(legoga_real/ops.py:366, :439).
+
+**Crossings come in pairs only because of how the current operator works.** It is *not* a
+law of geometry. `mut_add_crossing_pair` (legoga_real/ops.py:568) inserts crossings into
+an existing closed loop and threads a **second, separate closed loop** through them — and
+two distinct closed curves in the plane do cross an even number of times, so within that
+construction parity holds.
+
+A single crossing is perfectly legal in a different topology: a **figure eight** is *one*
+closed curve that crosses itself once. `figure_eight` (legoga_real/ops.py:37) builds
+exactly that: one `XX` and two mirrored lobes of 2 straights, 12 curves, 2 straights — 33
+pieces, one route, 160 × 160 studs. It is one of the seeds (legoga_real/ga.py:100), so
+single-crossing layouts are in the population from generation 0. The pair operator is
+still the only way to *add* a crossing later.
 
 ---
 
-## Tech Stack
+## Placement and geometry
 
-- **pymoo 0.6.1.6**: Multi-objective optimization (NSGA2)
-- **numpy >=1.24.0, scipy >=1.10.0**: Scientific computing
-- **pyyaml >=6.0, ruamel.yaml, pydantic >=2.0.0**: Config and catalog validation
-- **matplotlib >=3.7.0**: Visualization (forced `Agg` backend — Tk crashes under multiprocessing)
-- **pytest >=7.4.0**: Testing
+`place()` — legoga_real/layout.py:105 — lays the pieces out on the table. It walks the
+joints breadth-first from piece 0 and produces one **transform per piece**: how far to
+move it in x, how far in y, and by what angle. Where two paths meet the same piece, it
+reports the mismatch; an angle mismatch adds `1e3`, so it can never hide inside a
+positional tolerance. Closure is accepted below `POS_TOL = 0.30` studs
+(legoga_real/layout.py:21).
+
+`nodes()` — legoga_real/layout.py:148 — finds the graph vertices. It does not guess: it
+reads the `is_node` boolean set on each element type by hand
+(legoga_real/geometry.py:107).
+
+**Every element** (legoga_real/geometry.py:102) carries: a name, its ports, its routes
+(which port pairs a train can actually traverse), a set of sample points along its length
+— generated by the arc and line helpers (legoga_real/geometry.py:114, :123) and used for
+collision detection — and that node flag. The dataclass is **frozen**: an element
+definition is read-only by design.
+
+`geometry.py` also holds all geometric constants and precomputed trig tables
+(legoga_real/geometry.py:65) — angles are discrete, so sines and cosines are computed
+once. Three functions do the SE(2) work:
+
+- `compose(t1, t2)` — legoga_real/geometry.py:70 — apply `t1`, then `t2` on top of it.
+- `inverse(t)` — legoga_real/geometry.py:81 — undo a transform.
+- `apply(t, p)` — legoga_real/geometry.py:88 — move a point by a transform.
+
+**Pose** is `(x, y, a)` with `a` an integer mod 16; one unit = 22.5°. Rotation
+composition is therefore **exact**, and only positions are floating point. Never
+introduce a float angle.
+
+| Name | What it is | Ports |
+|------|-----------|-------|
+| `S16` / `S24` | straights, 16 and 24 studs | 2 |
+| `CL` / `CR` | R40 curve, 22.5°, left / right | 2 |
+| `WL` / `WR` | left / right switch | 3 (node) |
+| `XX` | 90° crossing, two independent axes | 4 (node) |
+| `DC` | double crossover, 48 studs, axes 16 studs apart | 4 (node) |
+
+Port 0 always sits at the origin facing direction 8; port directions are outward.
+
+`DC` is registered at legoga_real/geometry.py:228. The two slants joining its axes are not
+built from prototype pieces and are not modelled — only its ports and routes count
+(legoga_real/geometry.py:40).
+
+### Which way up is the layout?
+
+A layout's angle follows from which piece happens to be number 0, and turning the whole
+thing on the table is free. So size is measured in whichever of the 16 rotations sticks out
+least.
+
+- `extents()` — legoga_real/layout.py:355 — bounding rectangle for every rotation.
+- `fit(max_size)` — legoga_real/layout.py:375 — picks one and returns it with the width and
+  height. Ties go to the shorter long side, then the shorter short side, on rounded values,
+  so float noise cannot decide.
+
+Everything that asks about size goes through `fit`: the size constraint
+(legoga_real/ga.py:76), the printed front (legoga_real/run.py:71), the duplicate signature
+(legoga_real/ga.py:165) and `summary()` (legoga_real/layout.py:394). The renderer draws the
+rotation the GA judged (legoga_real/render_with_v1.py:50).
+
+### Is the layout graph cubic?
+
+Only where crossings are absent. `reduce()` (legoga_real/layout.py:151) collapses chains
+of 2-port pieces into edges, leaving switches and crossings as vertices. A switch has
+degree 3 — genuinely cubic. A crossing has four ports, but its routes are `((0,1),(2,3))`
+(legoga_real/geometry.py:219): **no route joins the two axes**, so a train can never turn
+there. A crossing is therefore two edges sharing a location, not a branch point. Switches
+are the only real branch vertices, and they are all degree 3.
 
 ---
 
-## Essential Commands
+## Transform table
 
-Prefer skills over raw commands — they handle argument parsing and result formatting:
+`TransformTable(max_len)` — legoga_real/table.py:54. It walks outward from the empty
+chain **breadth-first**: one piece in every direction, then two, up to `max_len`,
+recording every chain it meets. The depth is a parameter; its optimal value is to be
+established by the ablation, not fixed by hand.
+
+Each chain is filed by its net transform. `_key` (legoga_real/table.py:41) turns that
+transform into a bucket address: a grid cell half a stud on a side, plus the angle. A
+bucket therefore holds chains of **different lengths and different pieces that all
+produce the same displacement** — the equivalence that makes safe mutation possible. By
+default 60 chains are kept per bucket; `per_bucket=None` (legoga_real/table.py:56) lifts
+the limit and exists so the ablation can measure whether it matters.
+
+Cell numbers are rounded, not floored (legoga_real/table.py:34). Track coordinates land
+exactly on grid multiples, where flooring jumps a cell on float drift of order 1e-14.
+
+- `lookup` — legoga_real/table.py:89 — chains realizing a given transform.
+- `closure_len` — legoga_real/table.py:99 — admissible lower bound; `inf` means
+  unreachable within `max_len`.
+- `_flat` — legoga_real/table.py:121 — flattens all buckets into one list ready for
+  random scanning.
+- `connectors` — legoga_real/table.py:127 — meet-in-the-middle over that flat list,
+  reaching `2 * max_len` without extra memory. Answers are remembered and handed out as
+  copies, so a caller cannot corrupt the next one.
+- `forget` — legoga_real/table.py:157 — drops those remembered answers. Mutation calls it
+  once per generation (legoga_real/ga.py:138), so the random scan is drawn afresh instead
+  of repeating one generation's luck for the whole run.
+
+Built per problem instance (legoga_real/ga.py:69) with depth 11 by default
+(legoga_real/ga.py:66), not cached globally.
+
+---
+
+## The GA
+
+legoga_real/ga.py:65 — `TrackProblem(ElementwiseProblem)`, `n_obj=2`, `n_ieq_constr=3`.
+
+- `F = [-used_pieces, -count_routes]` — maximize both, via negation.
+- `G = [overlap, inventory_excess, over_size]`, the last one measured at the best rotation
+  (legoga_real/ga.py:76).
+- Failed placement returns `10**6` from `overlap()` (legoga_real/layout.py:298), so a
+  degenerate layout can never score well.
+
+**Initial population** (legoga_real/ga.py:91): ovals, a circle and a figure eight, each
+then put through 3–25 mutations. Inventory is checked **after every single mutation**, not
+once at the end — a candidate that would overrun the box of pieces is discarded and the
+previous layout kept (legoga_real/ga.py:108).
+
+**Mutation** (legoga_real/ga.py:137): with probability 0.9 an individual receives 1–2
+mutations. Each draws from the eight operators below, weighted; `mutate`
+(legoga_real/ops.py:477) makes one weighted draw per operator and returns the original if
+every one fails.
+
+| Operator | Line | Weight | What it does |
+|----------|------|--------|--------------|
+| `mut_swap_segment` | ops.py:198 | 0.30 | swap a chain fragment for an equivalent one |
+| `mut_antipodal_insert` | ops.py:235 | 0.16 | insert the same neutral block at two points 180° apart, so displacement cancels |
+| `mut_add_branch` | ops.py:366 | 0.19 | insert a switch pair, join the diverge legs with a table chain |
+| `mut_remove_branch` | ops.py:439 | 0.07 | inverse; each switch becomes two S16 again |
+| `mut_add_crossing_pair` | ops.py:568 | 0.10 | insert two crossings, run a second closed loop through them |
+| `mut_remove_crossing` | ops.py:665 | 0.04 | drop a cross-axis loop and every crossing sitting on it |
+| `mut_add_dbl_crossover` | ops.py:718 | 0.10 | insert a double crossover, close its second track with a table chain |
+| `mut_remove_dbl_crossover` | ops.py:769 | 0.04 | inverse; the first track gets 48 studs of straight back |
+
+Two of those need a word beyond the table. Removing a crossing follows the cross axes
+right round the loop (`cross_loop`, legoga_real/ops.py:642) and turns **every** crossing it
+meets back into an S16 — ports 0 and 1 sit exactly where a straight's do, so nothing else
+moves. Removing a double crossover takes the whole component hanging off its second track,
+including nodes that grew there, and refills the first track with 48 studs: three S16 or
+two S24, drawn at random. A double crossover whose second track rejoins the main one is
+skipped.
+
+**Crossover** (legoga_real/ga.py:118) works the same way: two parents, one child
+(legoga_real/ops.py:498) — a fragment is transplanted when both sides have the same net
+transform — and the child is discarded in favour of the first parent if it overruns
+inventory.
+
+`TrackDuplicates` (legoga_real/ga.py:152) is a plain `DuplicateElimination`, not the
+elementwise one: it builds a set of signatures and asks each individual once, instead of
+comparing every pair. The signature (legoga_real/ga.py:164) is the physical piece counts,
+the route count, the longer and shorter side at the best rotation, and whether overlap is
+zero.
+
+Before asserting any pymoo API, verify with context7 (`/anyoptimization/pymoo`). Same for
+non-trivial Python/numpy semantics. Never answer from memory.
+
+---
+
+## Reading results out of a layout
+
+- `count_routes()` — legoga_real/layout.py:192 — distinct closed routes a train can
+  drive, honoring that a switch does not join its through road to its diverge leg and
+  that a crossing is two independent paths.
+- `overlap()` — legoga_real/layout.py:286 — centerline samples in a grid, counting pairs
+  closer than track width, excluding pairs already near *along the track*
+  (`NEAR_STUDS = 40`, legoga_real/layout.py:29 — derived from part geometry, not chosen).
+- `fit()`, `counts()`, `summary()` — legoga_real/layout.py:375, :97, :393. `bbox()`
+  (:340) is still there but nothing calls it any more.
+
+---
+
+## Run it
 
 ```bash
-# Optimization (use /optimize skill)
-/optimize                           # Default config, full run
-/optimize -c with_switches          # With switches config
-/optimize --quick                   # Quick test (20 gen)
-
-# Testing (use /test skill)
-/test                               # Full suite, compact output
-/test geometry                      # Specific module
-/test decoder -v                    # Verbose
-
-# Code review (use /review skill)
-/review                             # Review current changes
-/review src/problem.py              # Specific file
-
-# Diagnostics (use /diag skill after optimization)
-/diag                               # Parse outputs/ and report
-
-# Raw commands (when skills don't fit)
-python main.py --config configs/default.yaml --verbose
-python run_v1_all_configs.py        # Batch: every config -> outputs/<config_name>/
-pytest --tb=short -q
+python -m legoga_real.run --pop 60 --gens 40 --seed 1 --out outputs/legoga
 ```
 
-Note: `lint-imports` is installed in the venv but **no import-linter config exists** — running it fails with "Could not read any configuration". Either add a config or ignore the tool.
+Defaults in `run()` — legoga_real/run.py:43 — `pop=60`, `gens=40`, `seed=1`,
+`max_size=(500.0, 500.0)`, `out="outputs/legoga"`. `--out` is a directory; `run()`
+creates it and writes `tory.png` (best six), `tory_1.png` … `tory_6.png`,
+`tory_progress.csv`, `tory_pieces.png`, `tory_routes.png` into it.
+
+No config file exists. Inventory is a dict in code (legoga_real/ga.py:37), overridable by
+passing `inventory=` to `run()`.
+
+### Modules
+
+legoga_real/geometry.py — SE(2) math, constants, the eight element types.
+legoga_real/layout.py — the `Layout` genome.
+legoga_real/table.py — the equivalence table.
+legoga_real/ops.py — seeds and closure-preserving operators.
+legoga_real/ga.py — the pymoo layer.
+legoga_real/run.py — entry point.
+legoga_real/progress.py — per-generation callback, CSV plus two plots.
+legoga_real/render_with_v1.py — draws results with the V1 renderer.
+legoga_real/viz.py — standalone drawing; unused, but the only renderer with no dependency
+outside the package.
 
 ---
 
-## Architecture (Verified 2026-06-12)
+## Rules that must not be broken
 
-Authoritative snapshot from a full read of the live pipeline. pymoo class names kept verbatim.
+- **A switch replaces two adjacent S16.** Its body is 32 studs — exactly two straights —
+  so the substitution does not move the rest of the layout. That is what `s16_pairs`
+  hunts for (legoga_real/ops.py:325).
+- **R40 is one physical piece.** `CL` and `CR` are the same brick laid either way and
+  share one `R40` pool (legoga_real/ga.py:48). Never budget them separately.
+- **Inventory is a constraint, not a knob.** It mirrors the real box; never enlarge it to
+  make a run succeed.
+- **Geometry constants stay in `geometry.py`.** No dimensions inside operators.
+- **Element definitions are read-only.** They are frozen dataclasses; build new ones
+  rather than mutating.
 
-**1. Representation (chromosome).** Fixed-length-per-run `int16` vector; `n_var` is **derived from inventory at runtime — never hardcoded** (`compute_dimensions`, `src/encoding.py`). Partitioned via `PartitionedDimensions` (`*_start/_end` properties):
+## Measured geometry
 
-| Segment | Range | Genes |
-|---------|-------|-------|
-| Main-loop types | `[0, n_main)` | piece type per slot; alleles `[-1, 2]` (-1=INACTIVE, 0=STRAIGHT_16, 1=STRAIGHT_24, 2=R40_CURVE) |
-| Main-loop flips | `[n_main, 2·n_main)` | per-slot R40 handedness bit `{0, 1}` |
-| Passing-siding junctions | `J × 4` | (active, position, handedness, n_straights); `J = min(LEFT, RIGHT)` switch inventory |
-| Cross-junctions | `K × 3` | (active, pos_1, pos_2); `K = CROSS_90` inventory |
-| Double-crossovers | `D × 5` | (active, pos_1, route_1, pos_2, route_2); `D = DOUBLE_CROSSOVER` inventory |
-| Start position | last 2 | start_x, start_y (fine offset on top of decoder auto-centering) |
+The switch is where measurement beats derivation — legoga_real/geometry.py:35.
 
-Switches/crossings are **not** legal main-loop alleles — they enter only via descriptor blocks / decoder repair. Sampling: custom `IntegerSampling(Sampling)` (`src/sampling.py`) — **not** `IntegerRandomSampling`.
+- Body 32 studs along the through road (`SWITCH_BODY`).
+- Diverge port measured at `(32.75, ±13.0)`, exit heading 22.5° (`SWITCH_C_X/Y`).
+- The diverge leg is R40 along its whole length: two 3-4-5 arcs, `+36.87°` then `−14.37°`
+  (legoga_real/geometry.py:170). Never model it as arc-plus-straight.
+- The 3-4-5 derivation lands at `(32.69, 12.96)`; the **measured port wins**, and that
+  ~0.1-stud residue is why the table's `SNAP` is 0.15 (legoga_real/table.py:31).
 
-**2. Decoder (genotype→phenotype).** `decode_chromosome(x, catalog, inventory, dims, config) -> MultiPathLayout` (`src/decoder/construction.py`). Steps: read main loop (inventory-checked) → validate junctions → inject switch pairs → inject cross-junctions → inject double-crossovers → emergent self-intersection repair (perpendicular STR-on-STR → CROSS_90, committed like a descriptor crossing: both slots rewritten, both straights released, one `CrossJunction` record with `slot=-1`) → FK + enumerate `2^J` traversal paths → auto-center in boundary. FK via `compute_fk_chain(fk_deltas)` (`src/geometry.py`, vectorized cumsum) accumulating `[x,y,θ°]`; R40 handedness applied in `get_fk_with_flip` (negates `dy,dθ`). Kit is **R40-only** (no R56/R104); R40_CURVE FK = `[15.307, 3.045, 22.5°]`. Descriptors that fail geometry/inventory validation are dropped (reasons recorded in `layout.drop_log`).
-
-**3. Objectives & constraints.** `TrackOptimizationProblem(ElementwiseProblem)` (`src/problem.py`), `n_obj=2`, `n_ieq_constr = 5 + catalog.n_pieces`, **no equality constraints (H)**.
-- `F[0] = -weighted_utilization` — `(n_physical_pieces + (special_piece_weight−1)·n_special) / total_inventory`, where `n_special` = switch pairs + cross-junctions + double-crossovers and `special_piece_weight` defaults to 3.0, so multi-path topology raises the score instead of being stripped as overhead.
-- `F[1] = expected_traversal_time` (minimized directly, no negation) via `_expected_traversal_time(...)` at `SPEED_SAFETY_MARGIN=0.95`: each of the `2^J` routes is profiled (3-pass `compute_speed_profile`, `src/train/scoring.py`), every **physical** piece is charged the MEAN of its traversal times across all passages (identity via `TraversalPath.piece_uids`; a CROSS_90 — descriptor or emergent — and a DC span two slots but are one piece, unified through junction records; routes are profiled closed/open at the config closure tolerances), and the objective sums over distinct pieces. A plain (non-self-crossing) loop ⇒ exactly that loop's `lap_time`; a self-crossing one comes out **below** its lap time, because the crossing is one physical piece the lap passes twice yet is charged once. No usable route ⇒ `+inf` (time 0 would rank best). **Nadal's criterion** is one of the per-segment caps (`v_eff = min(v_slide, v_tip, v_nadal, v_motor)`), not the objective itself.
-  - **Why it replaced the previous `F[1]`** (measured over the archive, not argued). The old objective was `-_slowest_route_speed(...)`: each of the `2^J` routes profiled, take that route's **`avg_speed`**, keep the MINIMUM over routes, negate — i.e. maximize the worst route's average pace. It failed because a route's `avg_speed` **rises with piece count** (0.842 on a 16-piece R40 circle → 1.009 on a 96-piece racetrack), so it moved *with* utilization instead of against it, leaving no conflict for a front to spread along; the surviving spread was a sliver, 0.974–1.007 m/s across a whole front. Median feasible-front size went from **2 points** (182 archived runs, min 1, max 12, 65 of them a single point) to **39** (1137 runs, max 130). On `all_pieces` the front is now continuous from the 16-piece R40 circle (util 7.3%, 2.39 s) to a 59.2% layout at 15.73 s, where the old objective produced 4–6 points inside a 0.03 m/s band.
-- **Loop closure is an inequality (G), not H:** `G[0..2] = |dx|/tol−1, |dy|/tol−1, |dθ°|/tol−1`; `G[3]` = boundary; `G[4]` = collisions (`unresolved_crossings/5 + dangling_cross_ports + dangling_DC_ports`); `G[5..]` = per-type inventory excess (normalized by `max_occ[t]`).
-- Degenerate (0-piece) layouts get `F = +inf`, `G = 1e6` — never NaN (breaks dominance comparison).
-- Custom out-keys `n_sw_pairs` / `n_cross_comm` / `n_dc_comm` ride on the Population for the category-elite archive, alongside `n_pieces` — the honest physical census (a switch / CROSS_90 / DC counts once, whatever its slot span) that every report reads instead of inverting the weighted `F[0]`. **`F[0]` is a weighted piece score, NOT utilization**: reports print `Pieces: used/total`, `Utilization: used/total as a percent`, and `F[0] weighted score` as three separate quantities. Read `n_pieces` via `runner.piece_counts(pop)` — pymoo answers an unset key with an object array of `None`, not `None`.
-
-**4. Operators.** Custom `PartitionedCrossover(Crossover)` (`src/operators.py`) — one-point on the main loop with the cut mirrored on the flip array, uniform per-slot swap on descriptors; when either parent carries an active DC descriptor, the main loop + DC block stay parent-intact (**not** SBX). Custom `PartitionedMutation(Mutation)` — weighted sub-operator portfolio (**not** PM): piece-type change / activate / deactivate / swap / flip / crossing-aware straighten / compensated-pair grow. DC-bearing genomes receive ONLY closure-safe grows (`_compensated_pair_grow`, `_grow_dc_figure_eight`; a declined grow falls through to the other) — every other operator would break the FK-tuned figure-8; siding-bearing genomes get a junction op or the compensated-pair grow, with a declined grow falling back to a junction op. Both grows return True iff they edited the genome, and the compensated grow accepts holed loops (descriptor positions are active-order, matching the decoder). Selection: `NSGA2` default binary tournament (not set explicitly).
-
-**5. Repair pipeline.** `TrackRepairPipeline(Repair)` (`src/repair.py`) chains **4 stages** in `_do`: `JunctionValidityRepair` (clamp descriptor genes) → `InventoryRepair` (drop excess pieces) → `MainLoopClosureRepair` (Stage 1 angular: add/remove R40s toward 360°, or nearest of {0, 360, 720} for cross/DC genomes; Stage 2 translational: drop straights to shrink the dx/dy gap) → `BoundaryAwareRepair` (re-center, else shrink via anti-parallel straight pairs). **No `RoundingRepair`** (genome is already int16; clamping is manual). Closure + boundary stages are optional via `enable_closure_repair` / `enable_boundary_repair`.
-- **`BoundaryAwareRepair` judges each of the four box edges separately** against `boundary_tolerance`, the same per-edge overshoot allowance `G[3]` grants, so it never rewrites a layout the constraint accepts. `TrackRepairPipeline` takes that tolerance as a **required keyword** and forwards it — it went unpassed for the whole life of the class, leaving repair at 0.0 while the constraint ran at the configured 2.0. Overshoots are measured where the decoder will place the loop (centred, then the start-offset gene), so the siding margin stays a per-edge modelling reserve, not a tolerance.
-
-**6. Heuristic sampling.** Hybrid (`IntegerSampling._do`): `heuristic_ratio` (default 0.20) of the population is inventory/boundary-aware closed loops (`_gen_simple_loop` / `_oval` / `_racetrack` / `_oval_with_siding` / `_oval_two_sidings` / `_figure_eight` / `_figure_eight_cross` / `_figure_eight_dbl_crossover`); the remainder are random partial-fill chromosomes. All pattern dimensions derive from boundary + inventory.
-
-**7. Survival & constraint handling.** `NSGA2` uses `ConstrRankAndCrowding()` (Deb feasibility-first), wrapped in `LegoAdaptiveEpsilon(AdaptiveEpsilonConstraintHandling)` (`src/algorithm/runner.py`): three-phase schedule (hold → linear decay → strict), epsilon_0 from the 10th percentile of infeasible CVs, capped at `SOFT_CONSTRAINT_COUNT` (4). That cap binds in every run measured so far — `cv_eps` starts at exactly 4.0 in 420/420 archived cells — so the calibration is saturated and what ships is a constant on a decay schedule, not a population-fitted epsilon. Closure + boundary (`G[0..3]`) are SOFT (relaxable); collisions + inventory are HARD — weighted ×1000 via `cv_ieq.scale` so no epsilon can relax them (never bake epsilon into CV; see memory note on the tournament crash). The crowding metric is `algorithm.crowding_func` (default `cd`, built by `_build_survival`). **`pcd` was measured and is not better**: 10 arms × 21 configs × 3 seeds on both metrics, no arm reaches `p < 0.5` for `pcd > cd`, mean HV deltas span −0.016..+0.003, and cost is equal (19.7 h vs 20.2 h) — so `cd` stays the default. Selecting `pcd` routes through `_pruning_crowding`, which restores the clamp the compiled `calc_pcd` kernel is missing: unguarded it writes past its buffer once `n_remove >= n_distinct − n_obj`, an intermittent segfault this problem hits routinely (a 1000-individual population holds ~25 distinct `F`).
-
-**8. Callbacks.** Always attached: `FeasibleEliteCallback` (re-injects best-scoring feasible), `CategoryEliteArchive` (per-category elites; must run AFTER the global elite), `ConvergenceMonitorCallback` (HV/IGD/feasibility + run-cumulative feasible front — dedupe before NDS or the run slows down quadratically). `SnapshotCallback` only when `output_dir` is set; `ProgressCallback` only when `verbose`.
-
-**Categories** are `CATEGORIES = ("plain", "switch", "cross", "dc")`, membership decided once by `category_masks(pop)` off the `n_sw_pairs`/`n_cross_comm`/`n_dc_comm` out-keys. `plain` is the complement of all three (the no-special-piece baseline); the other three overlap by design. The archive records `plain` for reporting but never injects it — injection exists to keep fragile special-element topologies from going extinct. Every category yields `best_with_<cat>.png` plus a `## <cat>` report section. `SnapshotCallback` fires **every generation** into `snapshots/<category>/gen<NNN>_<feasible|infeasible>.png` (zero-padded to the run's width so files sort in run order); at ~0.3 s per PNG this is a real share of run time. `objective_progress.png` (F[0] vs generation, with the inventory-ceiling reference line from `problem.max_weighted_piece_score()`) is written by `save_results` from `convergence.csv`.
-
-**9. Config & scale.** `AlgorithmConfig` (`src/config.py`): `default.yaml` = NSGA2, `pop_size=1000`, `n_gen=200`, `crossover_prob=0.2`, `mutation_prob=0.8`, `heuristic_ratio=0.20`, `seed=null`; `with_switches.yaml` = NSGA2, `n_gen=500`, `n_workers=32`, termination `period=100`. Termination via `_build_termination`: `MaximumGenerationTermination` by default; `DefaultMultiObjectiveTermination` (improvement-aware early stop) when `termination.period > 0`, with `n_max_evals=inf` — pymoo's hidden 100000 default would cap pop-1000 runs at generation 100. The epsilon Meta-wrapper's own `evaluator.n_eval` stays 0 (the live counter is on `__super__`); the monitor reads the true one. Catalog = **7 piece types**. `seed=null` (non-deterministic); **one run per `main.py` invocation**.
+Numbers come from data/track_pieces_v2.yaml (4DBrix 2.04.021/018).
 
 ---
 
-## Track Pieces (Catalog Index, Geometry)
+## What the prototype borrows from the V1 system
 
-R40 is ONE physical piece (4DBrix 2.04.069); handedness is selected per placement via the chromosome's parallel flip array (flip=0 → LEFT +22.5°, flip=1 → RIGHT −22.5°). Switches keep separate LEFT/RIGHT piece types because their port/route geometry isn't a simple mirror.
+The V1 optimizer still lives in the repository (`src/`, `tests/`, `configs/`, `main.py`)
+and is **not** described by this document. The prototype touches it in exactly two
+places, both output-only:
 
-**The catalog carries geometry only — no speed data.** Speed caps are derived at runtime from train physics (`v_eff_array`, `src/train/physics.py`): straights bind at the motor cap (`v_motor_max`, measured 1.26 m/s), R40-radius segments (curves, switch diverge, DC diagonals) at the lateral-slide cap `sqrt(mu·g·R)` ≈ 0.886 m/s at `mu_design=0.25`.
+legoga_real/render_with_v1.py:14 — `src.config`, `src.encoding`,
+`src.visualization.track_renderer`, to draw layouts in V1 style.
+legoga_real/progress.py:11 — `src.visualization.objective_progress`, for progress plots.
 
-| Index | Piece ID | Geometry |
-|-------|----------|----------|
-| 0 | STRAIGHT_16 | 16-stud straight |
-| 1 | STRAIGHT_24 | 24-stud straight |
-| 2 | R40_CURVE | 22.5° curve (16/circle); direction = flip bit |
-| 3 | CROSS_90 | 90° crossing; FK == STRAIGHT_16 |
-| 4 | R40_SWITCH_LEFT | left switch, 32-stud body; through straight / diverge R40 arc |
-| 5 | R40_SWITCH_RIGHT | right switch, 32-stud body; through straight / diverge R40 arc |
-| 6 | DOUBLE_CROSSOVER | 48×16 studs, 4 routes (2 through + 2 diagonal) |
+Consequence: `legoga_real` cannot be extracted into a standalone repository while those
+imports stand. `legoga_real/viz.py` is the fallback that would make it standalone.
 
----
-
-## Template-Based Passing Sidings
-
-```
-[IN_switch] -> [approach_curve] -> [straights×N] -> [return_curve] -> [OUT_switch]
-```
-
-A siding is an **opposite-handed pair**: 1 LEFT + 1 RIGHT switch (+ 2 R40 curves + N straights). The exit switch is installed **reversed** (its merge FK comes from `template.merge_fk`, not catalog routes).
-
-| Template | Entry switch | Exit switch (reversed) | Branch curve flips |
-|----------|--------------|------------------------|--------------------|
-| LEFT_SIDING | R40_SWITCH_LEFT (4) | R40_SWITCH_RIGHT (5) | flip=1 |
-| RIGHT_SIDING | R40_SWITCH_RIGHT (5) | R40_SWITCH_LEFT (4) | flip=0 |
-
-The decoder reads active descriptors sorted by position, computes branch geometry from templates, validates by construction (dropping invalid descriptors and releasing their inventory), injects the pair into the main loop (exit found downstream by walking X-distance), and enumerates all 2^N traversal paths.
+`legoga_orig/` is an earlier snapshot of the same prototype, kept untracked for
+reference; 83–100% identical code. The differences are the measured switch geometry, the
+real inventory and the V1 renderer. Do not develop against it.
 
 ---
 
-## Data Flow
+## Testing
 
-```
-data/track_pieces_v2.yaml -> TrackCatalog (FK tables, radii, routes; no speed data)
-configs/*.yaml -> OptimizationConfig (inventory, boundary, algorithm)
-main.py -> NSGA2 + IntegerSampling -> Problem._evaluate()
-chromosome -> decode_chromosome() -> MultiPathLayout
-MultiPathLayout -> compute_speed_profile() -> F[], G[]
-results -> visualization + run_info.md + category_report.md -> outputs/
-```
+**There are no automated tests for the prototype.** No file under `tests/` references
+`legoga` — verified by grep. The existing suite covers the V1 system only.
 
----
+Until tests exist, verify changes by:
 
-## Development Workflows
+1. `python -c "import legoga_real.run"` — catches import and syntax breakage.
+2. A real run at the documented command; read the printed front — feasible rows must show
+   sensible piece counts and zero collisions.
+3. `Layout.summary()` (legoga_real/layout.py:393) for a machine-readable dump.
+4. `Layout.min_clearance()` (legoga_real/layout.py:406) — an **independent** check on
+   `overlap()`: below track width means a physical conflict `overlap()` should have
+   caught. Different method, so it is evidence, not a restatement.
 
-### Adding Track Pieces
-1. Add to `data/track_pieces_v2.yaml` (V2 port-centric schema: `ports`, `routes`, `kind`)
-2. Add to `_CANONICAL_PIECE_INDEX` in `src/catalog/catalog.py` and `PieceIndex` in `src/encoding.py` with the next index
-3. If switch: add template to `src/templates.py`
-4. Run `/test catalog` and `/test templates` to validate
-
-### Adding Objectives/Constraints
-1. Implement in `src/problem.py` (`_evaluate` and helpers)
-2. Update `n_obj` or `n_ieq_constr` in `TrackOptimizationProblem.__init__`
-3. Update `SOFT_CONSTRAINT_COUNT` in `src/algorithm/runner.py` if the new G is soft, and the `constraints.csv` header in `save_results`
-4. Run `/review src/problem.py` then `/test problem`
-
-### After Any Code Change
-1. `/test` — verify nothing broke
-2. `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py` — style gate, must exit 0
-3. `/review` — quick check for interface/convention issues
-4. `/quality src/<file>.py` — deep quality gate for new or refactored code (rewrites to project standards)
-
-### After Optimization Run
-1. `/diag` — parse outputs and get diagnostic report
-
-### Full Config Validation
-Use the `config-test-runner` agent — runs ALL configs with full optimization, visually inspects layouts, validates chromosomes, checks that switches→branches, crossings→crossings, all layouts closed and connected.
+No assertion without evidence: never claim a fix works without running the command and
+pasting the literal output.
 
 ---
 
-## Code Map (one-line purpose per module)
+## Known gaps and stale statements
 
-**Note**: configs in `configs/*.yaml` are CLI inputs (`main.py --config <path>`) — they are NOT imported from Python, so "no .py reference" is NOT evidence of being dead. Re-grep any symbol immediately before deleting it.
+Facts about the current code, not a wish list.
 
-**Entry points**
-- `main.py` — CLI: load config + catalog, run optimization, save results + run_info.
-- `run_v1_all_configs.py` — batch runner: every config → `outputs/<config_name>/`.
+- `legoga_real` is **not** in the style gate. The gate is
+  `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py`
+  (`setup.cfg`, 99 chars). The prototype currently reports 4 findings.
 
-**`src/` core**
-- `problem.py` — `TrackOptimizationProblem`: weighted-utilization + expected-traversal-time objectives, 5+T inequality constraints.
-- `encoding.py` — `PartitionedDimensions`, `compute_dimensions`, `generate_bounds`, gene accessors (`get_junction`, `get_cross_junction`, `get_double_crossover`, flips), chromosome construction + validation.
-- `decoder/construction.py` — `decode_chromosome()`: injection pipeline + 2^J path enumeration; `decoder/types.py` — `DecoderConfig`, `InventoryTracker`, `ValidatedJunction`.
-- `geometry.py` — `compute_fk_chain` (vectorized FK), `compute_closure_metrics`, plus the single-loop `Layout`/`build_layout()` still consumed by tests, train/, and viz.
-- `intersection.py` — vectorized self-intersection scan (`find_crossing_pairs`, `count_segment_crossings`), `cross_pair_perpendicular` (single definition of a valid CROSS_90 crossing), dangling-port counters.
-- `templates.py` — passing-siding templates (LEFT/RIGHT), reversed-OUT merge-FK derivation, DC route/port tables, siding geometry validation + inventory helpers.
-- `sampling.py` — `IntegerSampling`: heuristic seed families (loops/ovals/racetracks/sidings/figure-8s) + random chromosomes; `_figure_eight_main_loop` is shared with operators.
-- `operators.py` — `PartitionedCrossover`, `PartitionedMutation` + sub-operator portfolio (incl. `_compensated_pair_grow`, `_grow_dc_figure_eight`).
-- `repair.py` — `JunctionValidityRepair`, `InventoryRepair`, `MainLoopClosureRepair` (angular + translational), `BoundaryAwareRepair`, chained by `TrackRepairPipeline`.
-- `types.py` — pure dataclasses: `SwitchPair`, `CrossJunction`, `DblCrossover`, `TraversalPath` (incl. `piece_uids` physical-piece identity), `MultiPathLayout`, `PieceClass`, `FKRoute`, `PieceTopology`.
-- `config.py` — Pydantic models `OptimizationConfig` / `BoundaryConfig` / `AlgorithmConfig` / `TerminationConfig` / `SearchComponentsConfig`, all deriving from `_StrictModel` (`extra="forbid"`), so a misspelled key at any nesting level raises instead of silently keeping the default. `train_config_path` is **required**; `train_config_file` resolves it against the config's own directory, and `load_train_config()` is the single reader.
-- `run_info.py` — per-run provenance writer (`run_info.md`: git state, verbatim config, train physics, run summary). The **Train Physics** section embeds the train YAML verbatim *and* the values it resolved to, flagging each field no file stated — a train YAML is partial by design, so its text alone does not say what the run used.
+### Dead code (verified in both packages)
 
-**`src/catalog/`** — `catalog.py` (`TrackCatalog.load()`, vectorized FK/radius/topology tables — no speed data, v2 port-centric schema only; raises on non-v2, on piece ids outside the canonical map, on missing canonical pieces, and on stud-vs-mm radius drift; per-route arc lengths derived from each route's endpoint pose); `loader.py` (ruamel + Pydantic with file:line error UX); `pieces.py` (`FKDeltas`, `Port`, `TrackPiece`); `specs.py` (Pydantic v2 schema).
+Never called: `crossing_connectors` (ops.py:467), `_XCONN` (ops.py:498), `other_port`
+(geometry.py:251), `get_table` / `_CACHE` (table.py:174, :171), `save` / `load`
+(table.py:163, :167), `__len__` / `cyclomatic` / `bbox` / `summary` / `min_clearance`
+(layout.py:83, :242, :340, :393, :406), `stats` (table.py:112), and all of `viz.py`.
 
-**`src/train/`** — `physics.py` (`TrainConfig`, derailment caps, capped friction-circle `available_accel` = `min(cap, sqrt((mu*g)^2 - a_lat^2))`); `scoring.py` (`compute_speed_profile`, 3-pass profiler — route-aware radii AND arc lengths, triple unroll for closed loops); `evaluation.py` (`PhysicalEvaluation`, `evaluate_layout()` — full physical evaluation; scoring is the building block, evaluation the orchestrator).
+`bbox` joined the list when `fit` took over every size question. Nothing else replaced it,
+so a caller that genuinely wants the untouched orientation still has it.
 
-**There is no locomotive in the code.** `TrainConfig` is a strict Pydantic model (`extra="forbid"`, `frozen`). Its five vehicle fields — `v_motor_max`, `max_accel`, `mass_loco`, `mass_trailing`, `coupler_offset` — have no defaults, so a train YAML must state them; the eight shared constants and assumptions (`g`, `gauge_b`, both friction coefficients, `cog_height_h`, `flange_angle_deg`, `brake_decel`, `mu_roll`) keep tagged defaults a file may restate. `from_yaml` rejects unknown keys, bad values and empty files with `TrainConfigError` naming file and field; `derive()` builds test variants through revalidation, because pydantic's `model_copy(update=...)` bypasses `extra="forbid"` and `frozen` alike. `DEFAULT_TRAIN_CONFIG` is gone: `compute_speed_profile` and `evaluate_layout` take `train_config` as a required argument. Presets are `configs/trains/measured_consist.yaml` (named by every shipped config; states only what was measured, with comments saying why each absent field is absent) and `configs/trains/only_loco.yaml` (the assumed bare-loco baseline, field-for-field the former code defaults).
+Two are deliberate tools rather than debris: `min_clearance` (independent
+verification) and `crossing_connectors` (an analytic chain family the table provably
+cannot reach — it needs 21 elements). Re-grep before deleting anything.
 
-**`src/algorithm/`** — `runner.py` (`run_optimization()`, `save_results()`, callbacks: `ProgressCallback`, `FeasibleEliteCallback`, `CategoryEliteArchive`, `SnapshotCallback`, `CallbackChain`, `LegoAdaptiveEpsilon`, category report writer); `monitoring.py` (`ConvergenceMonitorCallback`: HV/IGD/feasibility + cumulative feasible front).
+---
 
-**`src/visualization/`** — `track_renderer.py` (`plot_layout()` — the sole renderer: one full-size track view plus a metrics/legend info panel, closure tolerances required as keyword args so the drift overlay is gated by the optimizer's own thresholds; piece geometry drawn via the shared `_draw_piece`/`_draw_piece_sequence` helpers; owns its rendering geometry constants and `arc_points`/`offset_path` — the former `src/lego_track_models.py`, absorbed 2026-08-30); `pareto_plot.py` (`plot_pareto_front()` built on pymoo `Scatter`); `objective_progress.py` (`load_score_progress()` + `plot_score_progress()` — F[0] per generation against the inventory ceiling; pymoo's `RunningMetricAnimation` plots front movement and needs `save_history`, so it does not answer this question).
+## Conventions
 
-### Stale / Needs Action (NOT auto-delete)
+**Code.** Early returns, small functions, no if/elif towers, no run anecdotes in
+comments — state the rule, not the session that produced it. Docstrings give the contract
+in a few lines. Comments explain *why* a constant holds its value; `geometry.py` is the
+model.
 
-- **The v1 catalog `data/track_pieces.yaml` is gone; the kit is v2-only** (`data/track_pieces_v2.yaml`). The v1 deprecation test and the `test_catalog_parity.py` v1↔v2 parity suite have both been retired.
-- **`Layout` / `build_layout()` in `src/geometry.py`** — legacy, but tests (`test_geometry.py`, `test_evaluation.py`, `test_scoring.py`) and `train/` still consume them (and `problem.py` builds per-route `Layout` views). Migration first, deletion second.
-- **Top-level research docs** (`Literature-Grounded Audit ...md`, `Structurally Similar Problems ...md`, `Modular9PartResearchV1/`) — user-authored research with no code links; ask before deleting.
+**Files and git.** "Remove" or "untrack" never means deleting from disk — use
+`git rm --cached` or `.gitignore`. Never `git init` without checking first. Never create
+or switch branches, and never `git stash`, without explicit permission; a foreign stash
+exists in this repository. Stage an explicit file list, never `git add -A`. Confirm
+before `git reset --hard`, force pushes, or dropping files.
 
-### Test Suite Notes (2026-08-30)
-
-- 45 `tests/test_*.py` files, 498 `def test_` functions, 563 collected tests. Baseline: **0 failed, 563 passed, 0 skipped** (clean).
-- **Wiring tests** guard that a configured value reaches the object that uses it, which ordinary tests cannot: `test_train_config_plumbing.py` (every shipped config names the measured consist, and the problem holds it) and `test_decoder_config_plumbing.py` (post-run decodes match evaluation geometry). Both prove the configured object is *distinguishable* from the alternative first, then that it is the one used. A physics-swap test must run on a layout **with straights** — an all-R40 loop is capped by lateral slide, identical under either preset, so it cannot tell them apart.
-- The 4-way `test_catalog*.py` split (catalog / geometry / loader / specs) is justified — distinct scopes.
-- All fixtures under `tests/fixtures/` are referenced by `test_catalog_loader.py`.
-
-### Untouched (Run Artifacts — Do Not Delete)
-
-All GA run output goes under `outputs/` (single gitignored tree). `main.py` writes to `outputs/` root; `run_v1_all_configs.py` writes to `outputs/<config_name>/`. Milestone runs worth keeping live under `archive/{dc,crossing,baselines}/` (also gitignored). Treat both as build output; clean only on explicit user instruction.
+**Run artifacts.** Everything under `outputs/` (gitignored). No parallel output trees.
