@@ -19,6 +19,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.stats import false_discovery_control, fisher_exact, wilcoxon  # noqa: E402
 
+from .ablate import label  # noqa: E402
+from .settings import Settings  # noqa: E402
+
 ROOT = Path("outputs/legoga_real_ablation")
 BUDGETS = (1200, 2400, 4800, 9600, 19200)
 BASE = {"2": "pop_60_off_60", "2_lite": "pop_60_off_60", "3a": "table_11_win_6",
@@ -162,27 +165,26 @@ def by_condition(rows, stage, kit="real"):
 
 
 def plot_levels(rows, stage, base, metric, out_dir: Path) -> None:
-    """Pudelka z ziaren dla kazdego poziomu ustawienia, linia bazy, panel na stol."""
+    """Pudelka z ziaren dla kazdego poziomu ustawienia, baza jako pierwsze pudelko,
+    panel na stol."""
     tables, sub = by_condition(rows, stage)
     settings = defaultdict(set)
     for r in sub:
         if r["variant"] != base:
             settings[setting_of(r["variant"])].add(r["variant"])
     for setting, variants in sorted(settings.items()):
-        variants = sorted(variants)
+        variants = [base] + sorted(variants)
         fig, axes = plt.subplots(1, len(tables), figsize=(4 * len(tables), 4), sharey=True)
         for ax, table in zip(np.atleast_1d(axes), tables):
             data = [[r[metric] for r in sub if r["variant"] == v and r["table"] == table]
                     for v in variants]
-            base_vals = [r[metric] for r in sub if r["variant"] == base and r["table"] == table]
             ax.boxplot([d or [np.nan] for d in data],
-                       tick_labels=[v[len(setting) + 1:] for v in variants])
-            if base_vals:
-                ax.axhline(statistics.median(base_vals), color="gray", ls="--", label="baza")
+                       tick_labels=["baza"] + [v[len(setting) + 1:] for v in variants[1:]])
             ax.set_title(table)
             ax.tick_params(axis="x", rotation=45)
         np.atleast_1d(axes)[0].set_ylabel(metric)
-        fig.suptitle(f"etap {stage}: {setting}")
+        fig.suptitle(f"etap {stage}: {setting}, baza = "
+                     f"{label(getattr(Settings(), setting, 'obecne'))}")
         fig.tight_layout()
         fig.savefig(out_dir / f"stage{stage}_{metric}_{setting}.png", dpi=110)
         plt.close(fig)
@@ -297,8 +299,8 @@ def main() -> None:
 
     plots = ROOT / "plots"
     plots.mkdir(exist_ok=True)
-    plot_levels(rows, a.stage, base, a.metric, plots)
-    plot_levels(rows, a.stage, base, "t_optimize", plots)
+    for metric in (a.metric, "best_pieces", "best_routes", "t_optimize"):
+        plot_levels(rows, a.stage, base, metric, plots)
     plot_quality_vs_time(rows, a.stage, base, plots)
     if a.progress:
         plot_progress(ROOT, rows, a.stage, a.progress, "best_pieces", plots)
