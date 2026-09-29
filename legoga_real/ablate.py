@@ -33,13 +33,15 @@ ROOT = Path("outputs/legoga_real_ablation")
 # etapy wyboru na ziarnach od 1; potwierdzenie (etap 5) na ziarnach, ktorych wybor nie widzial
 SEEDS = {"5": list(range(11, 41))}
 SEEDS_DEFAULT = list(range(1, 11))
-N_SEEDS = {"0": 1, "1": 5, "2": 10, "2_lite": 5, "3a": 3, "3a_lite": 3, "3b": 10, "4": 10,
-           "5": 30}
+N_SEEDS = {"0": 1, "1": 5, "2": 10, "2_lite": 5, "2b": 5, "3a": 3, "3a_lite": 3, "3b": 10,
+           "4": 10, "5": 30}
 POP, GENS = 60, 40
-EVALS_LONG = 19200
-# etap 2: rodzice x potomkowie; wersja lite to rzadsza siatka z tym samym budzetem ocen
+EVALS_LONG = {"2": 19200, "2_lite": 19200, "2b": 30000}
+# etap 2: rodzice x potomkowie; lite to rzadsza siatka z tym samym budzetem ocen;
+# 2b to sami rodzice przy 30 potomkach i 1000 pokolen, zeby zobaczyc, gdzie wzrost ustaje
 POP_OFF = {"2": ((20, 30, 60, 100, 150), (10, 15, 30, 60, 120, 200)),
-           "2_lite": ((20, 60, 150), (30, 60, 200))}
+           "2_lite": ((20, 60, 150), (30, 60, 200)),
+           "2b": ((20, 60, 100, 150, 250), (30,))}
 # etap 3a: glebokosc tabeli x wycinek; lite tylko tam, gdzie zamiennik moze byc dluzszy
 TABLE_WIN = {"3a": (range(1, 13), range(1, 12)),
              "3a_lite": ((7, 9, 11, 12), (3, 6, 10))}
@@ -114,12 +116,12 @@ def variants(stage: str, variants_file: str | None) -> dict:
         out["blocks_3"] = (dataclasses.replace(base, neutral_blocks=BLOCKS_3), POP, GENS)
         out["blocks_12"] = (dataclasses.replace(base, neutral_blocks=BLOCKS_12), POP, GENS)
         return out
-    if stage in ("2", "2_lite"):
+    if stage in POP_OFF:
         pops, offs = POP_OFF[stage]
         out = {}
         for pop in pops:
             for off in offs:
-                gens = math.ceil((EVALS_LONG - pop) / off) + 1   # pokolenie 1 = start
+                gens = math.ceil((EVALS_LONG[stage] - pop) / off) + 1   # pokolenie 1 = start
                 cfg = dataclasses.replace(base, n_offsprings=off)
                 out[f"pop_{pop}_off_{off}"] = (cfg, pop, gens)
         return out
@@ -146,6 +148,8 @@ def conditions(stage: str) -> list[tuple[str, str]]:
     out = [("real", t) for t in TABLES]
     if stage in ("1", "5"):
         out += [(k, "250x350") for k in KITS if k != "real"]
+    if stage == "2b":
+        out += [("default", t) for t in TABLES]
     return out
 
 
@@ -289,7 +293,7 @@ def run_pool(tasks: list[dict], workers: int, done: list) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--stage", required=True,
-                    choices=["0", "1", "2", "2_lite", "3a", "3a_lite", "3b", "4", "5"])
+                    choices=["0", "1", "2", "2_lite", "2b", "3a", "3a_lite", "3b", "4", "5"])
     ap.add_argument("--seeds", type=int, help="ile pierwszych ziaren; domyslnie wg etapu")
     ap.add_argument("--workers", type=int, default=10)
     ap.add_argument("--variants", help="plik JSON z wariantami (etapy 3b, 4, 5)")
