@@ -20,7 +20,7 @@ class Settings:
 
     table_len: int = 11
     per_bucket: int | None = 60
-    max_win: int = 6                     # ile klockow wycina podmiana i krzyzowanie
+    max_win: int = 10                    # ile klockow wycina podmiana i krzyzowanie
 
     swap_tries: int = 15
     branch_attempts: int = 30

@@ -41,7 +41,7 @@ def front_spread(rows, n: int = 6):
     return [uniq[round(i * step)] for i in range(n)]
 
 
-def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
+def run(inventory=None, pop=60, gens=60, seed=1, out="outputs/legoga",
         max_size=(500.0, 500.0), verbose=True, cfg: Settings = Settings(),
         table=None, hv=None, render=True):
     """Pelny przebieg; wszystkie wyniki laduja w katalogu `out`.
@@ -115,7 +115,7 @@ def run(inventory=None, pop=60, gens=40, seed=1, out="outputs/legoga",
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pop", type=int, default=60)
-    ap.add_argument("--gens", type=int, default=40)
+    ap.add_argument("--gens", type=int, default=60)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", default="outputs/legoga", help="katalog wynikow")
     ap.add_argument("--quiet", action="store_true")

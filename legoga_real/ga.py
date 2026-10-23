@@ -70,6 +70,7 @@ class TrackProblem(ElementwiseProblem):
         self.cfg = cfg
         self.table = table or TransformTable(max_len=cfg.table_len,
                                              per_bucket=cfg.per_bucket)
+        self.table.forget()
         self.max_size = max_size
         self.rng = random.Random(seed)
         super().__init__(n_var=1, n_obj=2, n_ieq_constr=3, vtype=object)
