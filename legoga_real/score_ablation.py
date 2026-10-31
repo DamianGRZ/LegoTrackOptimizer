@@ -1,8 +1,9 @@
 """Ocena ablacji: python -m legoga_real.score_ablation --stage 1 [--base base]
 
 Zbiera run.json z katalogow biegow do outputs/legoga_real_ablation/runs.csv, liczy pole
-frontu na wspolnej skali, porownuje kazdy wariant z baza para do pary (Wilcoxon, wielkosc
-efektu A12, Fisher dla udzialu poprawnych), wypisuje tabele i rysuje wykresy do plots/.
+frontu na wspolnej skali, porownuje kazdy wariant z baza jako proby niezalezne (Mann-Whitney,
+wielkosc efektu A12, poprawka Holma) na koncu biegu i przy wspolnym budzecie ocen, wypisuje
+tabele i rysuje wykresy do plots/.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from scipy.stats import false_discovery_control, fisher_exact, wilcoxon  # noqa: E402
+from scipy.stats import mannwhitneyu  # noqa: E402
 
 from .ablate import label  # noqa: E402
 from .settings import Settings  # noqa: E402
@@ -32,18 +33,20 @@ LARGEST = "500x500"
 # --- zbieranie ---------------------------------------------------------------
 
 def progress_at(path: Path, budgets) -> dict:
-    """Pole frontu po ostatnim pokoleniu, ktore zmiescilo sie w budzecie ocen."""
+    """Pole frontu i najlepsze wartosci celow po ostatnim pokoleniu, ktore zmiescilo sie
+    w budzecie ocen."""
     with path.open(encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     out = {}
     for b in budgets:
         within = [r for r in rows if float(r["n_eval"]) <= b]
-        out[f"hv_at_{b}"] = float(within[-1]["hv"]) if within else float("nan")
+        for col in ("hv", "best_pieces", "best_routes"):
+            out[f"{col}_at_{b}"] = float(within[-1][col]) if within else float("nan")
     return out
 
 
 def collect(root: Path) -> list[dict]:
-    """Jeden wiersz na bieg, z run.json i progress.csv; pole jeszcze surowe."""
+    """Jeden wiersz na bieg, z run.json i tory_progress.csv; pole jeszcze surowe."""
     rows = []
     for path in sorted(root.glob("stage*/*/*/seed_*/run.json")):
         info = json.loads(path.read_text(encoding="utf-8"))
@@ -89,16 +92,13 @@ def write_runs(rows: list[dict], path: Path) -> None:
 # --- porownanie z baza -------------------------------------------------------
 
 def a12(x, y) -> float:
-    """Jak czesto wariant wygrywa z baza, para do pary; remis liczy sie za pol."""
-    wins = sum((a > b) + 0.5 * (a == b) for a, b in zip(x, y))
-    return wins / len(x)
+    """Jak czesto bieg wariantu wygrywa z biegiem bazy, kazdy z kazdym; remis liczy sie za pol."""
+    x, y = np.asarray(x, float)[:, None], np.asarray(y, float)
+    return float(((x > y) + 0.5 * (x == y)).mean())
 
 
-def paired_p(x, y) -> float:
-    d = np.asarray(x, float) - np.asarray(y, float)
-    if not np.any(d):
-        return 1.0
-    return float(wilcoxon(d).pvalue)
+def unpaired_p(x, y) -> float:
+    return float(mannwhitneyu(x, y, alternative="two-sided").pvalue)
 
 
 def iqr(values) -> str:
@@ -107,7 +107,7 @@ def iqr(values) -> str:
 
 
 def compare(rows: list[dict], stage: str, base: str, metric: str = "hv") -> list[dict]:
-    """Kazdy wariant kontra baza na tym samym zestawie, stole i ziarnie."""
+    """Kazdy wariant kontra baza na tym samym zestawie i stole, na ziarnach obecnych w obu."""
     by = defaultdict(dict)
     for r in rows:
         if r["stage"] == stage:
@@ -127,29 +127,48 @@ def compare(rows: list[dict], stage: str, base: str, metric: str = "hv") -> list
         out.append({
             "variant": variant, "kit": kit, "table": table, "n": n,
             "variant_med": iqr(x), "base_med": iqr(y),
-            "a12": a12(x, y), "p": paired_p(x, y),
+            "a12": a12(x, y), "p": unpaired_p(x, y),
+            "n_eval": statistics.median(runs[s]["n_eval"] for s in seeds),
             "feas_variant": fx, "feas_base": fy,
-            "p_fisher": float(fisher_exact([[fx, n - fx], [fy, n - fy]]).pvalue),
             "t_variant": statistics.median(runs[s]["t_optimize"] for s in seeds),
             "t_base": statistics.median(ref[s]["t_optimize"] for s in seeds),
         })
     if out:
-        adj = false_discovery_control([c["p"] for c in out])
-        for c, p in zip(out, adj):
-            c["p_adj"] = float(p)
+        p = np.array([c["p"] for c in out])
+        m = len(p)
+        order = np.argsort(p)
+        adj = np.empty(m)
+        adj[order] = np.maximum.accumulate(np.minimum(1.0, p[order] * (m - np.arange(m))))
+        for c, ph in zip(out, adj):
+            c["p_holm"] = float(ph)
     return out
 
 
-def print_table(cmp: list[dict], metric: str) -> None:
+def compare_both(rows: list[dict], stage: str, base: str, metric: str, budget: int) -> list[dict]:
+    """Metryka na koncu biegu i przy wspolnym budzecie ocen w jednym wierszu; poprawka
+    Holma osobno dla kazdego punktu odczytu."""
+    end = compare(rows, stage, base, metric)
+    at = {(c["variant"], c["kit"], c["table"]): c
+          for c in compare(rows, stage, base, f"{metric}_at_{budget}")}
+    for c in end:
+        b = at[(c["variant"], c["kit"], c["table"])]
+        c.update(at_med=b["variant_med"], at_a12=b["a12"], at_p=b["p"], at_p_holm=b["p_holm"])
+    return end
+
+
+def print_table(cmp: list[dict], metric: str, budget: int) -> None:
     head = (f"{'wariant':<28} {'zestaw':<8} {'stol':<8} {'n':>2} {metric + ' wariant':>24} "
-            f"{metric + ' baza':>24} {'A12':>5} {'p':>6} {'p_adj':>6} {'popr':>7} {'p_F':>6} "
-            f"{'s/bieg':>7} {'s baza':>7}")
+            f"{metric + ' baza':>24} {'A12':>5} {'p':>6} {'p_holm':>6} "
+            f"{'wariant @' + str(budget):>24} {'A12':>5} {'p':>6} {'p_holm':>6} "
+            f"{'n_eval':>7} {'popr':>7} {'s/bieg':>7} {'s baza':>7}")
     print(head)
     for c in cmp:
         print(f"{c['variant']:<28} {c['kit']:<8} {c['table']:<8} {c['n']:>2} "
               f"{c['variant_med']:>24} {c['base_med']:>24} {c['a12']:>5.2f} {c['p']:>6.3f} "
-              f"{c['p_adj']:>6.3f} {c['feas_variant']:>3}/{c['feas_base']:<3} "
-              f"{c['p_fisher']:>6.3f} {c['t_variant']:>7.0f} {c['t_base']:>7.0f}")
+              f"{c['p_holm']:>6.3f} "
+              f"{c['at_med']:>24} {c['at_a12']:>5.2f} {c['at_p']:>6.3f} {c['at_p_holm']:>6.3f} "
+              f"{c['n_eval']:>7.0f} {c['feas_variant']:>3}/{c['feas_base']:<3} "
+              f"{c['t_variant']:>7.0f} {c['t_base']:>7.0f}")
 
 
 # --- wykresy -----------------------------------------------------------------
@@ -275,7 +294,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--stage", required=True)
     ap.add_argument("--base", help="nazwa wariantu bazowego; domyslnie wg etapu")
-    ap.add_argument("--metric", default="hv", help="hv albo hv_at_<budzet>")
+    ap.add_argument("--metric", default="hv",
+                    help="metryka wykresow pudelkowych: hv albo hv_at_<budzet>")
+    ap.add_argument("--budget", type=int, default=2400, choices=BUDGETS,
+                    help="wspolny budzet ocen dla drugiego punktu odczytu w tabelach")
     ap.add_argument("--progress", nargs="*", default=[],
                     help="warianty do wykresu przebiegu (best_pieces)")
     ap.add_argument("--fronts", help="zwyciezca do nalozenia frontow z baza")
@@ -291,11 +313,13 @@ def main() -> None:
     write_runs(rows, ROOT / "runs.csv")
     print(f"{len(rows)} biegow -> {ROOT / 'runs.csv'}; sufit tras {rows[0]['routes_ceiling']}")
 
-    cmp = compare(rows, a.stage, base, a.metric)
-    if cmp:
-        print_table(cmp, a.metric)
-    else:
-        print(f"etap {a.stage}: brak par z baza '{base}', tylko wykresy")
+    for metric in ("hv", "best_pieces", "best_routes"):
+        cmp = compare_both(rows, a.stage, base, metric, a.budget)
+        if not cmp:
+            print(f"etap {a.stage}: brak par z baza '{base}', tylko wykresy")
+            break
+        print(f"\n{metric}:")
+        print_table(cmp, metric, a.budget)
 
     plots = ROOT / "plots"
     plots.mkdir(exist_ok=True)
@@ -304,7 +328,7 @@ def main() -> None:
     plot_quality_vs_time(rows, a.stage, base, plots)
     if a.progress:
         plot_progress(ROOT, rows, a.stage, a.progress, "best_pieces", plots)
-    if a.stage in ("2", "2_lite", "2b"):
+    if a.stage in ("2", "2_lite", "2b", "5"):
         variants = sorted({r["variant"] for r in rows if r["stage"] == a.stage})
         plot_progress(ROOT, rows, a.stage, variants, "hv", plots, budgets=BUDGETS)
     if a.fronts:
