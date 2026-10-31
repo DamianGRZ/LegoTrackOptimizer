@@ -1,8 +1,8 @@
 """Ablacja ustawien: python -m legoga_real.ablate --stage 1 [--seeds 5] [--workers 10]
 
-Etapy 0, 1, 2, 2_lite, 3a, 3a_lite maja warianty w kodzie; 3b, 4 i 5 zaleza od wynikow, wiec biora
-je z pliku JSON (--variants): lista {"name", "settings", "pop", "gens"}.
-Kazdy bieg laduje w outputs/legoga_real_ablation/<etap>/<wariant>/<zestaw>_<stol>/seed_<n>/
+Etapy 0, 1, 2, 2_lite, 2b, 3a, 3a_lite maja warianty w kodzie; 3b, 4 i 5 zaleza od wynikow,
+wiec biora je z pliku JSON (--variants): lista {"name", "settings", "pop", "gens"}.
+Kazdy bieg laduje w outputs/legoga_real_ablation/stage<etap>/<wariant>/<zestaw>_<stol>/seed_<n>/
 jako run.json, front.csv, layouts.json, log.txt i to, co zapisuje run(). Bieg z gotowym
 run.json jest pomijany, wiec przerwana kampanie wznawia ta sama komenda.
 """
@@ -144,7 +144,7 @@ def variants(stage: str, variants_file: str | None) -> dict:
 
 def conditions(stage: str) -> list[tuple[str, str]]:
     """(zestaw, stol): prawdziwy zestaw na kazdym stole; w etapach 1 i 5 takze
-    pozostale zestawy na prawdziwym stole."""
+    pozostale zestawy na prawdziwym stole, w etapie 2b zestaw domyslny na kazdym stole."""
     out = [("real", t) for t in TABLES]
     if stage in ("1", "5"):
         out += [(k, "250x350") for k in KITS if k != "real"]
@@ -174,10 +174,11 @@ def build_table(key: tuple) -> None:
 
 
 def build_tables(keys) -> None:
-    """Kazda potrzebna tabela raz, przed pula biegow. Kazda w swiezym procesie, bo
-    proces glowny nie oddalby systemowi pamieci po zbudowanej tabeli."""
+    """Kazda potrzebna tabela raz, przed pula biegow. Poza procesem glownym, bo nie
+    oddalby systemowi pamieci po zbudowanej tabeli. Proces jest odnawiany co paczke
+    zadan `map`, wiec przy wiecej niz 4 tabelach jeden proces buduje kilka."""
     with multiprocessing.Pool(1, maxtasksperchild=1) as pool:
-        pool.map(build_table, sorted(keys, key=str))
+        pool.map(build_table, sorted(keys, key=str), chunksize=1)
 
 
 _TABLES: dict = {}

@@ -3,7 +3,8 @@ Zarodki populacji i operatory ZACHOWUJACE DOMKNIECIE.
 
 Kazdy operator przeksztalca uklad domkniety w uklad domkniety.
 Nie ma tu naprawy ani kary za otwarte tory - one po prostu nie powstaja.
-Jedyne, co moze pojsc zle, to geometria (nachodzenie), i to lapie fitness.
+Uklad, ktory nie domyka sie w tolerancji, odrzuca sprawdzenie po operatorze.
+Nachodzenie torow lapie ograniczenie overlap.
 """
 from __future__ import annotations
 
@@ -198,12 +199,10 @@ def mut_antipodal_insert(lay: Layout, rng: random.Random, block=None,
 
 
 def put_switch(lay: Layout, i: int, tname: str, rev: bool) -> Layout:
-    """Podmien element 2-portowy i na rozjazd.
+    """Zamien element 2-portowy o numerze `i` na skrzyzowanie "XX".
 
-    Droga glowna rozjazdu (port0<->port1) ma to samo przeksztalcenie co S16,
-    wiec podmiana nie rusza geometrii reszty ukladu.
-    `rev` odwraca zwrot rozjazdu - bez tego oba rozjazdy patrza w te sama
-    strone i galaz musi byc petla nawrotna zamiast zwyklej mijanki.
+    Porty 0 i 1 "XX" leza tam, gdzie porty "S16", wiec reszta ukladu sie nie przesuwa.
+    `rev` obraca "XX" o 180 st., przez co porty 2 i 3 zamieniaja sie stronami.
     """
     A = lay.match[(i, 0)]
     B = lay.match[(i, 1)]
@@ -437,11 +436,11 @@ def mutate(lay: Layout, table: TransformTable, rng: random.Random,
 
 def crossover(a: Layout, b: Layout, table: TransformTable, rng: random.Random,
               cfg: Settings = Settings()) -> Layout:
-    """Wymiana galezi: przenies jedna galaz z b do a.
+    """Wymiana fragmentow: wstaw do rodzica `a` fragment lancucha z rodzica `b`
+    o tym samym przeksztalceniu netto.
 
-    Prototyp: dla ukladow bez galezi degeneruje sie do wymiany fragmentu
-    lancucha o tym samym przeksztalceniu netto. Fragment z a ma do `max_win`
-    klockow, fragment z b do glebokosci tablicy - tak samo jak podmiana.
+    Fragment z `a` ma do `max_win` klockow, fragment z `b` do glebokosci tablicy -
+    tak samo jak podmiana.
     """
     ca = [c for c in all_chains(a) if len(c[1]) >= cfg.cx_min_chain]
     cb = [c for c in all_chains(b) if len(c[1]) >= cfg.cx_min_chain]
@@ -477,9 +476,10 @@ def crossing_connectors(max_n: int = 12, straights=("S16", "S24")):
 
     Tyle wlasnie wymaga polaczenie portow 2 i 3 skrzyzowania: jego os
     poprzeczna zachowuje sie jak S16, wiec domkniecie drugiej petli musi
-    "cofnac" o jedna prosta. Tego NIE da sie znalezc w tablicy - najkrotsze
-    rozwiazanie ma 21 elementow, a tablica siega 7. Ale rodzina jest znana
-    analitycznie: cykliczny owal minus jedna prosta 16.
+    "cofnac" o jedna prosta. Tego NIE znajdzie zwykly lookup - najkrotsze
+    rozwiazanie ma 17 elementow, a tablica siega 11. Znajduje je dopiero
+    connectors (do 2*max_len) i z niego korzysta mut_add_crossing_pair.
+    Rodzina jest tez znana analitycznie: cykliczny owal minus jedna prosta 16.
 
         [S16]*(a-1) + [C]*8 + <prosty odcinek tej samej dlugosci> + [C]*8
 
@@ -511,10 +511,10 @@ def mut_add_crossing_pair(lay: Layout, table: TransformTable, rng: random.Random
                           accept: str = "first") -> Layout | None:
     """Wstaw PARE skrzyzowan i przeprowadz przez nie druga zamknieta petle.
 
-    Skrzyzowania musza byc parzyste z tego samego powodu co rozjazdy, tylko
-    dowod jest inny: dwie zamkniete krzywe na plaszczyznie przecinaja sie
-    PARZYSTA liczbe razy. Pojedyncze skrzyzowanie zostawia wiec zawsze jedno
-    nielegalne przeciecie - sprawdzone wyczerpujaco, minimum kolizji = 4.
+    Dwa skrzyzowania sa potrzebne tylko w tym operatorze: prowadzi on przez nie
+    druga osobna petle, a dwie zamkniete krzywe na plaszczyznie przecinaja sie
+    PARZYSTA liczbe razy. Pojedyncze skrzyzowanie jest legalne w osemce, gdzie
+    jedna krzywa przecina sama siebie (figure_eight).
 
     Druga petla wchodzi w XX_i portem 2, wychodzi portem 3, biegnie do XX_j
     i wraca. Osie skrzyzowan sa niezalezne, wiec pociag nie przechodzi
@@ -712,9 +712,10 @@ def mut_add_dbl_crossover(lay: Layout, table: TransformTable, rng: random.Random
 def mut_remove_dbl_crossover(lay: Layout, rng: random.Random,
                              refill: str = "random") -> Layout | None:
     """Usun podwojny rozjazd krzyzowy razem z cala skladowa na jego drugim
-    torze (takze wezlami, ktore na niej urosly); tor 1 dostaje z powrotem
-    48 studow prostych: trzy S16 albo dwie S24, losowo. DC, ktorego drugi
-    tor wraca do toru glownego, jest pomijany. Odpowiednik mut_remove_crossing."""
+    torze (takze wezlami, ktore na niej urosly). Dziure po nim na torze 1, czyli
+    48 studow, wypelniamy prostymi: losowo trzy "S16" albo dwie "S24". Argument
+    `refill="s16"` wylacza losowanie - wtedy zawsze trzy "S16". "DC", ktorego
+    drugi tor wraca do toru glownego, jest pomijany. Odpowiednik mut_remove_crossing."""
     xs = [i for i, t in enumerate(lay.types) if t == "DC"]
     if not xs:
         return None

@@ -23,11 +23,11 @@ from .settings import Settings
 
 
 def front_spread(rows, n: int = 6):
-    """Rownomiernie rozlozone punkty frontu, po jednym na pare (klocki, trasy).
+    """Punkty frontu w rownych odstepach na liscie par (klocki, trasy), po jednym na pare.
 
     Front zawiera zwykle po kilka ukladow o tych samych wartosciach obu celow -
-    roznych fizycznie, lecz nieodroznialnych na rysunku. Wybor pierwszych `n`
-    wierszy oddaje im caly rysunek i gubi drugi koniec frontu.
+    moga roznic sie skladem i ksztaltem, ale wzgledem celow sa rownowazne. Wybor
+    pierwszych `n` wierszy oddaje im caly rysunek i gubi drugi koniec frontu.
     """
     uniq, seen = [], set()
     for row in rows:
@@ -46,7 +46,8 @@ def run(inventory=None, pop=60, gens=60, seed=1, out="outputs/legoga",
         table=None, hv=None, render=True):
     """Pelny przebieg; wszystkie wyniki laduja w katalogu `out`.
 
-    Zwraca (res, rows, times); `times` to sekundy budowy tabeli i optymalizacji.
+    Zwraca (res, rows, times); `times` to sekundy utworzenia problemu (z budowa
+    tabeli, gdy jej nie podano) i optymalizacji.
     `render=False` pomija rysunki (galeria, uklady, wykresy przebiegu); CSV zostaje.
     """
     out_dir = Path(out)

@@ -5,9 +5,10 @@ Warunek "brak otwartych torow" jest tu DEFINICYJNY: kazdy port ma pare.
 Zadna funkcja kary tego nie pilnuje - operatory po prostu nie potrafia
 wyprodukowac ukladu z wolnym portem.
 
-Co pozostaje miekkie:
-  * domkniecie GEOMETRYCZNE (czy petla wraca do siebie w plaszczyznie),
-  * brak nakladania sie torow.
+Czego reprezentacja nie gwarantuje:
+  * domkniecia GEOMETRYCZNEGO (czy petla wraca do siebie w plaszczyznie) -
+    uklad bez niego odrzuca sprawdzenie po operatorze, a overlap daje mu 10**6,
+  * braku nakladania sie torow - to miekkie ograniczenie overlap.
 """
 from __future__ import annotations
 
@@ -19,13 +20,10 @@ from .geometry import (ANG, ELEM_LEN, ELEMENTS, IDENT, TRACK_WIDTH, apply,
                        compose, inverse, port_pose)
 
 POS_TOL = 0.30      # tolerancja domkniecia geometrycznego (study)
-# Droga PO TORZE, ponizej ktorej bliskosc przestrzenna jest legalna.
-# Ta stala nie jest dowolna - wynika z geometrii czesci:
-#  * rozejscie na rozjezdzie (22.5 st.) osiaga 8 studow odstepu po
-#    8/sin(22.5) = 20.9 studach, czyli ~42 studach liczonych przez iglice;
-#  * przy promieniu 40 tor po 40 studach jazdy jest 38 studow od punktu
-#    startu, wiec nie da sie wrocic do siebie ponizej tego progu.
-# Stad 40: ponizej bliskosc jest wymuszona geometria, powyzej to konflikt.
+# Dwa elementy blizsze sobie po torze niz ta wartosc (liczac od srodka do srodka)
+# nie sa sprawdzane na kolizje. Elementy polaczone portem stykaja sie ze soba,
+# wiec trzeba je pominac; najdluzsza taka para to "DC" + rozjazd = 40 studow.
+# Prawdziwe kolizje pojawiaja sie dopiero duzo dalej po torze.
 NEAR_STUDS = 40.0
 
 
@@ -291,8 +289,8 @@ class Layout:
         return v
 
     def _overlap(self) -> int:
-        """Liczba par probek nalezacych do roznych, niepolaczonych elementow,
-        ktore leza blizej niz szerokosc toru."""
+        """Liczba par probek z roznych elementow, odleglych po torze o wiecej niz
+        NEAR_STUDS, ktore leza blizej niz szerokosc toru."""
         T, mism = self.place()
         if mism >= POS_TOL:
             return 10 ** 6

@@ -9,7 +9,7 @@ and the only system described here.
 
 **V1 used an integer vector** — one long chromosome with extra fixed-purpose fields
 appended at the end. **The prototype does not.** An individual is one `Layout` object
-(legoga_real/layout.py:32) built from three parts:
+(legoga_real/layout.py:30) built from three parts:
 
 **1. A list of piece names.** `types`, a plain list of strings. The *index* is the piece
 id — "the first piece" means `types[0]`, and every other structure refers to pieces by
@@ -20,12 +20,12 @@ come from.
 **2. A dictionary of joints.** `match`, mapping a `(piece, port)` tuple to another
 `(piece, port)` tuple. **Every joint is stored twice** — `(x, px) -> (y, py)` *and*
 `(y, py) -> (x, px)` — so a connection can be found from either piece without searching.
-Written and removed only through `link` / `unlink` (legoga_real/layout.py:55, :60), which
+Written and removed only through `link` / `unlink` (legoga_real/layout.py:53, :58), which
 maintain both directions and invalidate the cache.
 
 **3. A cache.** `_cache`, holding the results of the current round of work — placement
-(legoga_real/layout.py:108), reduced graph (:157), route count (:199), near pairs (:260),
-overlap (:288) and the bounding rectangle per rotation (:362). Any edit clears it. Near
+(legoga_real/layout.py:105), reduced graph (:154), route count (:196), near pairs (:257),
+overlap (:285) and the bounding rectangle per rotation (:359). Any edit clears it. Near
 pairs are keyed by the distance asked for, so a different distance cannot be served
 somebody else's answer.
 
@@ -39,8 +39,8 @@ no stock pymoo operator can touch this representation.
 
 ### The two questions asked of a layout
 
-- `is_matched()` — legoga_real/layout.py:94 — are there any free ports? Topology only.
-- `is_planar_closed()` — legoga_real/layout.py:142 — does it close *geometrically*, in
+- `is_matched()` — legoga_real/layout.py:92 — are there any free ports? Topology only.
+- `is_planar_closed()` — legoga_real/layout.py:140 — does it close *geometrically*, in
   the plane?
 
 The first is guaranteed by construction; the second is what can genuinely fail.
@@ -50,21 +50,23 @@ The first is guaranteed by construction; the second is what can genuinely fail.
 ## No repair operator
 
 There is no repair stage, and none should be added. The transform table
-(legoga_real/table.py:54) groups chains of pieces by their **net transform**, so two
-chains from one bucket are interchangeable anywhere in any loop. Mutation and crossover
+(legoga_real/table.py:55) groups chains of pieces by their **net transform**. Two chains
+whose transforms agree within `SNAP` in x and y at the same angle (`lookup`,
+legoga_real/table.py:95) are interchangeable anywhere in any loop. Mutation and crossover
 build only out of those equivalences, so they do not create invalid layouts in the first
-place — there is nothing left to repair. As a last guard, `mutate` accepts a candidate
-only if it is still matched and still closes (legoga_real/ops.py:433).
+place — there is nothing left to repair. Small residues can add up, so as a last guard
+`mutate` accepts a candidate only if it is still matched and still closes
+(legoga_real/ops.py:432).
 
 Operators that drop pieces leave holes in the numbering. Closing them is one shared step,
-`Layout.compact()` (legoga_real/layout.py:72), called at the end of every such operator
-(legoga_real/ops.py:125, :358, :403, :631, :700, :754) — never hand-written again.
+`Layout.compact()` (legoga_real/layout.py:70), called at the end of every such operator
+(legoga_real/ops.py:126, :357, :402, :631, :700, :755) — never hand-written again.
 
 ## Pairing: what is a law and what is only this operator
 
 **Switches must come in pairs.** This one is structural. A switch has three ports; adding
 one alone leaves a port without a partner, which the representation forbids outright
-(legoga_real/ops.py:298, :371).
+(legoga_real/ops.py:297, :370).
 
 **Crossings come in pairs only because of how the current operator works.** It is *not* a
 law of geometry. `mut_add_crossing_pair` (legoga_real/ops.py:509) inserts crossings into
@@ -73,7 +75,7 @@ two distinct closed curves in the plane do cross an even number of times, so wit
 construction parity holds.
 
 A single crossing is perfectly legal in a different topology: a **figure eight** is *one*
-closed curve that crosses itself once. `figure_eight` (legoga_real/ops.py:35) builds
+closed curve that crosses itself once. `figure_eight` (legoga_real/ops.py:36) builds
 exactly that: one `XX` and two mirrored lobes of 2 straights, 12 curves, 2 straights — 33
 pieces, one route, 160 × 160 studs. It is one of the seeds (legoga_real/ga.py:104), so
 single-crossing layouts are in the population from generation 0. The pair operator is
@@ -83,14 +85,14 @@ still the only way to *add* a crossing later.
 
 ## Placement and geometry
 
-`place()` — legoga_real/layout.py:105 — lays the pieces out on the table. It walks the
+`place()` — legoga_real/layout.py:103 — lays the pieces out on the table. It walks the
 joints breadth-first from piece 0 and produces one **transform per piece**: how far to
 move it in x, how far in y, and by what angle. Where two paths meet the same piece, it
 reports the mismatch; an angle mismatch adds `1e3`, so it can never hide inside a
 positional tolerance. Closure is accepted below `POS_TOL = 0.30` studs
-(legoga_real/layout.py:21).
+(legoga_real/layout.py:22).
 
-`nodes()` — legoga_real/layout.py:148 — finds the graph vertices. It does not guess: it
+`nodes()` — legoga_real/layout.py:146 — finds the graph vertices. It does not guess: it
 reads the `is_node` boolean set on each element type by hand
 (legoga_real/geometry.py:107).
 
@@ -132,19 +134,19 @@ A layout's angle follows from which piece happens to be number 0, and turning th
 thing on the table is free. So size is measured in whichever of the 16 rotations sticks out
 least.
 
-- `extents()` — legoga_real/layout.py:355 — bounding rectangle for every rotation.
-- `fit(max_size)` — legoga_real/layout.py:375 — picks one and returns it with the width and
+- `extents()` — legoga_real/layout.py:353 — bounding rectangle for every rotation.
+- `fit(max_size)` — legoga_real/layout.py:373 — picks one and returns it with the width and
   height. Ties go to the shorter long side, then the shorter short side, on rounded values,
   so float noise cannot decide.
 
 Everything that asks about size goes through `fit`: the size constraint
-(legoga_real/ga.py:81), the printed front (legoga_real/run.py:88), the duplicate signature
-(legoga_real/ga.py:190) and `summary()` (legoga_real/layout.py:394). The renderer draws the
+(legoga_real/ga.py:81), the printed front (legoga_real/run.py:89), the duplicate signature
+(legoga_real/ga.py:190) and `summary()` (legoga_real/layout.py:392). The renderer draws the
 rotation the GA judged (legoga_real/render_with_v1.py:50).
 
 ### Is the layout graph cubic?
 
-Only where crossings are absent. `reduce()` (legoga_real/layout.py:151) collapses chains
+Only where crossings are absent. `reduce()` (legoga_real/layout.py:149) collapses chains
 of 2-port pieces into edges, leaving switches and crossings as vertices. A switch has
 degree 3 — genuinely cubic. A crossing has four ports, but its routes are `((0,1),(2,3))`
 (legoga_real/geometry.py:219): **no route joins the two axes**, so a train can never turn
@@ -155,30 +157,31 @@ are the only real branch vertices, and they are all degree 3.
 
 ## Transform table
 
-`TransformTable(max_len)` — legoga_real/table.py:54. It walks outward from the empty
+`TransformTable(max_len)` — legoga_real/table.py:55. It walks outward from the empty
 chain **breadth-first**: one piece in every direction, then two, up to `max_len`,
 recording every chain it meets. The depth is a parameter; its optimal value is to be
 established by the ablation, not fixed by hand.
 
-Each chain is filed by its net transform. `_key` (legoga_real/table.py:41) turns that
+Each chain is filed by its net transform. `_key` (legoga_real/table.py:42) turns that
 transform into a bucket address: a grid cell half a stud on a side, plus the angle. A
 bucket therefore holds chains of **different lengths and different pieces that all
 produce the same displacement** — the equivalence that makes safe mutation possible. By
-default 60 chains are kept per bucket; `per_bucket=None` (legoga_real/table.py:56) lifts
+default 60 chains are kept per bucket; `per_bucket=None` (legoga_real/table.py:57) lifts
 the limit and exists so the ablation can measure whether it matters.
 
-Cell numbers are rounded, not floored (legoga_real/table.py:34). Track coordinates land
-exactly on grid multiples, where flooring jumps a cell on float drift of order 1e-14.
+Cell numbers are rounded, not floored (legoga_real/table.py:36). Many track coordinates
+(straights, quarter arcs) land exactly on grid multiples, where flooring jumps a cell on
+float drift of order 1e-14.
 
-- `lookup` — legoga_real/table.py:89 — chains realizing a given transform.
-- `closure_len` — legoga_real/table.py:99 — admissible lower bound; `inf` means
+- `lookup` — legoga_real/table.py:90 — chains realizing a given transform.
+- `closure_len` — legoga_real/table.py:100 — admissible lower bound; `inf` means
   unreachable within `max_len`. Nothing calls it.
-- `_flat` — legoga_real/table.py:121 — flattens all buckets into one list ready for
+- `_flat` — legoga_real/table.py:122 — flattens all buckets into one list ready for
   random scanning.
-- `connectors` — legoga_real/table.py:127 — meet-in-the-middle over that flat list,
+- `connectors` — legoga_real/table.py:128 — meet-in-the-middle over that flat list,
   reaching `2 * max_len` without extra memory. Answers are remembered and handed out as
   copies, so a caller cannot corrupt the next one.
-- `forget` — legoga_real/table.py:157 — drops those remembered answers. `TrackProblem`
+- `forget` — legoga_real/table.py:158 — drops those remembered answers. `TrackProblem`
   calls it when a run starts (legoga_real/ga.py:73): an ablation worker keeps one loaded
   table for all its runs, and a run must not start from the answers its predecessor left.
   Mutation calls it once per generation (legoga_real/ga.py:143), so the random scan is drawn
@@ -187,7 +190,7 @@ exactly on grid multiples, where flooring jumps a cell on float drift of order 1
 Built per problem instance (legoga_real/ga.py:71) with depth 11 by default
 (legoga_real/settings.py:21), not cached globally. A caller may pass one in: the ablation
 builds each table once, saves it to disk, and every worker process loads it from there
-rather than building it again (legoga_real/ablate.py:161, :182).
+rather than building it again (legoga_real/ablate.py:172, :191).
 
 ---
 
@@ -199,7 +202,7 @@ legoga_real/ga.py:66 — `TrackProblem(ElementwiseProblem)`, `n_obj=2`, `n_ieq_c
 - `G = [overlap, inventory_excess, over_size]`, the last one measured at the best rotation
   (legoga_real/ga.py:81).
 - `overlap()` returns `10**6` when the loop misses closure by more than `POS_TOL`
-  (legoga_real/layout.py:298), so an open layout can never score well. A layout in separate
+  (legoga_real/layout.py:296), so an open layout can never score well. A layout in separate
   pieces has no gap and no penalty; the operator gate stops that one instead.
 
 **Initial population** (legoga_real/ga.py:95): ovals, a circle and a figure eight, each
@@ -211,16 +214,16 @@ previous layout kept (legoga_real/ga.py:109).
 mutations. Each is eight weighted draws **with replacement** over the operators below
 (legoga_real/ops.py:430), so one operator can come up several times and another not at all.
 The first candidate that passes the gate wins; if all eight fail, `mutate`
-(legoga_real/ops.py:409) returns the original. The weights live in
+(legoga_real/ops.py:408) returns the original. The weights live in
 legoga_real/settings.py:43, and `mutate_draws=None` switches to each operator once in
 shuffled order.
 
 | Operator | Line | Weight | What it does |
 |----------|------|--------|--------------|
-| `mut_swap_segment` | ops.py:130 | 0.30 | swap a chain fragment for an equivalent one |
-| `mut_antipodal_insert` | ops.py:167 | 0.16 | insert the same neutral block at two points 180° apart, so displacement cancels |
-| `mut_add_branch` | ops.py:298 | 0.19 | insert a switch pair, join the diverge legs with a table chain |
-| `mut_remove_branch` | ops.py:371 | 0.07 | inverse; each switch becomes two S16 again |
+| `mut_swap_segment` | ops.py:131 | 0.30 | swap a chain fragment for an equivalent one |
+| `mut_antipodal_insert` | ops.py:168 | 0.16 | insert the same neutral block at two points 180° apart, so displacement cancels |
+| `mut_add_branch` | ops.py:297 | 0.19 | insert a switch pair, join the diverge legs with a table chain |
+| `mut_remove_branch` | ops.py:370 | 0.07 | inverse; each switch becomes two S16 again |
 | `mut_add_crossing_pair` | ops.py:509 | 0.10 | insert two crossings, run a second closed loop through them |
 | `mut_remove_crossing` | ops.py:607 | 0.04 | drop a cross-axis loop and every crossing sitting on it |
 | `mut_add_dbl_crossover` | ops.py:660 | 0.10 | insert a double crossover, close its second track with a table chain |
@@ -235,7 +238,7 @@ two S24, drawn at random. A double crossover whose second track rejoins the main
 skipped.
 
 **Crossover** (legoga_real/ga.py:117) works the same way: two parents, one child
-(legoga_real/ops.py:438) — a fragment is transplanted when both sides have the same net
+(legoga_real/ops.py:437) — a fragment is transplanted when both sides have the same net
 transform — and the child is discarded in favour of the first parent if it overruns
 inventory (legoga_real/ga.py:130).
 
@@ -252,14 +255,14 @@ non-trivial Python/numpy semantics. Never answer from memory.
 
 ## Reading results out of a layout
 
-- `count_routes()` — legoga_real/layout.py:192 — distinct closed routes a train can
+- `count_routes()` — legoga_real/layout.py:190 — distinct closed routes a train can
   drive, honoring that a switch does not join its through road to its diverge leg and
   that a crossing is two independent paths.
-- `overlap()` — legoga_real/layout.py:286 — centerline samples in a grid, counting pairs
+- `overlap()` — legoga_real/layout.py:284 — centerline samples in a grid, counting pairs
   closer than track width, excluding pairs already near *along the track*
-  (`NEAR_STUDS = 40`, legoga_real/layout.py:29 — derived from part geometry, not chosen).
-- `fit()`, `counts()`, `summary()` — legoga_real/layout.py:375, :97, :393. `bbox()`
-  (:340) is still there but nothing calls it any more.
+  (`NEAR_STUDS = 40`, legoga_real/layout.py:27 — derived from part geometry, not chosen).
+- `fit()`, `counts()`, `summary()` — legoga_real/layout.py:373, :95, :391. `bbox()`
+  (:338) is still there but nothing calls it any more.
 
 ---
 
@@ -291,8 +294,9 @@ legoga_real/settings.py — every tunable knob as one frozen `Settings`; default
 behaviour.
 legoga_real/ablate.py — the parameter ablation: variants per stage, seeds × kits × tables,
 a process pool, tables built once and loaded from disk, resume by skipping `run.json`.
-legoga_real/score_ablation.py — the report: `runs.csv`, paired tests against the base,
-plots. Reads run directories only.
+legoga_real/score_ablation.py — the report: `runs.csv`, each variant against the base as
+independent samples (Mann-Whitney, A12, Holm correction) at the end of the run and at a
+common evaluation budget, plots. Reads run directories only.
 legoga_real/render_with_v1.py — draws results with the V1 renderer.
 legoga_real/viz.py — standalone drawing; unused, but the only renderer with no dependency
 outside the package.
@@ -303,7 +307,7 @@ outside the package.
 
 - **A switch replaces two adjacent S16.** Its body is 32 studs — exactly two straights —
   so the substitution does not move the rest of the layout. That is what `s16_pairs`
-  hunts for (legoga_real/ops.py:257).
+  hunts for (legoga_real/ops.py:256).
 - **R40 is one physical piece.** `CL` and `CR` are the same brick laid either way and
   share one `R40` pool (legoga_real/ga.py:49). Never budget them separately.
 - **Inventory is a constraint, not a knob.** It mirrors the real box; never enlarge it to
@@ -321,7 +325,7 @@ The switch is where measurement beats derivation — legoga_real/geometry.py:35.
 - The diverge leg is R40 along its whole length: two 3-4-5 arcs, `+36.87°` then `−14.37°`
   (legoga_real/geometry.py:170). Never model it as arc-plus-straight.
 - The 3-4-5 derivation lands at `(32.69, 12.96)`; the **measured port wins**, and that
-  ~0.1-stud residue is why the table's `SNAP` is 0.15 (legoga_real/table.py:31).
+  ~0.1-stud residue is why the table's `SNAP` is 0.15 (legoga_real/table.py:33).
 
 Numbers come from data/track_pieces_v2.yaml (4DBrix 2.04.021/018).
 
@@ -356,8 +360,8 @@ Until tests exist, verify changes by:
 1. `python -c "import legoga_real.run"` — catches import and syntax breakage.
 2. A real run at the documented command; read the printed front — feasible rows must show
    sensible piece counts and zero collisions.
-3. `Layout.summary()` (legoga_real/layout.py:393) for a machine-readable dump.
-4. `Layout.min_clearance()` (legoga_real/layout.py:406) — an **independent** check on
+3. `Layout.summary()` (legoga_real/layout.py:391) for a machine-readable dump.
+4. `Layout.min_clearance()` (legoga_real/layout.py:404) — an **independent** check on
    `overlap()`: below track width means a physical conflict `overlap()` should have
    caught. Different method, so it is evidence, not a restatement.
 
@@ -376,18 +380,20 @@ Facts about the current code, not a wish list.
 
 ### Dead code (verified in both packages)
 
-Never called: `crossing_connectors` (ops.py:475), `_XCONN` (ops.py:506), `other_port`
+Never called: `crossing_connectors` (ops.py:474), `_XCONN` (ops.py:506), `other_port`
 (geometry.py:251), `__len__` / `cyclomatic` / `bbox` / `summary` / `min_clearance`
-(layout.py:83, :242, :340, :393, :406), `stats` (table.py:112), `closure_len`
-(table.py:99), and all of `viz.py`.
-`save` / `load` (table.py:163, :167) are called by the ablation only.
+(layout.py:81, :240, :338, :391, :404), `stats` (table.py:113), `closure_len`
+(table.py:100), and all of `viz.py`.
+`save` / `load` (table.py:164, :168) are called by the ablation only.
 
 `bbox` joined the list when `fit` took over every size question. Nothing else replaced it,
 so a caller that genuinely wants the untouched orientation still has it.
 
-Two are deliberate tools rather than debris: `min_clearance` (independent
-verification) and `crossing_connectors` (an analytic chain family the table provably
-cannot reach — it needs 21 elements). Re-grep before deleting anything.
+`min_clearance` is a deliberate tool (independent verification), not debris.
+`crossing_connectors` is an analytic family of `(-16, 0, 0)` chains; the shortest has 17
+elements, beyond `lookup` at depth 11, but `connectors` (meet-in-the-middle, up to
+`2 * max_len`) does reach them, and that is what `mut_add_crossing_pair` uses
+(ops.py:549, :552). Re-grep before deleting anything.
 
 ---
 

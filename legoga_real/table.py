@@ -2,15 +2,17 @@
 Tablica klas rownowaznosci przeksztalcen.
 
 Generuje BFS-em wszystkie ciagi elementow 2-portowych do zadanej dlugosci
-i grupuje je po przeksztalceniu netto (dx, dy, dtheta).
+i grupuje je po przeksztalceniu netto (dx, dy, dtheta). W jednej grupie
+(kubelku) zapisujemy najwyzej `per_bucket` ciagow, domyslnie 60.
 
-Dwa ciagi z tego samego kubelka sa WYMIENNE w dowolnym miejscu dowolnej
-petli - podmiana nie narusza domkniecia, niezaleznie od otoczenia.
+Dwa ciagi mozna zamienic w dowolnej petli, jesli koncza sie pod tym samym
+katem, a ich przesuniecia roznia sie o mniej niz SNAP w x i w y. Takie male
+roznice moga sie sumowac, dlatego po kazdej zamianie operator sprawdza, czy
+uklad nadal sie domyka.
 
 Ta sama struktura sluzy do:
   * mutacji (podmien fragment na rownowazny),
-  * domykania galezi (znajdz ciag realizujacy zadane przeksztalcenie),
-  * heurystyki dopuszczalnej w przeszukiwaniu (min. liczba elementow do domkniecia).
+  * domykania galezi (znajdz ciag realizujacy zadane przeksztalcenie).
 """
 from __future__ import annotations
 
@@ -32,9 +34,8 @@ SNAP = 0.15
 
 
 def _cell(v: float) -> int:
-    """Numer komorki siatki. Zaokraglenie, nie podloga: wspolrzedne torow leza
-    dokladnie na wielokrotnosciach GRID, wiec podloga przeskakiwala komorke
-    przy dryfie float rzedu 1e-14."""
+    """Numer komorki siatki. Zaokraglenie, nie podloga: gdy wspolrzedna lezy na
+    wielokrotnosci GRID, podloga przeskakiwala komorke przy dryfie float rzedu 1e-14."""
     return int(math.floor(v / GRID + 0.5))
 
 

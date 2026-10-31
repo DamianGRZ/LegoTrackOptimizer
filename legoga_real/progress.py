@@ -1,4 +1,4 @@
-"""Przebieg celow w trakcie biegu: najlepszy poprawny uklad co pokolenie."""
+"""Przebieg celow w trakcie biegu: najlepsza poprawna wartosc kazdego celu co pokolenie."""
 from __future__ import annotations
 
 import csv

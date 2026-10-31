@@ -88,8 +88,8 @@ class TrackProblem(ElementwiseProblem):
 class TrackSampling(Sampling):
     """Populacja startowa: kilka zarodkow + losowe mutacje na kazdym.
 
-    Nie szukamy poprawnego ukladu od zera - bierzemy trywialnie poprawny
-    owal/kolo i puszczamy na nim operatory zachowujace domkniecie.
+    Nie szukamy poprawnego ukladu od zera - bierzemy trywialnie poprawny zarodek
+    (owal, kolo albo osemke) i puszczamy na nim operatory zachowujace domkniecie.
     """
 
     def _do(self, problem, n_samples, **kwargs):
