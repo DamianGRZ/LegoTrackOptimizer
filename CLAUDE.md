@@ -140,9 +140,9 @@ least.
   so float noise cannot decide.
 
 Everything that asks about size goes through `fit`: the size constraint
-(legoga_real/ga.py:81), the printed front (legoga_real/run.py:89), the duplicate signature
+(legoga_real/ga.py:81), the printed front (legoga_real/run.py:98), the duplicate signature
 (legoga_real/ga.py:190) and `summary()` (legoga_real/layout.py:392). The renderer draws the
-rotation the GA judged (legoga_real/render_with_v1.py:50).
+rotation the GA judged (legoga_real/render.py:273).
 
 ### Is the layout graph cubic?
 
@@ -272,13 +272,17 @@ non-trivial Python/numpy semantics. Never answer from memory.
 python -m legoga_real.run --pop 60 --gens 60 --seed 1 --out outputs/legoga
 ```
 
-Defaults in `run()` — legoga_real/run.py:44 — `pop=60`, `gens=60`, `seed=1`,
+Defaults in `run()` — legoga_real/run.py:53 — `pop=60`, `gens=60`, `seed=1`,
 `max_size=(500.0, 500.0)`, `out="outputs/legoga"`. `--out` is a directory; `run()`
 creates it and writes `tory.png` (best six), `tory_1.png` … `tory_6.png`,
-`tory_progress.csv`, `tory_pieces.png`, `tory_routes.png` into it.
+`tory_progress.csv`, `tory_pieces.png`, `tory_routes.png` into it. The command line
+(legoga_real/run.py:140) adds `front.csv`, `layouts.json`, `run.json` and `log.txt` — the
+same files the ablation and the chapter 7 series write — so a console run is a complete
+record. `run()` itself does not write them.
 
-No config file exists. Inventory is a dict in code (legoga_real/ga.py:38), overridable by
-passing `inventory=` to `run()`.
+No config file exists. The default inventory is a dict in code (legoga_real/ga.py:38) and
+the default table is 500 × 500. Both can be given directly: `--inventory S16=90 S24=2
+R40=140 WL=7 WR=3 XX=3 DC=1 --workspace 250x350`. A piece left out of `--inventory` counts as 0.
 
 ### Modules
 
@@ -297,9 +301,8 @@ a process pool, tables built once and loaded from disk, resume by skipping `run.
 legoga_real/score_ablation.py — the report: `runs.csv`, each variant against the base as
 independent samples (Mann-Whitney, A12, Holm correction) at the end of the run and at a
 common evaluation budget, plots. Reads run directories only.
-legoga_real/render_with_v1.py — draws results with the V1 renderer.
-legoga_real/viz.py — standalone drawing; unused, but the only renderer with no dependency
-outside the package.
+legoga_real/render.py — draws results: its own matplotlib renderer, no dependency outside
+the package.
 
 ---
 
@@ -331,18 +334,11 @@ Numbers come from data/track_pieces_v2.yaml (4DBrix 2.04.021/018).
 
 ---
 
-## What the prototype borrows from the V1 system
+## The prototype and the V1 system
 
 The V1 optimizer still lives in the repository (`src/`, `tests/`, `configs/`, `main.py`)
-and is **not** described by this document. The prototype touches it in exactly two
-places, both output-only:
-
-legoga_real/render_with_v1.py:14 — `src.config`, `src.encoding`,
-`src.visualization.track_renderer`, to draw layouts in V1 style.
-legoga_real/progress.py:12 — `src.visualization.objective_progress`, for progress plots.
-
-Consequence: `legoga_real` cannot be extracted into a standalone repository while those
-imports stand. `legoga_real/viz.py` is the fallback that would make it standalone.
+and is **not** described by this document. `legoga_real` imports nothing from `src/`, so
+it can be extracted into a standalone repository.
 
 `legoga_orig/` is an earlier snapshot of the same prototype, kept untracked for
 reference; 83–100% identical code. The differences are the measured switch geometry, the
@@ -376,14 +372,14 @@ Facts about the current code, not a wish list.
 
 - `legoga_real` is **not** in the style gate. The gate is
   `python -m pycodestyle src tests main.py run_v1_all_configs.py run_ablation.py score_ablation.py`
-  (`setup.cfg`, 99 chars). The prototype currently reports 4 findings.
+  (`setup.cfg`, 99 chars). The prototype currently reports 1 finding.
 
 ### Dead code (verified in both packages)
 
 Never called: `crossing_connectors` (ops.py:474), `_XCONN` (ops.py:506), `other_port`
 (geometry.py:251), `__len__` / `cyclomatic` / `bbox` / `summary` / `min_clearance`
 (layout.py:81, :240, :338, :391, :404), `stats` (table.py:113), `closure_len`
-(table.py:100), and all of `viz.py`.
+(table.py:100).
 `save` / `load` (table.py:164, :168) are called by the ablation only.
 
 `bbox` joined the list when `fit` took over every size question. Nothing else replaced it,

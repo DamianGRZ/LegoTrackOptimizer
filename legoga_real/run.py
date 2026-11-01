@@ -6,19 +6,28 @@ Prototyp NSGA-II dla ukladania torow LEGO.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import csv
+import dataclasses
+import json
+import platform
+import subprocess
+import sys
 import time
 from pathlib import Path
 
 import numpy as np
+import pymoo
 from pymoo.algorithms.moo.nsga2 import NSGA2, binary_tournament
+from pymoo.indicators.hv import HV
 from pymoo.operators.selection.tournament import TournamentSelection
 from pymoo.optimize import minimize
 from pymoo.termination import get_termination
 
 from .ga import (TrackCrossover, TrackDuplicates, TrackMutation, TrackProblem,
-                 TrackSampling, tournament)
+                 TrackSampling, physical_counts, tournament)
 from .progress import ProgressCallback
-from .render_with_v1 import save_gallery, save_layouts
+from .render import save_gallery, save_layouts
 from .settings import Settings
 
 
@@ -113,12 +122,78 @@ def run(inventory=None, pop=60, gens=60, seed=1, out="outputs/legoga",
     return res, rows, times
 
 
+class Tee:
+    """Wypisuje jednoczesnie do kilku strumieni: na ekran i do log.txt."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for stream in self.streams:
+            stream.write(text)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+def save_results(out: Path, res, pop, gens, seed, times, started) -> None:
+    """Zapisuje front.csv, layouts.json i run.json biegu uruchomionego z konsoli."""
+    problem = res.problem
+    layouts = [x[0] for x in np.atleast_2d(res.X)]
+    F, G = np.atleast_2d(res.F), np.atleast_2d(res.G)
+    feas = (G <= 0).all(axis=1)
+    with (out / "front.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["pieces", "routes", "overlap", "inventory_excess", "over_size",
+                    "width", "height", "feasible", "counts"])
+        for k, lay in enumerate(layouts):
+            _, width, height = lay.fit(problem.max_size)
+            w.writerow([int(-F[k, 0]), int(-F[k, 1]), *G[k].tolist(), round(width, 1),
+                        round(height, 1), bool(feas[k]), json.dumps(physical_counts(lay))])
+    dump = [{"types": lay.types, "match": [[*a, *b] for a, b in lay.match.items()]}
+            for lay in layouts]
+    (out / "layouts.json").write_text(json.dumps(dump), encoding="utf-8")
+
+    def git(*args):
+        return subprocess.run(["git", *args], capture_output=True, text=True).stdout.strip()
+    hv = HV(ref_point=np.array([0.0, 0.0]))
+    info = {
+        "inventory": problem.inv, "table": "x".join(str(int(v)) for v in problem.max_size),
+        "max_size": problem.max_size, "seed": seed, "pop": pop, "gens": gens,
+        "settings": dataclasses.asdict(problem.cfg),
+        "git": {"commit": git("rev-parse", "HEAD"),
+                "dirty": bool(git("status", "--porcelain", "--", "legoga_real"))},
+        "python": platform.python_version(), "pymoo": pymoo.__version__,
+        "numpy": np.__version__, "started": started, "times": times,
+        "n_eval": int(res.algorithm.evaluator.n_eval),
+        "hv": float(hv(F[feas])) if feas.any() else 0.0,
+        "hv_ref": hv.ref_point.tolist(), "n_front": len(layouts),
+        "n_feas_final": int(res.algorithm.callback.data["n_feas"][-1]),
+        "best_pieces": float(-F[feas, 0].min()) if feas.any() else 0.0,
+        "best_routes": float(-F[feas, 1].min()) if feas.any() else 0.0,
+    }
+    (out / "run.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pop", type=int, default=60)
     ap.add_argument("--gens", type=int, default=60)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", default="outputs/legoga", help="katalog wynikow")
+    ap.add_argument("--inventory", nargs="+", metavar="KLOCEK=SZTUKI",
+                    help="np. S16=90 S24=2 R40=140 WL=7 WR=3 XX=3 DC=1")
+    ap.add_argument("--workspace", default="500x500", help="stol w studach, np. 250x350")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
-    run(pop=a.pop, gens=a.gens, seed=a.seed, out=a.out, verbose=not a.quiet)
+    inventory = a.inventory and {k: int(n) for k, n in (p.split("=") for p in a.inventory)}
+    width, height = map(float, a.workspace.split("x"))
+    out_dir = Path(a.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    started = time.strftime("%Y-%m-%d %H:%M:%S")
+    with (out_dir / "log.txt").open("w", encoding="utf-8") as log, \
+            contextlib.redirect_stdout(Tee(sys.stdout, log)):
+        res, _, times = run(inventory=inventory, pop=a.pop, gens=a.gens, seed=a.seed, out=a.out,
+                            max_size=(width, height), verbose=not a.quiet)
+    save_results(out_dir, res, a.pop, a.gens, a.seed, times, started)
